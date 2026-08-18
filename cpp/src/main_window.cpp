@@ -1,21 +1,24 @@
 #include "pva/main_window.hpp"
 #include "pva/app_signals.hpp"
+#include "pva/config_manager.hpp"
 #include "pva/page_camera.hpp"
 #include "pva/page_home.hpp"
 #include "pva/page_parameters.hpp"
 #include "ui_main.h"
 #include <QCloseEvent>
+#include <QColor>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGraphicsDropShadowEffect>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPropertyAnimation>
 #include <QParallelAnimationGroup>
 #include <QEasingCurve>
 #include <QPushButton>
-#include <QTimer>
+#include <QSizeGrip>
 
 namespace pva
 {
@@ -49,13 +52,23 @@ namespace pva
         ui_->btn_home->setText("Home");
         ui_->btn_statistics->hide();
         ui_->btn_IO->hide();
+        auto *shadow = new QGraphicsDropShadowEffect(this);
+        shadow->setBlurRadius(17);
+        shadow->setOffset(0, 0);
+        shadow->setColor(QColor(0, 0, 0, 150));
+        ui_->bgApp->setGraphicsEffect(shadow);
+        // 与 Python 版本一致，在无边框窗口右下角提供系统窗口缩放手柄。
+        auto *sizeGrip = new QSizeGrip(ui_->frame_size_grip);
+        sizeGrip->setFixedSize(20, 20);
+        sizeGrip->setStyleSheet("margin: 0px; padding: 0px;");
         configPath_ = findProjectFile("src/cnf.ini");
         if (configPath_.isEmpty())
             throw std::runtime_error("Cannot locate src/cnf.ini");
-        config_ = MeasurementConfig::loadIni(configPath_);
-        home_ = new PageHome(config_, ui_->stackedWidget);
+        auto &configManager = ConfigManager::instance();
+        configManager.load(configPath_, false);
+        home_ = new PageHome(configManager.config(), ui_->stackedWidget);
+        camera_ = new PageCamera(configManager.config(), ui_->stackedWidget);
         parameters_ = new PageParameters(configPath_, ui_->stackedWidget);
-        camera_ = new PageCamera(config_, ui_->stackedWidget);
         ui_->stackedWidget->addWidget(home_);
         ui_->stackedWidget->addWidget(parameters_);
         ui_->stackedWidget->addWidget(camera_);
@@ -65,20 +78,31 @@ namespace pva
         connect(ui_->btn_camera, &QPushButton::clicked, this, &MainWindow::switchPage);
         connect(ui_->minimizeAppBtn, &QPushButton::clicked, this, &QWidget::showMinimized);
         connect(ui_->maximizeRestoreAppBtn, &QPushButton::clicked, this, [this]
-                { isMaximized() ? showNormal() : showMaximized(); });
+                { toggleMaximizeRestore(); });
         connect(ui_->closeAppBtn, &QPushButton::clicked, this, &QWidget::close);
         connect(ui_->toggleButton, &QPushButton::clicked, this, &MainWindow::toggleMenu);
         connect(ui_->toggleLeftBox, &QPushButton::clicked, this, &MainWindow::toggleLeftBox);
         connect(ui_->extraCloseColumnBtn, &QPushButton::clicked, this, &MainWindow::toggleLeftBox);
         connect(ui_->settingsTopBtn, &QPushButton::clicked, this, &MainWindow::toggleRightBox);
-        connect(parameters_, &PageParameters::configurationSaved, this, &MainWindow::reloadConfiguration);
         loadTheme();
         updateSelectedMenu(ui_->btn_home);
-        // Python 参数页初始化完成后会自动启动 Runtime；C++ 保持相同的启动行为。
-        QTimer::singleShot(0, home_, [this]
-                           { QMetaObject::invokeMethod(home_, "toggleRuntime"); });
     }
     MainWindow::~MainWindow() = default;
+    void MainWindow::toggleMaximizeRestore()
+    {
+        if (isMaximized())
+        {
+            showNormal();
+            ui_->appMargins->setContentsMargins(10, 10, 10, 10);
+            ui_->frame_size_grip->show();
+        }
+        else
+        {
+            showMaximized();
+            ui_->appMargins->setContentsMargins(0, 0, 0, 0);
+            ui_->frame_size_grip->hide();
+        }
+    }
     void MainWindow::switchPage()
     {
         QObject *s = sender();
@@ -103,19 +127,6 @@ namespace pva
             if (button == selected)
                 style += selectedStyle;
             button->setStyleSheet(style);
-        }
-    }
-    void MainWindow::reloadConfiguration()
-    {
-        try
-        {
-            config_ = MeasurementConfig::loadIni(configPath_);
-            home_->reloadConfig(config_);
-            camera_->reloadConfig(config_);
-        }
-        catch (const std::exception &e)
-        {
-            QMessageBox::warning(this, "Configuration", e.what());
         }
     }
     void MainWindow::toggleMenu()
@@ -194,7 +205,7 @@ namespace pva
     {
         if (event->button() == Qt::LeftButton && event->position().y() <= ui_->contentTopBg->height())
         {
-            isMaximized() ? showNormal() : showMaximized();
+            toggleMaximizeRestore();
             event->accept();
             return;
         }

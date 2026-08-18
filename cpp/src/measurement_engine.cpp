@@ -57,6 +57,63 @@ namespace
         if (showCenter)
             out.push_back({pva::OverlayType::Cross, {roi.center}, {0, 255, 255}, 2, false});
     }
+
+    void addStoredNeckCenterOverlays(const pva::MeasurementState &state, pva::MeasurementResult &result)
+    {
+        if (!state.neckCentersPx)
+            return;
+
+        // Crown/Body 沿用最近一次有效 Neck 拟合中心；检测失败时也保留该参考标记。
+        result.overlay1.push_back(
+            {pva::OverlayType::Cross, {(*state.neckCentersPx)[0]}, {0, 255, 0}, 2, false});
+        result.overlay2.push_back(
+            {pva::OverlayType::Cross, {(*state.neckCentersPx)[1]}, {0, 255, 0}, 2, false});
+    }
+
+    void initializeCrownDiagnostics(pva::MeasurementResult &result)
+    {
+        static const std::array<const char *, 17> cameraKeys{
+            "crown_bottom_margin_camera%1_px", "crown_tracking_half_height_camera%1_px",
+            "crown_column_strengths_mean_camera%1", "crown_column_strengths_maximum_camera%1",
+            "crown_minimum_strength_camera%1", "crown_kept_column_count_camera%1",
+            "crown_seed_y_camera%1_px", "crown_edge_point_count_camera%1",
+            "crown_residual_limit_camera%1_px", "crown_robust_inlier_count_camera%1",
+            "crown_sagitta_camera%1_px", "crown_center_camera%1_px",
+            "crown_boundary_camera%1_px", "crown_edge_seed_y_camera%1_px",
+            "crown_edge_coverage_camera%1", "crown_edge_fit_error_camera%1_px",
+            "crown_fit_strengths_mean_camera%1"};
+        for (int camera = 1; camera <= 2; ++camera)
+            for (const char *pattern : cameraKeys)
+                result.diagnostics.emplace(QString::fromLatin1(pattern).arg(camera).toStdString(), QVariant{});
+        result.diagnostics.emplace("source", QVariant{});
+        result.diagnostics.emplace("crown_edge_previous_tracking_active", QVariant{});
+        result.diagnostics.emplace("crown_edge_model", QVariant{});
+    }
+
+    void initializeBodyDiagnostics(pva::MeasurementResult &result)
+    {
+        static const std::array<const char *, 17> cameraKeys{
+            "body_search_start_y_camera%1_px", "body_search_stop_y_camera%1_px",
+            "body_bottom_margin_camera%1_px", "body_tracking_half_height_camera%1_px",
+            "body_brightness_offset_camera%1", "body_threshold_crossing_count_camera%1",
+            "body_column_maximum_p90_camera%1", "body_column_maximum_maximum_camera%1",
+            "body_residual_limit_camera%1_px", "body_robust_inlier_count_camera%1",
+            "body_coverage_ratio_camera%1", "body_sagitta_camera%1_px",
+            "body_center_camera%1_px", "body_boundary_camera%1_px",
+            "body_edge_seed_y_camera%1_px", "body_edge_coverage_camera%1",
+            "body_fit_strength_mean_camera%1"};
+        for (int camera = 1; camera <= 2; ++camera)
+            for (const char *pattern : cameraKeys)
+                result.diagnostics.emplace(QString::fromLatin1(pattern).arg(camera).toStdString(), QVariant{});
+        result.diagnostics.emplace("source", QVariant{});
+        result.diagnostics.emplace("body_edge_previous_tracking_active", QVariant{});
+        result.diagnostics.emplace("body_edge_model", QVariant{});
+    }
+
+    QVariant pointValue(const cv::Point2d &point)
+    {
+        return QVariantList{point.x, point.y};
+    }
 }
 
 namespace pva
@@ -68,6 +125,11 @@ namespace pva
         const auto started = std::chrono::steady_clock::now();
         MeasurementResult result;
         result.stage = stage;
+        const auto effective = stage == MeasurementStage::Idle ? MeasurementStage::Neck : stage;
+        if (effective == MeasurementStage::Crown)
+            initializeCrownDiagnostics(result);
+        else if (effective == MeasurementStage::Body)
+            initializeBodyDiagnostics(result);
         result.preview1 = algorithms::normalizeGray8(a);
         result.preview2 = algorithms::normalizeGray8(b);
         if (result.preview1.empty() || result.preview2.empty())
@@ -91,7 +153,6 @@ namespace pva
                 std::chrono::steady_clock::now() - started).count();
             return result;
         }
-        const auto effective = stage == MeasurementStage::Idle ? MeasurementStage::Neck : stage;
         std::pair<bool, std::string> outcome;
         if (effective == MeasurementStage::Neck)
             outcome = processNeck(result.preview1, result.preview2, result);
@@ -174,7 +235,7 @@ namespace pva
 
     std::pair<bool, std::string> MeasurementEngine::processCrown(const cv::Mat &a, const cv::Mat &b, MeasurementResult &r)
     {
-        if (!state_.validNeck || !state_.neckReflectorRois)
+        if (!state_.validNeck || !state_.neckReflectorRois || !state_.neckCentersPx)
             return {false, "Crown mode requires reflector ROI from a valid Idle/Neck result"};
         std::optional<double> p1, p2;
         if (config_.crown.usePreviousBoundaryY && state_.crownBoundaryPointsPx)
@@ -182,12 +243,40 @@ namespace pva
             p1 = (*state_.crownBoundaryPointsPx)[0].y;
             p2 = (*state_.crownBoundaryPointsPx)[1].y;
         }
+        r.diagnostics["crown_edge_previous_tracking_active"] = p1.has_value() && p2.has_value();
+        r.diagnostics["crown_edge_model"] = "maximum_negative_gradient_quadratic";
         const auto &rois = *state_.neckReflectorRois;
+        const auto &centers = *state_.neckCentersPx;
         addReflectorOverlay(rois[0], r.overlay1, false);
         addReflectorOverlay(rois[1], r.overlay2, false);
-        auto first = algorithms::findCrownMeniscus(a, rois[0], config_.crown, p1), second = algorithms::findCrownMeniscus(b, rois[1], config_.crown, p2);
+        addStoredNeckCenterOverlays(state_, r);
+        auto first = algorithms::findCrownMeniscus(a, rois[0], centers[0], config_.crown, p1);
+        auto second = algorithms::findCrownMeniscus(b, rois[1], centers[1], config_.crown, p2);
         if (!first || !second)
             return {false, "Crown meniscus curve not found in reflector ROI"};
+        const auto addDiagnostics = [&r, this](const algorithms::CurveHit &hit, int camera)
+        {
+            const std::string suffix = "_camera" + std::to_string(camera);
+            r.diagnostics["crown_bottom_margin" + suffix + "_px"] = config_.crown.bottomMarginPx;
+            r.diagnostics["crown_tracking_half_height" + suffix + "_px"] = config_.crown.searchHalfHeightPx;
+            r.diagnostics["crown_column_strengths_mean" + suffix] = hit.columnStrengthsMean;
+            r.diagnostics["crown_column_strengths_maximum" + suffix] = hit.columnStrengthsMaximum;
+            r.diagnostics["crown_minimum_strength" + suffix] = hit.minimumStrength;
+            r.diagnostics["crown_kept_column_count" + suffix] = hit.keptColumnCount;
+            r.diagnostics["crown_seed_y" + suffix + "_px"] = hit.seedY;
+            r.diagnostics["crown_edge_point_count" + suffix] = hit.edgePointCount;
+            r.diagnostics["crown_residual_limit" + suffix + "_px"] = hit.residualLimitPx;
+            r.diagnostics["crown_robust_inlier_count" + suffix] = hit.robustInlierCount;
+            r.diagnostics["crown_sagitta" + suffix + "_px"] = hit.sagittaPx;
+            r.diagnostics["crown_center" + suffix + "_px"] = pointValue(hit.center);
+            r.diagnostics["crown_boundary" + suffix + "_px"] = pointValue(hit.boundary);
+            r.diagnostics["crown_edge_seed_y" + suffix + "_px"] = hit.seedY;
+            r.diagnostics["crown_edge_coverage" + suffix] = hit.coverage;
+            r.diagnostics["crown_edge_fit_error" + suffix + "_px"] = hit.fitErrorPx;
+            r.diagnostics["crown_fit_strengths_mean" + suffix] = hit.fitStrengthMean;
+        };
+        addDiagnostics(*first, 1);
+        addDiagnostics(*second, 2);
         state_.crownBoundaryPointsPx = std::array<cv::Point2d, 2>{first->boundary, second->boundary};
         addCurveOverlay(*first, r.overlay1);
         addCurveOverlay(*second, r.overlay2);
@@ -196,7 +285,7 @@ namespace pva
 
     std::pair<bool, std::string> MeasurementEngine::processBody(const cv::Mat &a, const cv::Mat &b, MeasurementResult &r)
     {
-        if (!state_.validNeck || !state_.neckReflectorRois)
+        if (!state_.validNeck || !state_.neckReflectorRois || !state_.neckCentersPx)
             return {false, "Body mode requires reflector ROI from a valid Idle/Neck result"};
         std::optional<double> p1, p2;
         if (config_.body.usePreviousBoundaryY && state_.bodyBoundaryPointsPx)
@@ -204,12 +293,40 @@ namespace pva
             p1 = (*state_.bodyBoundaryPointsPx)[0].y;
             p2 = (*state_.bodyBoundaryPointsPx)[1].y;
         }
+        r.diagnostics["body_edge_previous_tracking_active"] = p1.has_value() && p2.has_value();
+        r.diagnostics["body_edge_model"] = "maximum_brightness_quadratic";
         const auto &rois = *state_.neckReflectorRois;
+        const auto &centers = *state_.neckCentersPx;
         addReflectorOverlay(rois[0], r.overlay1, false);
         addReflectorOverlay(rois[1], r.overlay2, false);
-        auto first = algorithms::findBodyMeniscus(a, rois[0], config_.body, config_.body.brightnessOffsetCamera1, p1), second = algorithms::findBodyMeniscus(b, rois[1], config_.body, config_.body.brightnessOffsetCamera2, p2);
+        addStoredNeckCenterOverlays(state_, r);
+        auto first = algorithms::findBodyMeniscus(a, rois[0], centers[0], config_.body, config_.body.brightnessOffsetCamera1, p1);
+        auto second = algorithms::findBodyMeniscus(b, rois[1], centers[1], config_.body, config_.body.brightnessOffsetCamera2, p2);
         if (!first || !second)
             return {false, "Body meniscus curve not found in reflector ROI"};
+        const auto addDiagnostics = [&r](const algorithms::CurveHit &hit, int camera)
+        {
+            const std::string suffix = "_camera" + std::to_string(camera);
+            r.diagnostics["body_search_start_y" + suffix + "_px"] = hit.searchStartY;
+            r.diagnostics["body_search_stop_y" + suffix + "_px"] = hit.searchStopY;
+            r.diagnostics["body_bottom_margin" + suffix + "_px"] = hit.bottomMarginPx;
+            r.diagnostics["body_tracking_half_height" + suffix + "_px"] = hit.trackingHalfHeightPx;
+            r.diagnostics["body_brightness_offset" + suffix] = hit.brightnessOffset;
+            r.diagnostics["body_threshold_crossing_count" + suffix] = hit.thresholdCrossingCount;
+            r.diagnostics["body_column_maximum_p90" + suffix] = hit.columnMaximumP90;
+            r.diagnostics["body_column_maximum_maximum" + suffix] = hit.columnMaximumMaximum;
+            r.diagnostics["body_residual_limit" + suffix + "_px"] = hit.residualLimitPx;
+            r.diagnostics["body_robust_inlier_count" + suffix] = hit.robustInlierCount;
+            r.diagnostics["body_coverage_ratio" + suffix] = hit.coverage;
+            r.diagnostics["body_sagitta" + suffix + "_px"] = hit.sagittaPx;
+            r.diagnostics["body_center" + suffix + "_px"] = pointValue(hit.center);
+            r.diagnostics["body_boundary" + suffix + "_px"] = pointValue(hit.boundary);
+            r.diagnostics["body_edge_seed_y" + suffix + "_px"] = hit.seedY;
+            r.diagnostics["body_edge_coverage" + suffix] = hit.coverage;
+            r.diagnostics["body_fit_strength_mean" + suffix] = hit.fitStrengthMean;
+        };
+        addDiagnostics(*first, 1);
+        addDiagnostics(*second, 2);
         state_.bodyCentersPx = state_.neckCentersPx.value_or(
             std::array<cv::Point2d, 2>{rois[0].center, rois[1].center});
         state_.bodyBoundaryPointsPx = std::array<cv::Point2d, 2>{first->boundary, second->boundary};

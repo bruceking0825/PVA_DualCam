@@ -41,10 +41,15 @@ add_executable(pva_dualcam_cpp WIN32
     src/main_window.cpp
     include/pva/main_window.hpp
     src/app_signals.cpp
+    src/config_manager.cpp
+    include/pva/base_page.hpp
+    include/pva/config_manager.hpp
     src/custom_graphics_view.cpp
     src/measurement_worker.cpp
     src/page_home.cpp
     src/page_camera.cpp
+    src/camera_manager.cpp
+    src/camera_state_store.cpp
     src/dalsa_camera.cpp
     src/opcua_worker.cpp
     src/page_parameters.cpp
@@ -53,6 +58,8 @@ add_executable(pva_dualcam_cpp WIN32
     include/pva/measurement_worker.hpp
     include/pva/page_home.hpp
     include/pva/page_camera.hpp
+    include/pva/camera_manager.hpp
+    include/pva/camera_state_store.hpp
     include/pva/dalsa_camera.hpp
     include/pva/opcua_worker.hpp
     include/pva/page_parameters.hpp

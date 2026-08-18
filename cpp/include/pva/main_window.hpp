@@ -1,5 +1,4 @@
 #pragma once
-#include "pva/config.hpp"
 #include <QMainWindow>
 #include <memory>
 
@@ -30,7 +29,6 @@ namespace pva
         void mouseDoubleClickEvent(QMouseEvent *event) override;
     private slots:
         void switchPage();
-        void reloadConfiguration();
         void toggleMenu();
         void toggleLeftBox();
         void toggleRightBox();
@@ -40,12 +38,12 @@ namespace pva
         PageHome *home_{};
         PageCamera *camera_{};
         PageParameters *parameters_{};
-        MeasurementConfig config_;
         QString configPath_;
         QString themePath_;
         QPoint dragPosition_;
         void loadTheme();
         void updateSelectedMenu(QWidget *selected);
         void animateSideBoxes(int leftWidth, int rightWidth);
+        void toggleMaximizeRestore();
     };
 }

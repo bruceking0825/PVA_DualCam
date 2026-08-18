@@ -7,6 +7,7 @@
 #include <vector>
 #include <opencv2/core.hpp>
 #include <QMetaType>
+#include <QVariant>
 
 namespace pva
 {
@@ -69,7 +70,7 @@ namespace pva
         bool valid{false};
         MeasurementStage stage{MeasurementStage::Idle};
         MeasurementValues values;
-        std::unordered_map<std::string, double> diagnostics;
+        std::unordered_map<std::string, QVariant> diagnostics;
         cv::Mat preview1;
         cv::Mat preview2;
         std::vector<OverlayElement> overlay1;

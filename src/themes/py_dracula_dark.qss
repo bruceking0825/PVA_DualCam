@@ -381,7 +381,7 @@ QCheckBox::indicator:hover {
     border: 1px solid rgb(58, 66, 81);
 }
 QCheckBox::indicator:checked {
-    background: 3px solid rgb(52, 59, 72);
+    background-color: rgb(52, 59, 72);
 	border: 1px solid rgb(52, 59, 72);	
 	background-image: url(:/icons/images/icons/cil-check-alt.png);
 }
@@ -399,7 +399,7 @@ QRadioButton::indicator:hover {
     border: 3px solid rgb(58, 66, 81);
 }
 QRadioButton::indicator:checked {
-    background: 3px solid rgb(94, 106, 130);
+    background-color: rgb(94, 106, 130);
 	border: 3px solid rgb(52, 59, 72);	
 }
 
@@ -435,7 +435,7 @@ QComboBox::drop-down {
 	border-bottom-right-radius: 3px;	
 	background-image: url(:/icons/images/icons/cil-arrow-bottom.png);
 	background-position: center;
-	background-repeat: no-reperat;
+	background-repeat: no-repeat;
  }
 QComboBox QAbstractItemView {
 	color: rgb(255, 121, 198);	

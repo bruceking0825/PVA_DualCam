@@ -1,6 +1,7 @@
 #include "pva/page_home.hpp"
 #include "pva/state_store.hpp"
 #include "pva/app_signals.hpp"
+#include "pva/config_manager.hpp"
 #include "pva/opcua_worker.hpp"
 #include "ui_PageHome.h"
 #include <QButtonGroup>
@@ -18,9 +19,22 @@
 
 namespace pva
 {
-    PageHome::PageHome(MeasurementConfig config, QWidget *parent) : QWidget(parent), ui_(std::make_unique<Ui::PageHome>()), config_(std::move(config))
+    PageHome::PageHome(MeasurementConfig config, QWidget *parent)
+        : BasePage(parent), ui_(std::make_unique<Ui::PageHome>()), config_(std::move(config))
     {
-        ui_->setupUi(this);
+        initializePage([this] { ui_->setupUi(this); });
+    }
+
+    void PageHome::initializeState()
+    {
+        offlineTimer_ = new QTimer(this);
+        onlineTimer_ = new QTimer(this);
+        onlineClock_.start();
+        stage_ = MeasurementStage::Neck;
+    }
+
+    void PageHome::setupPageUi()
+    {
         ui_->cam1GraphicsView->setViewId(1);
         ui_->cam2GraphicsView->setViewId(2);
         ui_->cam1GraphicsView->setText("Camera 1");
@@ -31,9 +45,11 @@ namespace pva
         group->setExclusive(true);
         for (auto *b : {ui_->btnStageIdle, ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody, ui_->btnStageEndcone})
             group->addButton(b);
-        offlineTimer_ = new QTimer(this);
-        onlineTimer_ = new QTimer(this);
-        onlineClock_.start();
+        ui_->btnStageNeck->setChecked(true);
+    }
+
+    void PageHome::bindEvents()
+    {
         connect(offlineTimer_, &QTimer::timeout, this, &PageHome::submitOfflineFrame);
         connect(onlineTimer_, &QTimer::timeout, this, &PageHome::triggerOnlineCapture);
         connect(ui_->btnStart, &QPushButton::clicked, this, &PageHome::toggleRuntime);
@@ -56,6 +72,10 @@ namespace pva
                     viewInfo_[1].x = x; viewInfo_[1].y = y; viewInfo_[1].gray = gray;
                     updateViewInfo(2);
                 });
+    }
+
+    void PageHome::bindSignals()
+    {
         auto &appSignals = AppSignals::instance();
         connect(&appSignals, &AppSignals::cameraFrameCaptured, this, &PageHome::onCameraFrame);
         connect(&appSignals, &AppSignals::cameraExposureChanged, this, &PageHome::onCameraExposure);
@@ -63,12 +83,16 @@ namespace pva
         connect(&appSignals, &AppSignals::onlineCameraStopped, this, &PageHome::onOnlineCameraStopped);
         connect(&appSignals, &AppSignals::onlineCameraFailed, this, &PageHome::onOnlineCameraFailed);
         connect(&appSignals, &AppSignals::appClose, this, &PageHome::stopRuntime);
+        connect(&ConfigManager::instance(), &ConfigManager::batchChanged, this, [this]
+                { reloadConfig(ConfigManager::instance().config()); });
+    }
+
+    void PageHome::onReady()
+    {
         updateViewInfo(1);
         updateViewInfo(2);
         // Python 离线启动时由 offline_mode="neck" 进入 Neck，而不是停留在 Idle。
         stage_ = MeasurementStage::Neck;
-        stage_ = MeasurementStage::Neck;
-        ui_->btnStageNeck->setChecked(true);
         reloadImages();
         setConnectionLed(ui_->lblCamera1Status, false);
         setConnectionLed(ui_->lblCamera2Status, false);
@@ -271,7 +295,7 @@ namespace pva
         const auto cycle = r.diagnostics.find("cycle_ms");
         ui_->lblCycle->setText(cycle == r.diagnostics.end()
                                   ? "Cycle: --"
-                                  : QString("Cycle: %1 ms").arg(cycle->second, 0, 'f', 1));
+                                  : QString("Cycle: %1 ms").arg(cycle->second.toDouble(), 0, 'f', 1));
         updateProcessDiagnostics(r);
         setStatus(QString::fromStdString(r.message), r.valid);
         if (!r.valid)
@@ -279,8 +303,8 @@ namespace pva
         ui_->lblLastFrame->setText("Last frame: " + QDateTime::currentDateTime().toString("HH:mm:ss"));
         if (r.valid && r.values.diameterMm && plcWorker_)
             plcWorker_->queueDiameter(*r.values.diameterMm);
-        viewInfo_[0].light = r.diagnostics.contains("light_camera1") ? r.diagnostics.at("light_camera1") : 0.0;
-        viewInfo_[1].light = r.diagnostics.contains("light_camera2") ? r.diagnostics.at("light_camera2") : 0.0;
+        viewInfo_[0].light = r.diagnostics.contains("light_camera1") ? r.diagnostics.at("light_camera1").toDouble() : 0.0;
+        viewInfo_[1].light = r.diagnostics.contains("light_camera2") ? r.diagnostics.at("light_camera2").toDouble() : 0.0;
         updateViewInfo(1);
         updateViewInfo(2);
     }
@@ -485,28 +509,97 @@ namespace pva
         ui_->treeProcess->clear();
         auto *camera1 = new QTreeWidgetItem(ui_->treeProcess, {"Camera 1"});
         auto *camera2 = new QTreeWidgetItem(ui_->treeProcess, {"Camera 2"});
-        auto *measurement = new QTreeWidgetItem(ui_->treeProcess, {"Measurement"});
+        auto *algorithm = new QTreeWidgetItem(ui_->treeProcess, {"Algorithm"});
+        auto *runtime = new QTreeWidgetItem(ui_->treeProcess, {"Runtime"});
         camera1->setExpanded(true);
         camera2->setExpanded(true);
-        measurement->setExpanded(true);
+        algorithm->setExpanded(true);
+        runtime->setExpanded(true);
+
+        const auto formattedValue = [](const QVariant &value)
+        {
+            if (!value.isValid() || value.isNull()) return QString("NA");
+            if (value.metaType().id() == QMetaType::Bool)
+                return value.toBool() ? QString("Yes") : QString("No");
+            if (value.metaType().id() == QMetaType::Int || value.metaType().id() == QMetaType::UInt ||
+                value.metaType().id() == QMetaType::LongLong || value.metaType().id() == QMetaType::ULongLong)
+                return QString::number(value.toLongLong());
+            if (value.metaType().id() == QMetaType::QVariantList)
+            {
+                QStringList values;
+                for (const auto &entry : value.toList())
+                    values.append(QString::number(entry.toDouble(), 'f', 3));
+                return "[" + values.join(", ") + "]";
+            }
+            bool numeric = false;
+            const double number = value.toDouble(&numeric);
+            return numeric ? QString::number(number, 'f', 3) : value.toString();
+        };
+        const auto diagnosticLabel = [&result](const std::string &key, QString &unit)
+        {
+            QString normalized = QString::fromStdString(key);
+            for (const auto &[suffix, suffixUnit] : {std::pair<QString, QString>{"_mm", "mm"},
+                                                     {"_px", "px"}, {"_ms", "ms"}, {"_deg", "deg"}})
+                if (normalized.endsWith(suffix))
+                {
+                    normalized.chop(suffix.size());
+                    unit = suffixUnit;
+                    break;
+                }
+            normalized.replace("_camera1", "");
+            normalized.replace("_camera2", "");
+            QStringList words = normalized.split('_', Qt::SkipEmptyParts);
+            for (QString &word : words)
+            {
+                word = word.toLower();
+                if (!word.isEmpty()) word[0] = word[0].toUpper();
+            }
+            QString label = words.join(' ');
+            for (const auto &[source, replacement] : {
+                     std::pair<QString, QString>{"Column Maximum Maximum", "Col Peak Max"},
+                     {"Column Maximum P90", "Col Peak P90"},
+                     {"Column Strengths Maximum", "Col Strength Max"},
+                     {"Column Strengths P90", "Col Strength P90"},
+                     {"Left Side Candidate Count", "Left Cand Count"},
+                     {"Right Side Candidate Count", "Right Cand Count"},
+                     {"Search Bottom Ratio", "Search Y1 Ratio"},
+                     {"Search Top Ratio", "Search Y0 Ratio"},
+                     {"Search Start Y", "Search Y0"},
+                     {"Search Stop Y", "Search Y1"}})
+                label.replace(source, replacement);
+            static const QHash<QString, QString> abbreviations{
+                {"Boundaries", "Bounds"}, {"Boundary", "Bound"}, {"Brightness", "Bright"},
+                {"Candidate", "Cand"}, {"Candidates", "Cands"}, {"Column", "Col"},
+                {"Columns", "Cols"}, {"Height", "H"}, {"Horizontal", "Horiz"},
+                {"Image", "Img"}, {"Maximum", "Max"}, {"Minimum", "Min"},
+                {"Point", "Pt"}, {"Points", "Pts"}, {"Previous", "Prev"},
+                {"Residual", "Resid"}, {"Strengths", "Strength"}, {"Threshold", "Thresh"},
+                {"Tracking", "Track"}, {"Vertical", "Vert"}};
+            words = label.split(' ', Qt::SkipEmptyParts);
+            for (QString &word : words)
+                word = abbreviations.value(word, word);
+            label = words.join(' ');
+            if (result.stage == MeasurementStage::Crown && label.startsWith("Crown ")) label.remove(0, 6);
+            else if (result.stage == MeasurementStage::Body && label.startsWith("Body ")) label.remove(0, 5);
+            return label;
+        };
 
         for (const auto &[key, value] : result.diagnostics)
         {
-            QTreeWidgetItem *group = measurement;
+            QTreeWidgetItem *group = algorithm;
             if (key.find("camera1") != std::string::npos)
                 group = camera1;
             else if (key.find("camera2") != std::string::npos)
                 group = camera2;
+            else if (key.find("cycle_") != std::string::npos || key == "source" ||
+                     key.find("tracking_active") != std::string::npos)
+                group = runtime;
 
             QString unit;
-            if (key.ends_with("_px")) unit = "px";
-            else if (key.ends_with("_mm")) unit = "mm";
-            else if (key.ends_with("_ms")) unit = "ms";
-
-            QString label = QString::fromStdString(key);
-            label.replace('_', ' ');
-            auto *item = new QTreeWidgetItem(group, {label, QString::number(value, 'f', 3), unit});
+            const QString label = diagnosticLabel(key, unit);
+            auto *item = new QTreeWidgetItem(group, {label, formattedValue(value), unit});
             item->setToolTip(0, QString::fromStdString(key));
+            item->setToolTip(1, formattedValue(value));
         }
     }
 }

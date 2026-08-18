@@ -1,11 +1,10 @@
 #pragma once
 
+#include "pva/base_page.hpp"
 #include "pva/config.hpp"
 #include "pva/measurement_engine.hpp"
 #include <QElapsedTimer>
 #include <QHash>
-#include <QWidget>
-#include <map>
 #include <memory>
 
 QT_BEGIN_NAMESPACE
@@ -15,8 +14,9 @@ QT_END_NAMESPACE
 namespace pva
 {
     class DalsaCamera;
+    class CameraManager;
 
-    class PageCamera final : public QWidget
+    class PageCamera final : public BasePage
     {
         Q_OBJECT
     public:
@@ -50,9 +50,14 @@ namespace pva
         void savePipeline();
 
     private:
+        void initializeState() override;
+        void setupPageUi() override;
+        void bindEvents() override;
+        void bindSignals() override;
+        void onReady() override;
         std::unique_ptr<Ui::PageCamera> ui_;
         MeasurementConfig config_;
-        std::map<QString, std::unique_ptr<DalsaCamera>> cameras_;
+        std::unique_ptr<CameraManager> cameraManager_;
         DalsaCamera *current_{};
         QString streamOwner_;
         MeasurementStage onlineStage_{MeasurementStage::Idle};
@@ -62,7 +67,6 @@ namespace pva
         QHash<QString, qint64> lastExposurePublishNs_;
         QElapsedTimer clock_;
         qint64 lastManualPreviewNs_{};
-        bool sdkInitialized_{false};
         bool cameraDiscoveryRunning_{false};
 
         DalsaCamera *camera(const QString &role) const;

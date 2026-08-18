@@ -13,6 +13,9 @@
 namespace
 {
     std::atomic_int saperaUsers{0};
+#ifdef PVA_HAS_SAPERA
+    SapManager::StatusMode previousStatusMode{SapManager::StatusNotify};
+#endif
 
     struct CameraDescriptor
     {
@@ -56,11 +59,17 @@ namespace pva
     bool DalsaCamera::initialize(QString *error)
     {
 #ifdef PVA_HAS_SAPERA
-        if (saperaUsers.fetch_add(1) == 0 && !SapManager::Open())
+        if (saperaUsers.fetch_add(1) == 0)
         {
-            saperaUsers.store(0);
-            if (error) *error = "SapManager::Open failed";
-            return false;
+            if (!SapManager::Open())
+            {
+                saperaUsers.store(0);
+                if (error) *error = "SapManager::Open failed";
+                return false;
+            }
+            // SDK 错误由程序状态栏和日志统一显示，禁止 Sapera 弹出阻塞式错误窗口。
+            previousStatusMode = SapManager::GetDisplayStatusMode();
+            SapManager::SetDisplayStatusMode(SapManager::StatusLog);
         }
         return true;
 #else
@@ -74,7 +83,10 @@ namespace pva
         descriptors.clear();
 #ifdef PVA_HAS_SAPERA
         if (saperaUsers.load() > 0 && saperaUsers.fetch_sub(1) == 1)
+        {
+            SapManager::SetDisplayStatusMode(previousStatusMode);
             SapManager::Close();
+        }
 #endif
     }
 
@@ -83,19 +95,40 @@ namespace pva
         descriptors.clear();
         QStringList roles;
 #ifdef PVA_HAS_SAPERA
-        // Sapera 可直接按 DeviceUserID 查找服务器。发现阶段不要反复 Create/Destroy
-        // SapAcqDevice，否则部分 GigE 驱动版本会在启动时破坏内部堆状态。
+        // 先枚举 Acquisition Device，再按资源标签（CamExpert User Name）建立角色映射。
+        // 避免按不存在的用户名查询服务器时由 Sapera 弹出模态错误框。
         for (const auto &role : {QString("1"), QString("2")})
         {
-            std::array<char, CORSERVER_MAX_STRLEN> serverName{};
-            const QByteArray userName = role.toLatin1();
-            if (!SapManager::GetServerName(userName.constData(), serverName.data(), int(serverName.size())))
-                continue;
-            descriptors.insert(role, {serverName.data(), 0, {}, role});
-            roles.append(role);
+            bool found = false;
+            const int serverCount = SapManager::GetServerCount();
+            for (int serverIndex = 0; serverIndex < serverCount && !found; ++serverIndex)
+            {
+                std::array<char, CORSERVER_MAX_STRLEN> serverName{};
+                if (!SapManager::GetServerName(serverIndex, serverName.data(), int(serverName.size())))
+                    continue;
+                const int resourceCount = SapManager::GetResourceCount(serverIndex, SapManager::ResourceAcqDevice);
+                for (int resourceIndex = 0; resourceIndex < resourceCount; ++resourceIndex)
+                {
+                    std::array<char, SapManager::MaxLabelSize> userName{};
+                    if (!SapManager::GetResourceName(serverIndex, SapManager::ResourceAcqDevice,
+                                                     resourceIndex, userName.data(), int(userName.size())))
+                        continue;
+                    if (QString::fromLocal8Bit(userName.data()).trimmed() != role)
+                        continue;
+                    descriptors.insert(role, {serverName.data(), resourceIndex, {}, role});
+                    roles.append(role);
+                    found = true;
+                    break;
+                }
+            }
         }
-        if (roles.empty() && error)
-            *error = "No camera found with CamExpert User Name 1 or 2";
+        if (error && roles.size() < 2)
+        {
+            QStringList missing;
+            for (const auto &role : {QString("1"), QString("2")})
+                if (!descriptors.contains(role)) missing.append(role);
+            *error = "Camera User Name not found: " + missing.join(", ");
+        }
 #else
         if (error) *error = "Sapera LT SDK was not found when C++ was built";
 #endif

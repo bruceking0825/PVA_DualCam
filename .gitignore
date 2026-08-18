@@ -15,6 +15,7 @@ ag1/
 imgs/
 live_img/
 cpp/build-vscode/
+cpp/build-fast-debug/
 
 # Runtime logs and generated inspection output
 Log/

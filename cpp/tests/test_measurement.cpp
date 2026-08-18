@@ -9,6 +9,7 @@
 #include <QTemporaryDir>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 
@@ -95,7 +96,7 @@ int main(int argc, char **argv)
     check(neckResult.values.diameterMm && std::abs(*neckResult.values.diameterMm - 16.0) < 2.0, "Neck diameter keeps pixels-per-mm calculation");
     check(neckResult.overlay1.size() >= 4 && neckResult.overlay2.size() >= 4,
           "Neck overlays include contour ellipse center and lower vertex");
-    check(neckResult.diagnostics.contains("cycle_ms") && neckResult.diagnostics.at("cycle_ms") >= 0.0,
+    check(neckResult.diagnostics.contains("cycle_ms") && neckResult.diagnostics.at("cycle_ms").toDouble() >= 0.0,
           "Cycle diagnostic populated");
     check(neckResult.diagnostics.contains("neck_major_axis_camera1_px"),
           "Neck process diagnostics populated");
@@ -135,11 +136,31 @@ int main(int argc, char **argv)
     pva::MeasurementState crownState;
     crownState.validNeck = true;
     crownState.neckReflectorRois = std::array<pva::ReflectorRoi, 2>{dynamicRoi, dynamicRoi};
-    crownState.neckCentersPx = std::array<cv::Point2d, 2>{cv::Point2d(150, 20), cv::Point2d(150, 20)};
+    crownState.neckCentersPx = std::array<cv::Point2d, 2>{cv::Point2d(140, 20), cv::Point2d(160, 20)};
     pva::MeasurementEngine crownEngine(config, crownState);
     auto crownResult = crownEngine.process(meniscus, meniscus, pva::MeasurementStage::Crown);
     check(crownResult.valid, "Crown reflector-ROI lower vertex valid");
-    check(crownEngine.state().crownBoundaryPointsPx && std::abs((*crownEngine.state().crownBoundaryPointsPx)[0].x - 149.5) < 1, "Crown stores only centered lower vertex");
+    const auto hasStoredNeckCenter = [](const std::vector<pva::OverlayElement> &overlays,
+                                        cv::Point2d expectedCenter)
+    {
+        return std::ranges::any_of(overlays, [expectedCenter](const pva::OverlayElement &element)
+                                  { return element.type == pva::OverlayType::Cross &&
+                                           !element.points.empty() &&
+                                           cv::norm(element.points.front() - expectedCenter) < 0.01 &&
+                                           element.colorBgr == cv::Scalar(0, 255, 0); });
+    };
+    check(hasStoredNeckCenter(crownResult.overlay1, {140, 20}) &&
+              hasStoredNeckCenter(crownResult.overlay2, {160, 20}),
+          "Crown overlays retain both stored Neck centers");
+    check(crownEngine.state().crownBoundaryPointsPx &&
+              std::abs((*crownEngine.state().crownBoundaryPointsPx)[0].x - 140.0) < 0.01 &&
+              std::abs((*crownEngine.state().crownBoundaryPointsPx)[1].x - 160.0) < 0.01,
+          "Crown lower vertices use the stored Neck center x coordinates");
+    check(crownResult.diagnostics.size() >= 40 &&
+              crownResult.diagnostics.contains("crown_boundary_camera1_px") &&
+              crownResult.diagnostics.contains("crown_column_strengths_maximum_camera2") &&
+              crownResult.diagnostics.contains("crown_edge_model"),
+          "Crown Process diagnostics match the Python field set");
     config.body.horizontalMarginPx = 10;
     config.body.bottomMarginPx = 10;
     config.body.minEdgePoints = 20;
@@ -150,7 +171,18 @@ int main(int argc, char **argv)
     pva::MeasurementEngine bodyEngine(config, crownState);
     auto bodyResult = bodyEngine.process(meniscus, meniscus, pva::MeasurementStage::Body);
     check(bodyResult.valid, "Body reflector-ROI lower vertex valid");
-    check(bodyEngine.state().bodyBoundaryPointsPx && std::abs((*bodyEngine.state().bodyBoundaryPointsPx)[0].x - 149.5) < 1, "Body stores only centered lower vertex");
+    check(hasStoredNeckCenter(bodyResult.overlay1, {140, 20}) &&
+              hasStoredNeckCenter(bodyResult.overlay2, {160, 20}),
+          "Body overlays retain both stored Neck centers");
+    check(bodyEngine.state().bodyBoundaryPointsPx &&
+              std::abs((*bodyEngine.state().bodyBoundaryPointsPx)[0].x - 140.0) < 0.01 &&
+              std::abs((*bodyEngine.state().bodyBoundaryPointsPx)[1].x - 160.0) < 0.01,
+          "Body lower vertices use the stored Neck center x coordinates");
+    check(bodyResult.diagnostics.size() >= 40 &&
+              bodyResult.diagnostics.contains("body_boundary_camera1_px") &&
+              bodyResult.diagnostics.contains("body_column_maximum_p90_camera2") &&
+              bodyResult.diagnostics.contains("body_edge_model"),
+          "Body Process diagnostics match the Python field set");
 
     pva::MeasurementState state;
     state.validNeck = true;

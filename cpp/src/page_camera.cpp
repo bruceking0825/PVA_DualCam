@@ -1,5 +1,8 @@
 #include "pva/page_camera.hpp"
 #include "pva/app_signals.hpp"
+#include "pva/camera_manager.hpp"
+#include "pva/camera_state_store.hpp"
+#include "pva/config_manager.hpp"
 #include "pva/dalsa_camera.hpp"
 #include "ui_PageCamera.h"
 #include <QCoreApplication>
@@ -105,10 +108,19 @@ namespace pva
     }
 
     PageCamera::PageCamera(MeasurementConfig config, QWidget *parent)
-        : QWidget(parent), ui_(std::make_unique<Ui::PageCamera>()), config_(std::move(config))
+        : BasePage(parent), ui_(std::make_unique<Ui::PageCamera>()), config_(std::move(config))
     {
-        ui_->setupUi(this);
+        initializePage([this] { ui_->setupUi(this); });
+    }
+
+    void PageCamera::initializeState()
+    {
+        cameraManager_ = std::make_unique<CameraManager>(this);
         clock_.start();
+    }
+
+    void PageCamera::setupPageUi()
+    {
         ui_->orgGraphicsView->setViewId(1);
         ui_->transGraphicsView->setViewId(2);
         ui_->orgGraphicsView->setText("Original Image");
@@ -122,7 +134,10 @@ namespace pva
         ui_->combTrigMode->clear(); ui_->combTrigMode->addItem("Off", 0); ui_->combTrigMode->addItem("On", 1);
         ui_->combTrigSource->clear(); ui_->combTrigSource->addItem("Software", 0); ui_->combTrigSource->addItem("Line1", 1);
         ui_->combTrigEdge->clear(); ui_->combTrigEdge->addItem("FallingEdge", 0); ui_->combTrigEdge->addItem("RisingEdge", 1);
+    }
 
+    void PageCamera::bindEvents()
+    {
         connect(ui_->btnOrgOpen, &QPushButton::clicked, this, &PageCamera::openImage);
         connect(ui_->orgGraphicsView, &CustomGraphicsView::pixelInfoChanged, this,
                 [this](int, int x, int y, int gray)
@@ -148,37 +163,44 @@ namespace pva
         connect(ui_->btnConfig, &QPushButton::clicked, this, [this] { setStatus(true, QString("Pipeline: %1").arg(graphPath_)); });
         connect(ui_->btnSave, &QPushButton::clicked, this, &PageCamera::savePipeline);
         connect(ui_->btnLoad, &QPushButton::clicked, this, &PageCamera::loadPipeline);
+    }
 
+    void PageCamera::bindSignals()
+    {
         auto &appSignals = AppSignals::instance();
         connect(&appSignals, &AppSignals::onlineCameraStartRequested, this, &PageCamera::startOnlineCameras);
         connect(&appSignals, &AppSignals::onlineCameraStopRequested, this, &PageCamera::stopOnlineCameras);
         connect(&appSignals, &AppSignals::onlineCameraTriggerRequested, this, &PageCamera::triggerOnlineCameras);
         connect(&appSignals, &AppSignals::onlineStageChanged, this, [this](int stage) { onlineStage_ = MeasurementStage(stage); });
         connect(&appSignals, &AppSignals::appClose, this, &PageCamera::closeAll);
+        connect(&ConfigManager::instance(), &ConfigManager::batchChanged, this, [this]
+                { reloadConfig(ConfigManager::instance().config()); });
+        connect(cameraManager_.get(), &CameraManager::frameReady, this, &PageCamera::onFrame);
+        connect(cameraManager_.get(), &CameraManager::captureFailed, this, &PageCamera::onCaptureFailed);
+    }
 
+    void PageCamera::onReady()
+    {
         graphPath_ = findGraphPath();
         QString error;
-        sdkInitialized_ = DalsaCamera::initialize(&error);
-        if (!sdkInitialized_) setStatus(false, error);
+        if (!cameraManager_->initialize(&error)) setStatus(false, error);
         else refreshCameras();
     }
     PageCamera::~PageCamera()
     {
         closeAll();
-        if (sdkInitialized_) DalsaCamera::shutdown();
     }
     void PageCamera::reloadConfig(const MeasurementConfig &config) { config_ = config; }
     DalsaCamera *PageCamera::camera(const QString &role) const
     {
-        const auto iterator = cameras_.find(role);
-        return iterator == cameras_.end() ? nullptr : iterator->second.get();
+        return cameraManager_->getByRole(role);
     }
     void PageCamera::refreshCameras()
     {
         if (cameraDiscoveryRunning_) return;
         closeAll();
         current_ = nullptr;
-        cameras_.clear();
+        cameraManager_->reset({});
         ui_->combCameraList->clear();
         cameraDiscoveryRunning_ = true;
         ui_->btnRefresh->setEnabled(false);
@@ -196,17 +218,12 @@ namespace pva
             {
                 if (!guard) return;
                 guard->cameraDiscoveryRunning_ = false;
+                guard->cameraManager_->reset(ids);
                 for (const auto &id : ids)
                     if (id == "1" || id == "2")
-                    {
-                        auto value = std::make_unique<DalsaCamera>(id);
-                        connect(value.get(), &DalsaCamera::frameReady, guard, &PageCamera::onFrame, Qt::QueuedConnection);
-                        connect(value.get(), &DalsaCamera::captureFailed, guard, &PageCamera::onCaptureFailed, Qt::QueuedConnection);
-                        guard->cameras_.insert_or_assign(id, std::move(value));
                         guard->ui_->combCameraList->addItem("CAM" + id, id);
-                    }
                 if (guard->ui_->combCameraList->count()) guard->ui_->combCameraList->setCurrentIndex(0);
-                guard->setStatus(error.isEmpty(), error.isEmpty() ? QString("%1 camera(s) found").arg(guard->cameras_.size()) : error);
+                guard->setStatus(error.isEmpty(), error.isEmpty() ? QString("%1 camera(s) found").arg(guard->cameraManager_->size()) : error);
                 guard->refreshUi();
             }, Qt::QueuedConnection);
         });
@@ -349,22 +366,22 @@ namespace pva
     }
     double PageCamera::loadRememberedExposure(const QString &role, double fallback) const
     {
-        QFile file(cameraStatePath(config_));
-        if (!file.open(QIODevice::ReadOnly)) return fallback;
-        const auto values = QJsonDocument::fromJson(file.readAll()).object().value("exposure_us").toObject();
-        return std::clamp(values.value("camera" + role).toDouble(fallback), config_.camera.autoExposureMinUs, config_.camera.autoExposureMaxUs);
+        CameraStateStore store(cameraStatePath(config_));
+        return store.loadExposures({{"camera" + role, fallback}},
+                                   config_.camera.autoExposureMinUs,
+                                   config_.camera.autoExposureMaxUs)
+            .value("camera" + role, fallback);
     }
     void PageCamera::saveRememberedExposures() const
     {
-        QJsonObject exposures;
-        for (const auto &role : {QString("1"), QString("2")}) if (auto *value = camera(role); value && value->isOpen()) exposures["camera" + role] = value->exposure();
+        QHash<QString, double> exposures;
+        for (const auto &role : {QString("1"), QString("2")}) if (auto *value = camera(role); value && value->isOpen()) exposures.insert("camera" + role, value->exposure());
         if (exposures.isEmpty()) return;
-        QFile file(cameraStatePath(config_));
-        if (file.open(QIODevice::WriteOnly)) file.write(QJsonDocument(QJsonObject{{"version", 1}, {"exposure_us", exposures}}).toJson(QJsonDocument::Indented));
+        CameraStateStore(cameraStatePath(config_)).saveExposures(exposures);
     }
     void PageCamera::closeAll()
     {
-        for (auto &[role, value] : cameras_) value->close();
+        cameraManager_->closeAll();
         streamOwner_.clear();
         refreshUi();
     }

@@ -1,7 +1,7 @@
 #pragma once
+#include "pva/base_page.hpp"
 #include "pva/config.hpp"
 #include "pva/measurement_worker.hpp"
-#include <QWidget>
 #include <QElapsedTimer>
 #include <QHash>
 #include <array>
@@ -22,7 +22,7 @@ namespace pva
 {
     class OpcUaWorker;
 
-    class PageHome final : public QWidget
+    class PageHome final : public BasePage
     {
         Q_OBJECT
     public:
@@ -48,6 +48,11 @@ namespace pva
         void onPlcControls(int stageValue, bool shoulderTransition);
 
     private:
+        void initializeState() override;
+        void setupPageUi() override;
+        void bindEvents() override;
+        void bindSignals() override;
+        void onReady() override;
         std::unique_ptr<Ui::PageHome> ui_;
         MeasurementConfig config_;
         std::unique_ptr<MeasurementWorker> worker_;
