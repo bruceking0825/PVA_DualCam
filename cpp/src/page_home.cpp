@@ -19,10 +19,29 @@
 
 namespace pva
 {
+    namespace
+    {
+        bool runtimeSettingsEqual(const RuntimeSettings &left, const RuntimeSettings &right)
+        {
+            return left.disableCameraForPlcTest == right.disableCameraForPlcTest &&
+                   left.connectPlcInOffline == right.connectPlcInOffline &&
+                   left.idleSampleIntervalMs == right.idleSampleIntervalMs &&
+                   left.neckSampleIntervalMs == right.neckSampleIntervalMs &&
+                   left.crownSampleIntervalMs == right.crownSampleIntervalMs &&
+                   left.bodySampleIntervalMs == right.bodySampleIntervalMs &&
+                   left.endconeSampleIntervalMs == right.endconeSampleIntervalMs &&
+                   left.offlineImageDir == right.offlineImageDir &&
+                   left.loopIntervalMs == right.loopIntervalMs &&
+                   left.stateFile == right.stateFile &&
+                   left.stereoPairMaxDeltaMs == right.stereoPairMaxDeltaMs;
+        }
+    }
+
     PageHome::PageHome(MeasurementConfig config, QWidget *parent)
         : BasePage(parent), ui_(std::make_unique<Ui::PageHome>()), config_(std::move(config))
     {
-        initializePage([this] { ui_->setupUi(this); });
+        initializePage([this]
+                       { ui_->setupUi(this); });
     }
 
     void PageHome::initializeState()
@@ -63,13 +82,17 @@ namespace pva
         connect(ui_->cam1GraphicsView, &CustomGraphicsView::pixelInfoChanged, this,
                 [this](int, int x, int y, int gray)
                 {
-                    viewInfo_[0].x = x; viewInfo_[0].y = y; viewInfo_[0].gray = gray;
+                    viewInfo_[0].x = x;
+                    viewInfo_[0].y = y;
+                    viewInfo_[0].gray = gray;
                     updateViewInfo(1);
                 });
         connect(ui_->cam2GraphicsView, &CustomGraphicsView::pixelInfoChanged, this,
                 [this](int, int x, int y, int gray)
                 {
-                    viewInfo_[1].x = x; viewInfo_[1].y = y; viewInfo_[1].gray = gray;
+                    viewInfo_[1].x = x;
+                    viewInfo_[1].y = y;
+                    viewInfo_[1].gray = gray;
                     updateViewInfo(2);
                 });
     }
@@ -84,6 +107,9 @@ namespace pva
         connect(&appSignals, &AppSignals::onlineCameraFailed, this, &PageHome::onOnlineCameraFailed);
         connect(&appSignals, &AppSignals::appClose, this, &PageHome::stopRuntime);
         connect(&ConfigManager::instance(), &ConfigManager::batchChanged, this, [this]
+                { reloadConfig(ConfigManager::instance().config()); });
+        connect(&ConfigManager::instance(), &ConfigManager::entryChanged, this,
+                [this](const QString &, const QString &)
                 { reloadConfig(ConfigManager::instance().config()); });
     }
 
@@ -109,14 +135,32 @@ namespace pva
     }
     void PageHome::reloadConfig(const MeasurementConfig &config)
     {
-        const bool restart = running_;
+        // 与 Python 版本一致：算法、曝光控制等普通参数直接送入运行中的
+        // worker；只有运行框架参数或在线相机 ROI 改变时才重启采集链路。
+        const bool restart = running_ &&
+                             (!runtimeSettingsEqual(config_.runtime, config.runtime) ||
+                              (activeOnline_ && config_.camera.onlineCropRoi != config.camera.onlineCropRoi));
         const bool online = activeOnline_;
+        const bool offlineDirectoryChanged = config_.runtime.offlineImageDir != config.runtime.offlineImageDir;
         if (restart)
             stopRuntime();
         config_ = config;
-        reloadImages(true);
+        if (worker_)
+            worker_->updateConfig(config_);
+        if (offlineDirectoryChanged)
+            reloadImages(true);
+        else
+            refreshControls();
+        if (!restart)
+        {
+            if (activeOnline_ && onlineTimer_->isActive())
+                onlineTimer_->start(onlineSampleInterval());
+            else if (running_ && offlineTimer_->isActive())
+                offlineTimer_->start(std::max(50, config_.runtime.loopIntervalMs));
+        }
         if (restart)
-            QTimer::singleShot(0, this, [this, online] { startRuntime(online); });
+            QTimer::singleShot(0, this, [this, online]
+                               { startRuntime(online); });
     }
     void PageHome::toggleRuntime()
     {
@@ -129,7 +173,8 @@ namespace pva
     }
     void PageHome::startRuntime(bool online)
     {
-        if (running_) return;
+        if (running_)
+            return;
         reloadImages(true);
         if (!online && imagePaths_.isEmpty())
         {
@@ -148,8 +193,7 @@ namespace pva
             connect(worker_.get(), &MeasurementWorker::failed, this, [this](const QString &m)
                     {
                         setStatus(m, false);
-                        log(m);
-                    });
+                        log(m); });
             worker_->start();
         }
         running_ = true;
@@ -176,15 +220,27 @@ namespace pva
     }
     void PageHome::stopRuntime()
     {
-        if (!running_ && !worker_) return;
+        if (!running_ && !worker_)
+            return;
         const bool wasOnline = activeOnline_;
         running_ = false;
         offlineTimer_->stop();
         onlineTimer_->stop();
         onlineFrames_.clear();
         stopPlc();
-        if (wasOnline) emit AppSignals::instance().onlineCameraStopRequested();
-        if (worker_) { worker_->stop(); worker_->wait(); worker_.reset(); }
+        if (wasOnline)
+            emit AppSignals::instance().onlineCameraStopRequested();
+        if (worker_)
+        {
+            // 当前帧可能仍在 OpenCV 中计算。不要在 UI 线程等待它结束；
+            // 断开页面信号后让线程自行收尾并在 finished 时释放。
+            auto *retiringWorker = worker_.release();
+            disconnect(retiringWorker, nullptr, this, nullptr);
+            retiringWorker->setParent(this);
+            connect(retiringWorker, &QThread::finished,
+                    retiringWorker, &QObject::deleteLater);
+            retiringWorker->stop();
+        }
         activeOnline_ = false;
         updateViewInfo(1);
         updateViewInfo(2);
@@ -205,7 +261,8 @@ namespace pva
         }
         stopRuntime();
         ui_->btnOnline->setText(online ? "Online" : "Offline");
-        if (online) startRuntime(true);
+        if (online)
+            startRuntime(true);
         refreshControls();
     }
     void PageHome::selectStage()
@@ -224,7 +281,8 @@ namespace pva
         if (activeOnline_)
         {
             emit AppSignals::instance().onlineStageChanged(int(stage_));
-            if (onlineTimer_->isActive()) onlineTimer_->start(onlineSampleInterval());
+            if (onlineTimer_->isActive())
+                onlineTimer_->start(onlineSampleInterval());
         }
         log(QString("Offline stage selected: %1").arg(b->text()));
         if (running_)
@@ -294,8 +352,8 @@ namespace pva
         ui_->lblDiameter->setText(r.values.diameterMm ? QString::number(*r.values.diameterMm, 'f', 3) : "--");
         const auto cycle = r.diagnostics.find("cycle_ms");
         ui_->lblCycle->setText(cycle == r.diagnostics.end()
-                                  ? "Cycle: --"
-                                  : QString("Cycle: %1 ms").arg(cycle->second.toDouble(), 0, 'f', 1));
+                                   ? "Cycle: --"
+                                   : QString("Cycle: %1 ms").arg(cycle->second.toDouble(), 0, 'f', 1));
         updateProcessDiagnostics(r);
         setStatus(QString::fromStdString(r.message), r.valid);
         if (!r.valid)
@@ -329,15 +387,18 @@ namespace pva
 
     void PageHome::triggerOnlineCapture()
     {
-        if (!running_ || !activeOnline_) return;
+        if (!running_ || !activeOnline_)
+            return;
         onlineFrames_.clear();
         emit AppSignals::instance().onlineCameraTriggerRequested();
     }
     void PageHome::onCameraFrame(const QString &role, const cv::Mat &image)
     {
-        if (!running_ || !activeOnline_ || !worker_ || (role != "1" && role != "2")) return;
+        if (!running_ || !activeOnline_ || !worker_ || (role != "1" && role != "2"))
+            return;
         onlineFrames_[role] = {onlineClock_.nsecsElapsed(), image.clone()};
-        if (!onlineFrames_.contains("1") || !onlineFrames_.contains("2")) return;
+        if (!onlineFrames_.contains("1") || !onlineFrames_.contains("2"))
+            return;
         const auto first = onlineFrames_.value("1"), second = onlineFrames_.value("2");
         const double deltaMs = std::abs(first.timestampNs - second.timestampNs) / 1.0e6;
         ui_->lblFrameDelta->setText(QString("Frame delta: %1 ms").arg(deltaMs, 0, 'f', 1));
@@ -345,7 +406,9 @@ namespace pva
         {
             onlineFrames_.remove(first.timestampNs < second.timestampNs ? "1" : "2");
             const QString message = QString("Online stereo pair dropped: frame delta %1 ms > %2 ms").arg(deltaMs, 0, 'f', 1).arg(config_.runtime.stereoPairMaxDeltaMs);
-            setStatus(message, false); log(message); return;
+            setStatus(message, false);
+            log(message);
+            return;
         }
         onlineFrames_.clear();
         const auto effective = stage_ == MeasurementStage::Idle ? MeasurementStage::Neck : stage_;
@@ -353,12 +416,21 @@ namespace pva
     }
     void PageHome::onCameraExposure(const QString &role, double exposureUs)
     {
-        if (role == "1") { viewInfo_[0].exposureUs = exposureUs; updateViewInfo(1); }
-        else if (role == "2") { viewInfo_[1].exposureUs = exposureUs; updateViewInfo(2); }
+        if (role == "1")
+        {
+            viewInfo_[0].exposureUs = exposureUs;
+            updateViewInfo(1);
+        }
+        else if (role == "2")
+        {
+            viewInfo_[1].exposureUs = exposureUs;
+            updateViewInfo(2);
+        }
     }
     void PageHome::onOnlineCameraStarted()
     {
-        if (!running_ || !activeOnline_) return;
+        if (!running_ || !activeOnline_)
+            return;
         setConnectionLed(ui_->lblCamera1Status, true);
         setConnectionLed(ui_->lblCamera2Status, true);
         onlineTimer_->start(onlineSampleInterval());
@@ -376,7 +448,11 @@ namespace pva
     {
         log("Online camera failed: " + message);
         stopRuntime();
-        { QSignalBlocker blocker(ui_->btnOnline); ui_->btnOnline->setChecked(false); ui_->btnOnline->setText("Offline"); }
+        {
+            QSignalBlocker blocker(ui_->btnOnline);
+            ui_->btnOnline->setChecked(false);
+            ui_->btnOnline->setText("Offline");
+        }
         setStatus("Online camera failed: " + message, false);
         refreshControls();
     }
@@ -384,11 +460,16 @@ namespace pva
     {
         switch (stage_)
         {
-        case MeasurementStage::Neck: return config_.runtime.neckSampleIntervalMs;
-        case MeasurementStage::Crown: return config_.runtime.crownSampleIntervalMs;
-        case MeasurementStage::Body: return config_.runtime.bodySampleIntervalMs;
-        case MeasurementStage::Endcone: return config_.runtime.endconeSampleIntervalMs;
-        default: return config_.runtime.idleSampleIntervalMs;
+        case MeasurementStage::Neck:
+            return config_.runtime.neckSampleIntervalMs;
+        case MeasurementStage::Crown:
+            return config_.runtime.crownSampleIntervalMs;
+        case MeasurementStage::Body:
+            return config_.runtime.bodySampleIntervalMs;
+        case MeasurementStage::Endcone:
+            return config_.runtime.endconeSampleIntervalMs;
+        default:
+            return config_.runtime.idleSampleIntervalMs;
         }
     }
     void PageHome::setConnectionLed(QLabel *label, bool connected)
@@ -396,79 +477,108 @@ namespace pva
         // 与 Python 版本一致：使用资源图片表示连接状态，不给 QLabel 绘制红绿背景。
         label->setStyleSheet({});
         label->setPixmap(QPixmap(connected
-                                    ? ":/images/images/images/ledLow.png"
-                                    : ":/images/images/images/ledHigh.png"));
+                                     ? ":/images/images/images/ledLow.png"
+                                     : ":/images/images/images/ledHigh.png"));
     }
     void PageHome::addAutoExposureRoi(std::vector<OverlayElement> &elements, const cv::Rect &roi, const cv::Size &size) const
     {
         const cv::Rect clipped = roi & cv::Rect(0, 0, size.width, size.height);
-        if (clipped.empty()) return;
+        if (clipped.empty())
+            return;
         elements.push_back({OverlayType::Polyline,
-                            {{double(clipped.x), double(clipped.y)}, {double(clipped.x + clipped.width), double(clipped.y)},
-                             {double(clipped.x + clipped.width), double(clipped.y + clipped.height)}, {double(clipped.x), double(clipped.y + clipped.height)}},
-                            {255, 0, 0}, 2, true});
+                            {{double(clipped.x), double(clipped.y)}, {double(clipped.x + clipped.width), double(clipped.y)}, {double(clipped.x + clipped.width), double(clipped.y + clipped.height)}, {double(clipped.x), double(clipped.y + clipped.height)}},
+                            {255, 0, 0},
+                            2,
+                            true});
     }
     double PageHome::roiMean(const cv::Mat &image, const cv::Rect &roi)
     {
         const cv::Rect clipped = roi & cv::Rect(0, 0, image.cols, image.rows);
-        if (clipped.empty()) return 0.0;
+        if (clipped.empty())
+            return 0.0;
         cv::Mat gray;
         const cv::Mat selected = image(clipped);
-        if (selected.channels() == 1) gray = selected;
-        else cv::cvtColor(selected, gray, selected.channels() == 4 ? cv::COLOR_BGRA2GRAY : cv::COLOR_BGR2GRAY);
+        if (selected.channels() == 1)
+            gray = selected;
+        else
+            cv::cvtColor(selected, gray, selected.channels() == 4 ? cv::COLOR_BGRA2GRAY : cv::COLOR_BGR2GRAY);
         return cv::mean(gray)[0];
     }
     void PageHome::updateViewInfo(int viewId)
     {
-        if (viewId < 1 || viewId > 2) return;
+        if (viewId < 1 || viewId > 2)
+            return;
         const auto &info = viewInfo_[size_t(viewId - 1)];
         const QString light = info.light ? QString::number(*info.light, 'f', 1) : "--";
         const QString exposure = activeOnline_ && info.exposureUs
-                                     ? QString::number(*info.exposureUs / 1000.0, 'f', 2) : "--";
+                                     ? QString::number(*info.exposureUs / 1000.0, 'f', 2)
+                                     : "--";
         const QString mean = activeOnline_ && info.roiMean
-                                 ? QString::number(*info.roiMean, 'f', 1) : "--";
+                                 ? QString::number(*info.roiMean, 'f', 1)
+                                 : "--";
         auto *label = viewId == 1 ? ui_->lblCam1Info : ui_->lblCam2Info;
         label->setText(QString("Pos (%1,%2) | G %3 | Light %4 | Exp %5 ms | Mean %6")
-                           .arg(info.x).arg(info.y).arg(info.gray).arg(light, exposure, mean));
+                           .arg(info.x)
+                           .arg(info.y)
+                           .arg(info.gray)
+                           .arg(light, exposure, mean));
     }
     void PageHome::startPlc()
     {
-        if (plcWorker_) return;
+        if (plcWorker_)
+            return;
         plcWorker_ = std::make_unique<OpcUaWorker>();
         connect(plcWorker_.get(), &OpcUaWorker::connectionChanged, this, [this](bool connected)
                 {
                     setConnectionLed(ui_->lblPlcStatus, connected);
-                    log(connected ? "PLC connected" : "PLC disconnected");
-                });
+                    log(connected ? "PLC connected" : "PLC disconnected"); });
         connect(plcWorker_.get(), &OpcUaWorker::controlsChanged, this, &PageHome::onPlcControls);
-        connect(plcWorker_.get(), &OpcUaWorker::failed, this, [this](const QString &message) { log(message); });
+        connect(plcWorker_.get(), &OpcUaWorker::failed, this, [this](const QString &message)
+                { log(message); });
         plcWorker_->start();
     }
     void PageHome::stopPlc()
     {
-        if (!plcWorker_) return;
-        plcWorker_->stop();
-        plcWorker_->wait();
-        plcWorker_.reset();
+        if (!plcWorker_)
+            return;
+        // OPC UA 读写即使设置了短超时也不应阻塞界面线程。
+        auto *retiringWorker = plcWorker_.release();
+        disconnect(retiringWorker, nullptr, this, nullptr);
+        retiringWorker->setParent(this);
+        connect(retiringWorker, &QThread::finished,
+                retiringWorker, &QObject::deleteLater);
+        retiringWorker->stop();
         setConnectionLed(ui_->lblPlcStatus, false);
     }
     void PageHome::onPlcControls(int stageValue, bool shoulderTransition)
     {
-        if (!activeOnline_) return;
+        if (!activeOnline_)
+            return;
         MeasurementStage next = MeasurementStage::Idle;
         switch (stageValue)
         {
-        case 1: next = MeasurementStage::Neck; break;
-        case 2: next = shoulderTransition ? MeasurementStage::Body : MeasurementStage::Crown; break;
-        case 3: next = MeasurementStage::Endcone; break;
-        case 4: next = MeasurementStage::Body; break;
-        default: break;
+        case 1:
+            next = MeasurementStage::Neck;
+            break;
+        case 2:
+            next = shoulderTransition ? MeasurementStage::Body : MeasurementStage::Crown;
+            break;
+        case 3:
+            next = MeasurementStage::Endcone;
+            break;
+        case 4:
+            next = MeasurementStage::Body;
+            break;
+        default:
+            break;
         }
-        if (next == stage_) return;
+        if (next == stage_)
+            return;
         stage_ = next;
         applyStageToUi();
         emit AppSignals::instance().onlineStageChanged(int(stage_));
-        if (onlineTimer_->isActive()) onlineTimer_->start(onlineSampleInterval());
+        if (onlineTimer_->isActive())
+            onlineTimer_->start(onlineSampleInterval());
         log(QString("PLC stage changed: %1").arg(stageValue));
     }
     void PageHome::applyStageToUi()
@@ -476,11 +586,20 @@ namespace pva
         QPushButton *selected = ui_->btnStageIdle;
         switch (stage_)
         {
-        case MeasurementStage::Neck: selected = ui_->btnStageNeck; break;
-        case MeasurementStage::Crown: selected = ui_->btnStageCrown; break;
-        case MeasurementStage::Body: selected = ui_->btnStageBody; break;
-        case MeasurementStage::Endcone: selected = ui_->btnStageEndcone; break;
-        default: break;
+        case MeasurementStage::Neck:
+            selected = ui_->btnStageNeck;
+            break;
+        case MeasurementStage::Crown:
+            selected = ui_->btnStageCrown;
+            break;
+        case MeasurementStage::Body:
+            selected = ui_->btnStageBody;
+            break;
+        case MeasurementStage::Endcone:
+            selected = ui_->btnStageEndcone;
+            break;
+        default:
+            break;
         }
         QSignalBlocker blocker(selected);
         selected->setChecked(true);
@@ -491,7 +610,7 @@ namespace pva
         ui_->lblStatus->setText(message);
         ui_->lblStatus->setToolTip(message);
         ui_->lblStatus->setStyleSheet(QString("background-color: %1; color: black; border-radius: 4px; padding: 4px 6px;")
-                                         .arg(ok ? "rgb(42, 170, 80)" : "rgb(220, 70, 70)"));
+                                          .arg(ok ? "rgb(42, 170, 80)" : "rgb(220, 70, 70)"));
     }
     cv::Mat PageHome::readImage(const QString &path)
     {
@@ -518,7 +637,8 @@ namespace pva
 
         const auto formattedValue = [](const QVariant &value)
         {
-            if (!value.isValid() || value.isNull()) return QString("NA");
+            if (!value.isValid() || value.isNull())
+                return QString("NA");
             if (value.metaType().id() == QMetaType::Bool)
                 return value.toBool() ? QString("Yes") : QString("No");
             if (value.metaType().id() == QMetaType::Int || value.metaType().id() == QMetaType::UInt ||
@@ -539,7 +659,9 @@ namespace pva
         {
             QString normalized = QString::fromStdString(key);
             for (const auto &[suffix, suffixUnit] : {std::pair<QString, QString>{"_mm", "mm"},
-                                                     {"_px", "px"}, {"_ms", "ms"}, {"_deg", "deg"}})
+                                                     {"_px", "px"},
+                                                     {"_ms", "ms"},
+                                                     {"_deg", "deg"}})
                 if (normalized.endsWith(suffix))
                 {
                     normalized.chop(suffix.size());
@@ -552,7 +674,8 @@ namespace pva
             for (QString &word : words)
             {
                 word = word.toLower();
-                if (!word.isEmpty()) word[0] = word[0].toUpper();
+                if (!word.isEmpty())
+                    word[0] = word[0].toUpper();
             }
             QString label = words.join(' ');
             for (const auto &[source, replacement] : {
@@ -568,19 +691,15 @@ namespace pva
                      {"Search Stop Y", "Search Y1"}})
                 label.replace(source, replacement);
             static const QHash<QString, QString> abbreviations{
-                {"Boundaries", "Bounds"}, {"Boundary", "Bound"}, {"Brightness", "Bright"},
-                {"Candidate", "Cand"}, {"Candidates", "Cands"}, {"Column", "Col"},
-                {"Columns", "Cols"}, {"Height", "H"}, {"Horizontal", "Horiz"},
-                {"Image", "Img"}, {"Maximum", "Max"}, {"Minimum", "Min"},
-                {"Point", "Pt"}, {"Points", "Pts"}, {"Previous", "Prev"},
-                {"Residual", "Resid"}, {"Strengths", "Strength"}, {"Threshold", "Thresh"},
-                {"Tracking", "Track"}, {"Vertical", "Vert"}};
+                {"Boundaries", "Bounds"}, {"Boundary", "Bound"}, {"Brightness", "Bright"}, {"Candidate", "Cand"}, {"Candidates", "Cands"}, {"Column", "Col"}, {"Columns", "Cols"}, {"Height", "H"}, {"Horizontal", "Horiz"}, {"Image", "Img"}, {"Maximum", "Max"}, {"Minimum", "Min"}, {"Point", "Pt"}, {"Points", "Pts"}, {"Previous", "Prev"}, {"Residual", "Resid"}, {"Strengths", "Strength"}, {"Threshold", "Thresh"}, {"Tracking", "Track"}, {"Vertical", "Vert"}};
             words = label.split(' ', Qt::SkipEmptyParts);
             for (QString &word : words)
                 word = abbreviations.value(word, word);
             label = words.join(' ');
-            if (result.stage == MeasurementStage::Crown && label.startsWith("Crown ")) label.remove(0, 6);
-            else if (result.stage == MeasurementStage::Body && label.startsWith("Body ")) label.remove(0, 5);
+            if (result.stage == MeasurementStage::Crown && label.startsWith("Crown "))
+                label.remove(0, 6);
+            else if (result.stage == MeasurementStage::Body && label.startsWith("Body "))
+                label.remove(0, 5);
             return label;
         };
 

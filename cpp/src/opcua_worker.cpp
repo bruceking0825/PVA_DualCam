@@ -19,18 +19,30 @@ namespace pva
 
         std::optional<double> scalarNumber(const UA_Variant &value)
         {
-            if (!UA_Variant_isScalar(&value) || !value.data) return {};
-            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_BOOLEAN])) return *static_cast<UA_Boolean *>(value.data) ? 1.0 : 0.0;
-            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_SBYTE])) return *static_cast<UA_SByte *>(value.data);
-            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_BYTE])) return *static_cast<UA_Byte *>(value.data);
-            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_INT16])) return *static_cast<UA_Int16 *>(value.data);
-            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_UINT16])) return *static_cast<UA_UInt16 *>(value.data);
-            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_INT32])) return *static_cast<UA_Int32 *>(value.data);
-            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_UINT32])) return *static_cast<UA_UInt32 *>(value.data);
-            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_INT64])) return double(*static_cast<UA_Int64 *>(value.data));
-            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_UINT64])) return double(*static_cast<UA_UInt64 *>(value.data));
-            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_FLOAT])) return *static_cast<UA_Float *>(value.data);
-            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_DOUBLE])) return *static_cast<UA_Double *>(value.data);
+            if (!UA_Variant_isScalar(&value) || !value.data)
+                return {};
+            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_BOOLEAN]))
+                return *static_cast<UA_Boolean *>(value.data) ? 1.0 : 0.0;
+            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_SBYTE]))
+                return *static_cast<UA_SByte *>(value.data);
+            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_BYTE]))
+                return *static_cast<UA_Byte *>(value.data);
+            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_INT16]))
+                return *static_cast<UA_Int16 *>(value.data);
+            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_UINT16]))
+                return *static_cast<UA_UInt16 *>(value.data);
+            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_INT32]))
+                return *static_cast<UA_Int32 *>(value.data);
+            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_UINT32]))
+                return *static_cast<UA_UInt32 *>(value.data);
+            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_INT64]))
+                return double(*static_cast<UA_Int64 *>(value.data));
+            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_UINT64]))
+                return double(*static_cast<UA_UInt64 *>(value.data));
+            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_FLOAT]))
+                return *static_cast<UA_Float *>(value.data);
+            if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_DOUBLE]))
+                return *static_cast<UA_Double *>(value.data);
             return {};
         }
 
@@ -41,7 +53,8 @@ namespace pva
             const auto status = UA_Client_readValueAttribute(client, node(identifier), &value);
             const auto converted = status == UA_STATUSCODE_GOOD ? scalarNumber(value) : std::optional<double>{};
             UA_Variant_clear(&value);
-            if (!converted) return false;
+            if (!converted)
+                return false;
             output = *converted;
             return true;
         }
@@ -56,12 +69,26 @@ namespace pva
     }
 
     OpcUaWorker::OpcUaWorker(QObject *parent) : QThread(parent) {}
-    OpcUaWorker::~OpcUaWorker() { stop(); wait(); }
+    OpcUaWorker::~OpcUaWorker()
+    {
+        stop();
+        wait();
+    }
 
     void OpcUaWorker::stop()
     {
         stopping_ = true;
         requestInterruption();
+        stopCondition_.wakeAll();
+    }
+
+    bool OpcUaWorker::waitForStop(unsigned long milliseconds)
+    {
+        QMutexLocker lock(&waitMutex_);
+        if (stopping_ || isInterruptionRequested())
+            return true;
+        stopCondition_.wait(&waitMutex_, milliseconds);
+        return stopping_ || isInterruptionRequested();
     }
 
     void OpcUaWorker::queueDiameter(double diameterMm)
@@ -79,17 +106,20 @@ namespace pva
             if (!client)
             {
                 emit failed("Cannot create OPC UA client");
-                msleep(2000);
+                waitForStop(2000);
                 continue;
             }
-            UA_ClientConfig_setDefault(UA_Client_getConfig(client));
+            auto *clientConfig = UA_Client_getConfig(client);
+            UA_ClientConfig_setDefault(clientConfig);
+            // 防止模式切换刚好发生在网络读写时，UI 长时间等待 PLC 超时。
+            clientConfig->timeout = 500;
             auto status = UA_Client_connect(client, endpoint);
             if (status != UA_STATUSCODE_GOOD)
             {
                 emit connectionChanged(false);
                 emit failed(QString("PLC connection failed: %1").arg(UA_StatusCode_name(status)));
                 UA_Client_delete(client);
-                msleep(2000);
+                waitForStop(2000);
                 continue;
             }
 
@@ -119,12 +149,14 @@ namespace pva
                     }
                 }
                 UA_Client_run_iterate(client, 0);
-                msleep(100);
+                if (waitForStop(100))
+                    break;
             }
             UA_Client_disconnect(client);
             UA_Client_delete(client);
             emit connectionChanged(false);
-            if (!stopping_) msleep(2000);
+            if (!stopping_)
+                waitForStop(2000);
         }
     }
 }

@@ -47,7 +47,8 @@ namespace pva
     PageParameters::PageParameters(QString path, QWidget *parent)
         : BasePage(parent), ui_(std::make_unique<Ui::PageParameters>()), configPath_(std::move(path))
     {
-        initializePage([this] { ui_->setupUi(this); });
+        initializePage([this]
+                       { ui_->setupUi(this); });
     }
 
     void PageParameters::initializeState() {}
@@ -62,7 +63,9 @@ namespace pva
     {
         connect(ui_->btn_load_parm, &QPushButton::clicked, this, &PageParameters::load);
         connect(ui_->btn_cancel_parm, &QPushButton::clicked, this, [this]
-                { loadFromDisk(); });
+                {
+                    if (loadFromDisk())
+                        ConfigManager::instance().load(configPath_); });
         connect(ui_->btn_save_parm, &QPushButton::clicked, this, &PageParameters::save);
         connect(ui_->btn_add, &QPushButton::clicked, this, &PageParameters::addRow);
         connect(ui_->btn_insert, &QPushButton::clicked, this, &PageParameters::insertRow);
@@ -82,8 +85,7 @@ namespace pva
                         "border-left: 2px solid rgb(255, 121, 198);"
                         "background-color: rgb(86, 99, 136);"
                         "color: rgb(255, 255, 255);"
-                        "}");
-                });
+                        "}"); });
     }
 
     void PageParameters::bindSignals()
@@ -186,6 +188,22 @@ namespace pva
     }
     void PageParameters::save()
     {
+        for (const QString &group : std::as_const(groupOrder_))
+        {
+            for (const FormRow &row : formRows_.value(group))
+            {
+                if (!row.edit)
+                    continue;
+                QString error;
+                if (!ConfigManager::instance().setEntry(group, row.key, row.edit->text(), &error))
+                {
+                    QMessageBox::warning(this, "Parameter", error);
+                    row.edit->setFocus();
+                    return;
+                }
+            }
+        }
+
         QSaveFile file(configPath_);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
         {
@@ -206,7 +224,6 @@ namespace pva
             QMessageBox::warning(this, "Save", file.errorString());
             return;
         }
-        ConfigManager::instance().load(configPath_);
         emit configurationSaved();
         QMessageBox::information(this, "Save", "Settings saved successfully.");
     }
@@ -246,10 +263,10 @@ namespace pva
         for (int index = 0; index < rows.size(); ++index)
             if (rows[index].label)
                 rows[index].label->setStyleSheet(index == selectedRowIndex_
-                    ? "border-left: 2px solid rgb(189, 147, 249);"
-                      "background-color: rgb(86, 99, 136);"
-                      "color: rgb(255, 255, 255);"
-                    : QString{});
+                                                     ? "border-left: 2px solid rgb(189, 147, 249);"
+                                                       "background-color: rgb(86, 99, 136);"
+                                                       "color: rgb(255, 255, 255);"
+                                                     : QString{});
     }
 
     int PageParameters::rowIndexFor(const QObject *widget) const
@@ -275,7 +292,8 @@ namespace pva
             bool accepted = false;
             const QString oldKey = edit->property("key").toString();
             const QString newKey = QInputDialog::getText(this, "Parameter", "Key:",
-                                                         QLineEdit::Normal, oldKey, &accepted).trimmed();
+                                                         QLineEdit::Normal, oldKey, &accepted)
+                                       .trimmed();
             auto *form = currentForm();
             bool duplicate = false;
             for (int row = 0; form && row < form->rowCount(); ++row)
@@ -296,10 +314,16 @@ namespace pva
         return QWidget::eventFilter(watched, event);
     }
 
-    PageParameters::FormRow PageParameters::createRow(const QString &, const QString &key, const QString &value)
+    PageParameters::FormRow PageParameters::createRow(const QString &group, const QString &key, const QString &value)
     {
         auto *edit = new QLineEdit(value, this);
         edit->setProperty("key", key);
+        connect(edit, &QLineEdit::returnPressed, this, [this, group, edit]
+                {
+                    QString error;
+                    const QString currentKey = edit->property("key").toString();
+                    if (!ConfigManager::instance().setEntry(group, currentKey, edit->text(), &error))
+                        QMessageBox::warning(this, "Parameter", error); });
         auto *label = new QLabel(key, this);
         label->setObjectName(key);
         registerRow(label, edit);

@@ -17,6 +17,11 @@ namespace pva
         pending_ = Pending{a.clone(), b.clone(), stage};
         condition_.wakeOne();
     }
+    void MeasurementWorker::updateConfig(MeasurementConfig config)
+    {
+        QMutexLocker lock(&mutex_);
+        pendingConfig_ = std::move(config);
+    }
     void MeasurementWorker::stop()
     {
         QMutexLocker lock(&mutex_);
@@ -28,6 +33,7 @@ namespace pva
         while (true)
         {
             std::optional<Pending> job;
+            std::optional<MeasurementConfig> updatedConfig;
             {
                 QMutexLocker lock(&mutex_);
                 while (!stopping_ && !pending_)
@@ -36,9 +42,13 @@ namespace pva
                     return;
                 job = std::move(pending_);
                 pending_.reset();
+                updatedConfig = std::move(pendingConfig_);
+                pendingConfig_.reset();
             }
             try
             {
+                if (updatedConfig)
+                    engine_.setConfig(std::move(*updatedConfig));
                 auto result = engine_.process(job->camera1, job->camera2, job->stage);
                 if (result.valid && !statePath_.isEmpty())
                 {

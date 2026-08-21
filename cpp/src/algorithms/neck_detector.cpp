@@ -32,6 +32,41 @@ namespace pva::algorithms
         return indices;
     }
 
+    static bool canCalculateConvexityDefects(const std::vector<int> &hullIndices, int contourSize)
+    {
+        if (hullIndices.size() < 3 || contourSize <= 3)
+            return false;
+
+        // OpenCV requires the hull indices to follow the contour monotonically.
+        // Self-intersecting contours can make convexHull return a non-monotonic
+        // sequence; convexityDefects then throws cv::Exception.  Mirror its
+        // validation here so an ordinary rejected contour does not throw once
+        // per frame while debugging.
+        const bool reverseOrientation =
+            ((hullIndices[1] > hullIndices[0]) +
+             (hullIndices[2] > hullIndices[1]) +
+             (hullIndices[0] > hullIndices[2])) != 2;
+        int current = hullIndices[reverseOrientation ? 0 : hullIndices.size() - 1];
+        if (current < 0 || current >= contourSize)
+            return false;
+
+        std::optional<bool> increasing;
+        for (std::size_t index = 0; index < hullIndices.size(); ++index)
+        {
+            const int next = hullIndices[reverseOrientation ? hullIndices.size() - index - 1 : index];
+            if (next < 0 || next >= contourSize)
+                return false;
+
+            const bool stepIncreases = current < next;
+            if (!increasing)
+                increasing = !stepIncreases;
+            else if (*increasing != stepIncreases)
+                return false;
+            current = next;
+        }
+        return true;
+    }
+
     static FitContour extractOuterConvexArc(const std::vector<cv::Point> &contour)
     {
         if (contour.size() < 5)
@@ -39,18 +74,11 @@ namespace pva::algorithms
 
         std::vector<int> hullIndices;
         cv::convexHull(contour, hullIndices, false, false);
-        if (hullIndices.size() < 3)
+        if (!canCalculateConvexityDefects(hullIndices, static_cast<int>(contour.size())))
             return {contour, true};
 
         std::vector<cv::Vec4i> defects;
-        try
-        {
-            cv::convexityDefects(contour, hullIndices, defects);
-        }
-        catch (const cv::Exception &)
-        {
-            return {contour, true};
-        }
+        cv::convexityDefects(contour, hullIndices, defects);
         if (defects.empty())
             return {contour, true};
 

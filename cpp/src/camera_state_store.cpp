@@ -24,8 +24,7 @@ namespace pva
         QFile file(path_);
         if (!file.open(QIODevice::ReadOnly))
             return result;
-        const QJsonObject values = QJsonDocument::fromJson(file.readAll()).object()
-                                       .value("exposure_us").toObject();
+        const QJsonObject values = QJsonDocument::fromJson(file.readAll()).object().value("exposure_us").toObject();
         for (auto iterator = result.begin(); iterator != result.end(); ++iterator)
             if (values.contains(iterator.key()))
                 iterator.value() = std::clamp(values.value(iterator.key()).toDouble(iterator.value()), lower, upper);
@@ -42,14 +41,16 @@ namespace pva
         QSaveFile file(path_);
         if (!file.open(QIODevice::WriteOnly))
         {
-            if (error) *error = file.errorString();
+            if (error)
+                *error = file.errorString();
             return false;
         }
         file.write(QJsonDocument(QJsonObject{{"version", 1}, {"exposure_us", values}})
                        .toJson(QJsonDocument::Indented));
         if (file.commit())
             return true;
-        if (error) *error = file.errorString();
+        if (error)
+            *error = file.errorString();
         return false;
     }
 }

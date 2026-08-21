@@ -46,26 +46,31 @@ namespace pva
                     for (const auto &relative : {QString("src/graph.json"), QString("graph.json")})
                     {
                         const QString candidate = directory.absoluteFilePath(relative);
-                        if (QFileInfo::exists(candidate)) return QFileInfo(candidate).absoluteFilePath();
+                        if (QFileInfo::exists(candidate))
+                            return QFileInfo(candidate).absoluteFilePath();
                     }
-                    if (!directory.cdUp()) break;
+                    if (!directory.cdUp())
+                        break;
                 }
             return {};
         }
 
         cv::Mat processGraphNode(const QString &type, const QJsonObject &parameters, const cv::Mat &input)
         {
-            if (input.empty()) return {};
+            if (input.empty())
+                return {};
             cv::Mat output;
             if (type == "Gray")
             {
-                if (input.channels() == 1) return input.clone();
+                if (input.channels() == 1)
+                    return input.clone();
                 cv::cvtColor(input, output, input.channels() == 4 ? cv::COLOR_BGRA2GRAY : cv::COLOR_BGR2GRAY);
             }
             else if (type == "Binarize")
             {
                 cv::Mat gray = input;
-                if (input.channels() != 1) cv::cvtColor(input, gray, input.channels() == 4 ? cv::COLOR_BGRA2GRAY : cv::COLOR_BGR2GRAY);
+                if (input.channels() != 1)
+                    cv::cvtColor(input, gray, input.channels() == 4 ? cv::COLOR_BGRA2GRAY : cv::COLOR_BGR2GRAY);
                 cv::threshold(gray, output, parameters.value("threshold").toDouble(100), 255, cv::THRESH_BINARY);
             }
             else if (type == "ROI")
@@ -73,7 +78,8 @@ namespace pva
                 cv::Rect roi(parameters.value("x").toInt(), parameters.value("y").toInt(),
                              parameters.value("width").toInt(100), parameters.value("height").toInt(100));
                 roi &= cv::Rect(0, 0, input.cols, input.rows);
-                if (roi.empty()) return {};
+                if (roi.empty())
+                    return {};
                 output = input(roi).clone();
             }
             else if (type == "GaussianBlur")
@@ -87,8 +93,10 @@ namespace pva
                 const int ky = std::clamp(parameters.value("ky").toInt(3), 1, 99);
                 const int iterations = std::max(parameters.value("iterations").toInt(1), 1);
                 const cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, {kx, ky});
-                if (type == "Erode") cv::erode(input, output, kernel, {}, iterations);
-                else cv::dilate(input, output, kernel, {}, iterations);
+                if (type == "Erode")
+                    cv::erode(input, output, kernel, {}, iterations);
+                else
+                    cv::dilate(input, output, kernel, {}, iterations);
             }
             else if (type == "Rotate")
             {
@@ -102,7 +110,8 @@ namespace pva
                 transform.at<double>(1, 2) += size.height / 2.0 - center.y;
                 cv::warpAffine(input, output, transform, size);
             }
-            else if (type == "Start" || type == "End") output = input.clone();
+            else if (type == "Start" || type == "End")
+                output = input.clone();
             return output;
         }
     }
@@ -110,7 +119,8 @@ namespace pva
     PageCamera::PageCamera(MeasurementConfig config, QWidget *parent)
         : BasePage(parent), ui_(std::make_unique<Ui::PageCamera>()), config_(std::move(config))
     {
-        initializePage([this] { ui_->setupUi(this); });
+        initializePage([this]
+                       { ui_->setupUi(this); });
     }
 
     void PageCamera::initializeState()
@@ -131,9 +141,15 @@ namespace pva
         ui_->splitter_2->setSizes({500, 500});
         ui_->splitter_3->setSizes({600, 400});
 
-        ui_->combTrigMode->clear(); ui_->combTrigMode->addItem("Off", 0); ui_->combTrigMode->addItem("On", 1);
-        ui_->combTrigSource->clear(); ui_->combTrigSource->addItem("Software", 0); ui_->combTrigSource->addItem("Line1", 1);
-        ui_->combTrigEdge->clear(); ui_->combTrigEdge->addItem("FallingEdge", 0); ui_->combTrigEdge->addItem("RisingEdge", 1);
+        ui_->combTrigMode->clear();
+        ui_->combTrigMode->addItem("Off", 0);
+        ui_->combTrigMode->addItem("On", 1);
+        ui_->combTrigSource->clear();
+        ui_->combTrigSource->addItem("Software", 0);
+        ui_->combTrigSource->addItem("Line1", 1);
+        ui_->combTrigEdge->clear();
+        ui_->combTrigEdge->addItem("FallingEdge", 0);
+        ui_->combTrigEdge->addItem("RisingEdge", 1);
     }
 
     void PageCamera::bindEvents()
@@ -160,7 +176,8 @@ namespace pva
         connect(ui_->combTrigSource, &QComboBox::currentIndexChanged, this, &PageCamera::applyTriggerSource);
         connect(ui_->combTrigEdge, &QComboBox::currentIndexChanged, this, &PageCamera::applyTriggerEdge);
         connect(ui_->btnRun, &QPushButton::clicked, this, &PageCamera::runPreviewPipeline);
-        connect(ui_->btnConfig, &QPushButton::clicked, this, [this] { setStatus(true, QString("Pipeline: %1").arg(graphPath_)); });
+        connect(ui_->btnConfig, &QPushButton::clicked, this, [this]
+                { setStatus(true, QString("Pipeline: %1").arg(graphPath_)); });
         connect(ui_->btnSave, &QPushButton::clicked, this, &PageCamera::savePipeline);
         connect(ui_->btnLoad, &QPushButton::clicked, this, &PageCamera::loadPipeline);
     }
@@ -171,10 +188,58 @@ namespace pva
         connect(&appSignals, &AppSignals::onlineCameraStartRequested, this, &PageCamera::startOnlineCameras);
         connect(&appSignals, &AppSignals::onlineCameraStopRequested, this, &PageCamera::stopOnlineCameras);
         connect(&appSignals, &AppSignals::onlineCameraTriggerRequested, this, &PageCamera::triggerOnlineCameras);
-        connect(&appSignals, &AppSignals::onlineStageChanged, this, [this](int stage) { onlineStage_ = MeasurementStage(stage); });
+        connect(&appSignals, &AppSignals::onlineStageChanged, this, [this](int stage)
+                { onlineStage_ = MeasurementStage(stage); });
         connect(&appSignals, &AppSignals::appClose, this, &PageCamera::closeAll);
         connect(&ConfigManager::instance(), &ConfigManager::batchChanged, this, [this]
                 { reloadConfig(ConfigManager::instance().config()); });
+        connect(&ConfigManager::instance(), &ConfigManager::entryChanged, this,
+                [this](const QString &group, const QString &key)
+                {
+                    reloadConfig(ConfigManager::instance().config());
+                    if ((group == "Measurement" && key.startsWith("auto_exposure_roi_")) ||
+                        (group == "Camera" && key.startsWith("auto_exposure_")))
+                    {
+                        // 新参数从下一帧开始生效，不必等待旧的调整周期结束。
+                        lastExposureAdjustNs_.clear();
+                        return;
+                    }
+                    if (group != "Camera" || !cameraManager_)
+                        return;
+
+                    QString error;
+                    DalsaCamera *target = nullptr;
+                    if (key.endsWith("camera1"))
+                        target = camera("1");
+                    else if (key.endsWith("camera2"))
+                        target = camera("2");
+                    if (target && target->isOpen())
+                    {
+                        const bool first = target->userId() == "1";
+                        if (key.startsWith("initial_exposure_") && streamOwner_ != "online")
+                            target->setExposure(first ? config_.camera.initialExposureCamera1
+                                                      : config_.camera.initialExposureCamera2,
+                                                &error);
+                        else if (key.startsWith("gain_"))
+                            target->setGain(first ? config_.camera.gainCamera1
+                                                  : config_.camera.gainCamera2,
+                                            &error);
+                    }
+                    else if (key == "offline_crop_roi" && streamOwner_.isEmpty())
+                    {
+                        const auto roi = config_.camera.offlineCropRoi;
+                        for (auto *value : cameraManager_->getAll())
+                            if (value && value->isOpen() &&
+                                !(value->setOffsetX(0, &error) && value->setOffsetY(0, &error) &&
+                                  value->setWidth(roi.width, &error) && value->setHeight(roi.height, &error) &&
+                                  value->setOffsetX(roi.x, &error) && value->setOffsetY(roi.y, &error)))
+                                break;
+                    }
+                    // online_crop_roi 由 PageHome 按 Python 的重启签名统一重启后应用。
+                    if (!error.isEmpty())
+                        setStatus(false, QString("Apply %1 failed: %2").arg(key, error));
+                    refreshUi();
+                });
         connect(cameraManager_.get(), &CameraManager::frameReady, this, &PageCamera::onFrame);
         connect(cameraManager_.get(), &CameraManager::captureFailed, this, &PageCamera::onCaptureFailed);
     }
@@ -183,8 +248,10 @@ namespace pva
     {
         graphPath_ = findGraphPath();
         QString error;
-        if (!cameraManager_->initialize(&error)) setStatus(false, error);
-        else refreshCameras();
+        if (!cameraManager_->initialize(&error))
+            setStatus(false, error);
+        else
+            refreshCameras();
     }
     PageCamera::~PageCamera()
     {
@@ -197,7 +264,8 @@ namespace pva
     }
     void PageCamera::refreshCameras()
     {
-        if (cameraDiscoveryRunning_) return;
+        if (cameraDiscoveryRunning_)
+            return;
         closeAll();
         current_ = nullptr;
         cameraManager_->reset({});
@@ -208,7 +276,7 @@ namespace pva
 
         const QPointer<PageCamera> guard(this);
         auto *thread = QThread::create([guard]
-        {
+                                       {
             QString error;
             DalsaCamera::initialize();
             const QStringList ids = DalsaCamera::enumerate(&error);
@@ -225,8 +293,7 @@ namespace pva
                 if (guard->ui_->combCameraList->count()) guard->ui_->combCameraList->setCurrentIndex(0);
                 guard->setStatus(error.isEmpty(), error.isEmpty() ? QString("%1 camera(s) found").arg(guard->cameraManager_->size()) : error);
                 guard->refreshUi();
-            }, Qt::QueuedConnection);
-        });
+            }, Qt::QueuedConnection); });
         connect(thread, &QThread::finished, thread, &QObject::deleteLater);
         thread->start();
     }
@@ -249,52 +316,134 @@ namespace pva
     }
     void PageCamera::toggleCamera(bool checked)
     {
-        if (!current_ || !streamOwner_.isEmpty()) { refreshUi(); return; }
+        if (!current_ || !streamOwner_.isEmpty())
+        {
+            refreshUi();
+            return;
+        }
         QString error;
         if (checked)
         {
             if (!current_->open(&error) || !applyConfiguredParameters(*current_, config_.camera.offlineCropRoi, false, &error))
                 setStatus(false, error);
         }
-        else current_->close();
+        else
+            current_->close();
         refreshUi();
     }
     void PageCamera::toggleStream(bool checked)
     {
-        if (!current_ || !streamOwner_.isEmpty()) { refreshUi(); return; }
+        if (!current_ || !streamOwner_.isEmpty())
+        {
+            refreshUi();
+            return;
+        }
         QString error;
         if (checked)
         {
-            if (!current_->startStream(&error)) setStatus(false, error);
+            if (!current_->startStream(&error))
+                setStatus(false, error);
         }
-        else current_->stopStream();
+        else
+            current_->stopStream();
         refreshUi();
     }
-    void PageCamera::softwareTrigger() { QString error; if (!current_ || !current_->softwareTrigger(&error)) setStatus(false, error); }
-    void PageCamera::applyExposure() { QString e; if (current_ && !current_->setExposure(ui_->edtExposure->text().toDouble(), &e)) setStatus(false, e); refreshUi(); }
-    void PageCamera::applyGain() { QString e; if (current_ && !current_->setGain(ui_->edtGain->text().toDouble(), &e)) setStatus(false, e); refreshUi(); }
-    void PageCamera::applyWidth() { QString e; if (current_ && !current_->setWidth(ui_->edtWidth->text().toLongLong(), &e)) setStatus(false, e); refreshUi(); }
-    void PageCamera::applyHeight() { QString e; if (current_ && !current_->setHeight(ui_->edtHeight->text().toLongLong(), &e)) setStatus(false, e); refreshUi(); }
-    void PageCamera::applyOffsetX() { QString e; if (current_ && !current_->setOffsetX(ui_->edtOffsetX->text().toLongLong(), &e)) setStatus(false, e); refreshUi(); }
-    void PageCamera::applyOffsetY() { QString e; if (current_ && !current_->setOffsetY(ui_->edtOffsetY->text().toLongLong(), &e)) setStatus(false, e); refreshUi(); }
-    void PageCamera::applyTriggerMode(int) { QString e; if (current_ && !current_->setTriggerMode(ui_->combTrigMode->currentData().toBool(), &e)) setStatus(false, e); refreshUi(); }
-    void PageCamera::applyTriggerSource(int) { QString e; if (current_ && !current_->setTriggerSource(ui_->combTrigSource->currentData().toLongLong(), &e)) setStatus(false, e); }
-    void PageCamera::applyTriggerEdge(int) { QString e; if (current_ && !current_->setTriggerEdge(ui_->combTrigEdge->currentData().toLongLong(), &e)) setStatus(false, e); }
+    void PageCamera::softwareTrigger()
+    {
+        QString error;
+        if (!current_ || !current_->softwareTrigger(&error))
+            setStatus(false, error);
+    }
+    void PageCamera::applyExposure()
+    {
+        QString e;
+        if (current_ && !current_->setExposure(ui_->edtExposure->text().toDouble(), &e))
+            setStatus(false, e);
+        refreshUi();
+    }
+    void PageCamera::applyGain()
+    {
+        QString e;
+        if (current_ && !current_->setGain(ui_->edtGain->text().toDouble(), &e))
+            setStatus(false, e);
+        refreshUi();
+    }
+    void PageCamera::applyWidth()
+    {
+        QString e;
+        if (current_ && !current_->setWidth(ui_->edtWidth->text().toLongLong(), &e))
+            setStatus(false, e);
+        refreshUi();
+    }
+    void PageCamera::applyHeight()
+    {
+        QString e;
+        if (current_ && !current_->setHeight(ui_->edtHeight->text().toLongLong(), &e))
+            setStatus(false, e);
+        refreshUi();
+    }
+    void PageCamera::applyOffsetX()
+    {
+        QString e;
+        if (current_ && !current_->setOffsetX(ui_->edtOffsetX->text().toLongLong(), &e))
+            setStatus(false, e);
+        refreshUi();
+    }
+    void PageCamera::applyOffsetY()
+    {
+        QString e;
+        if (current_ && !current_->setOffsetY(ui_->edtOffsetY->text().toLongLong(), &e))
+            setStatus(false, e);
+        refreshUi();
+    }
+    void PageCamera::applyTriggerMode(int)
+    {
+        QString e;
+        if (current_ && !current_->setTriggerMode(ui_->combTrigMode->currentData().toBool(), &e))
+            setStatus(false, e);
+        refreshUi();
+    }
+    void PageCamera::applyTriggerSource(int)
+    {
+        QString e;
+        if (current_ && !current_->setTriggerSource(ui_->combTrigSource->currentData().toLongLong(), &e))
+            setStatus(false, e);
+        refreshUi();
+    }
+    void PageCamera::applyTriggerEdge(int)
+    {
+        QString e;
+        if (current_ && !current_->setTriggerEdge(ui_->combTrigEdge->currentData().toLongLong(), &e))
+            setStatus(false, e);
+        refreshUi();
+    }
 
     void PageCamera::startOnlineCameras()
     {
-        if (!streamOwner_.isEmpty()) { emit AppSignals::instance().onlineCameraFailed("Cameras are already in use"); return; }
+        if (!streamOwner_.isEmpty())
+        {
+            emit AppSignals::instance().onlineCameraFailed("Cameras are already in use");
+            return;
+        }
         QString error;
         for (const auto &role : {QString("1"), QString("2")})
         {
             auto *value = camera(role);
-            if (!value) { error = "Missing camera user id: " + role; break; }
+            if (!value)
+            {
+                error = "Missing camera user id: " + role;
+                break;
+            }
             if (!value->open(&error) || !applyConfiguredParameters(*value, config_.camera.onlineCropRoi, true, &error) ||
-                !value->setTriggerSource(0, &error) || !value->setTriggerMode(true, &error) || !value->startStream(&error)) break;
+                !value->setTriggerSource(0, &error) || !value->setTriggerMode(true, &error) || !value->startStream(&error))
+                break;
         }
         if (!error.isEmpty())
         {
-            closeAll(); setStatus(false, error); emit AppSignals::instance().onlineCameraFailed(error); return;
+            closeAll();
+            setStatus(false, error);
+            emit AppSignals::instance().onlineCameraFailed(error);
+            return;
         }
         streamOwner_ = "online";
         refreshUi();
@@ -303,29 +452,36 @@ namespace pva
     }
     void PageCamera::stopOnlineCameras()
     {
-        if (streamOwner_ != "online") return;
+        if (streamOwner_ != "online")
+            return;
         saveRememberedExposures();
         closeAll();
         emit AppSignals::instance().onlineCameraStopped();
     }
     void PageCamera::triggerOnlineCameras()
     {
-        if (streamOwner_ != "online") return;
+        if (streamOwner_ != "online")
+            return;
         for (const auto &role : {QString("1"), QString("2")})
         {
             QString error;
-            if (!camera(role)->softwareTrigger(&error)) { emit AppSignals::instance().onlineCameraFailed("CAM" + role + " trigger failed: " + error); return; }
+            if (!camera(role)->softwareTrigger(&error))
+            {
+                emit AppSignals::instance().onlineCameraFailed("CAM" + role + " trigger failed: " + error);
+                return;
+            }
         }
     }
     void PageCamera::onFrame(const QString &role, const cv::Mat &frame, qint64 timestampNs)
     {
         auto *value = camera(role);
-        if (value) adjustAutoExposure(*value, frame, timestampNs);
+        if (value)
+            adjustAutoExposure(*value, frame, timestampNs);
         // GigE 特征读取是同步操作，不在每个图像回调中执行。
         if (value && timestampNs - lastExposurePublishNs_.value(role, 0) >= 500000000LL)
         {
             lastExposurePublishNs_[role] = timestampNs;
-            emit AppSignals::instance().cameraExposureChanged(role, value->exposure());
+            emit AppSignals::instance().cameraExposureChanged(role, value -> exposure());
         }
         // 手动自由运行预览限制为 10 FPS，图像管线不会占满 UI 线程。
         if (streamOwner_.isEmpty() && timestampNs - lastManualPreviewNs_ >= 100000000LL)
@@ -336,28 +492,37 @@ namespace pva
             runPreviewPipeline();
         }
         emit AppSignals::instance().cameraFrameCaptured(role, frame);
-        if (value) value->frameConsumed();
+        if (value)
+            value->frameConsumed();
     }
     void PageCamera::onCaptureFailed(const QString &role, const QString &message)
     {
         setStatus(false, "CAM" + role + ": " + message);
-        if (streamOwner_ == "online") emit AppSignals::instance().onlineCameraFailed("CAM" + role + ": " + message);
+        if (streamOwner_ == "online")
+            emit AppSignals::instance().onlineCameraFailed("CAM" + role + ": " + message);
     }
     void PageCamera::adjustAutoExposure(DalsaCamera &value, const cv::Mat &frame, qint64 timestampNs)
     {
         if (streamOwner_ != "online" || !config_.camera.autoExposureEnabled ||
-            (onlineStage_ != MeasurementStage::Idle && onlineStage_ != MeasurementStage::Neck)) return;
+            (onlineStage_ != MeasurementStage::Idle && onlineStage_ != MeasurementStage::Neck))
+            return;
         const qint64 minimumDelta = qint64(std::max(config_.camera.autoExposureIntervalMs, 50)) * 1000000;
-        if (timestampNs - lastExposureAdjustNs_.value(value.userId(), 0) < minimumDelta) return;
+        if (timestampNs - lastExposureAdjustNs_.value(value.userId(), 0) < minimumDelta)
+            return;
         const cv::Rect roi = clippedRoi(value.userId() == "1" ? config_.measurement.autoExposureRoiCamera1 : config_.measurement.autoExposureRoiCamera2, frame.size());
-        if (roi.empty()) return;
+        if (roi.empty())
+            return;
         cv::Mat gray;
-        if (frame.channels() == 1) gray = frame; else cv::cvtColor(frame, gray, frame.channels() == 4 ? cv::COLOR_BGRA2GRAY : cv::COLOR_BGR2GRAY);
+        if (frame.channels() == 1)
+            gray = frame;
+        else
+            cv::cvtColor(frame, gray, frame.channels() == 4 ? cv::COLOR_BGRA2GRAY : cv::COLOR_BGR2GRAY);
         const double mean = cv::mean(gray(roi))[0];
         const double target = std::max(config_.camera.autoExposureTarget, 1.0);
         const double error = target - mean;
         lastExposureAdjustNs_[value.userId()] = timestampNs;
-        if (std::abs(error) <= config_.camera.autoExposureDeadband) return;
+        if (std::abs(error) <= config_.camera.autoExposureDeadband)
+            return;
         const double next = std::clamp(value.exposure() * (1.0 + std::max(config_.camera.autoExposureGain, 0.0) * error / target),
                                        std::min(config_.camera.autoExposureMinUs, config_.camera.autoExposureMaxUs),
                                        std::max(config_.camera.autoExposureMinUs, config_.camera.autoExposureMaxUs));
@@ -375,8 +540,11 @@ namespace pva
     void PageCamera::saveRememberedExposures() const
     {
         QHash<QString, double> exposures;
-        for (const auto &role : {QString("1"), QString("2")}) if (auto *value = camera(role); value && value->isOpen()) exposures.insert("camera" + role, value->exposure());
-        if (exposures.isEmpty()) return;
+        for (const auto &role : {QString("1"), QString("2")})
+            if (auto *value = camera(role); value && value->isOpen())
+                exposures.insert("camera" + role, value->exposure());
+        if (exposures.isEmpty())
+            return;
         CameraStateStore(cameraStatePath(config_)).saveExposures(exposures);
     }
     void PageCamera::closeAll()
@@ -391,24 +559,52 @@ namespace pva
             ui_->btnStartSnap, ui_->combTrigMode, ui_->combTrigSource, ui_->btnSoftTrigger,
             ui_->combTrigEdge, ui_->edtExposure, ui_->edtGain, ui_->edtWidth,
             ui_->edtHeight, ui_->edtOffsetX, ui_->edtOffsetY};
-        for (auto *widget : widgets) widget->setEnabled(enabled);
+        for (auto *widget : widgets)
+            widget->setEnabled(enabled);
     }
     void PageCamera::refreshUi()
     {
         const bool open = current_ && current_->isOpen(), streaming = current_ && current_->isStreaming(), manual = streamOwner_.isEmpty();
-        { QSignalBlocker block(ui_->btnCamON); ui_->btnCamON->setChecked(open); }
-        { QSignalBlocker block(ui_->btnStartSnap); ui_->btnStartSnap->setChecked(streaming); }
+        {
+            QSignalBlocker block(ui_->btnCamON);
+            ui_->btnCamON->setChecked(open);
+        }
+        {
+            QSignalBlocker block(ui_->btnStartSnap);
+            ui_->btnStartSnap->setChecked(streaming);
+        }
         ui_->btnCamON->setEnabled(current_ && manual);
         ui_->combCameraList->setEnabled(manual);
         ui_->btnRefresh->setEnabled(manual);
         setManualControlsEnabled(open && manual);
-        if (!open) return;
-        ui_->edtExposure->setText(QString::number(current_->exposure())); ui_->lblExposure->setText(QString("Exposure(%1 us)").arg(current_->exposure()));
-        ui_->edtGain->setText(QString::number(current_->gain())); ui_->lblGain->setText(QString("Gain(%1)").arg(current_->gain()));
-        ui_->edtWidth->setText(QString::number(current_->width())); ui_->lblWidth->setText(QString("Width(%1)").arg(current_->width()));
-        ui_->edtHeight->setText(QString::number(current_->height())); ui_->lblHeight->setText(QString("Height(%1)").arg(current_->height()));
-        ui_->edtOffsetX->setText(QString::number(current_->offsetX())); ui_->lblOffsetX->setText(QString("OffsetX(%1)").arg(current_->offsetX()));
-        ui_->edtOffsetY->setText(QString::number(current_->offsetY())); ui_->lblOffsetY->setText(QString("OffsetY(%1)").arg(current_->offsetY()));
+        if (!open)
+            return;
+
+        const auto syncCombo = [](QComboBox *combo, qint64 value)
+        {
+            const QSignalBlocker blocker(combo);
+            const int index = combo->findData(value);
+            if (index >= 0)
+                combo->setCurrentIndex(index);
+        };
+        const qint64 triggerMode = current_->triggerMode();
+        syncCombo(ui_->combTrigMode, triggerMode);
+        syncCombo(ui_->combTrigSource, current_->triggerSource());
+        syncCombo(ui_->combTrigEdge, current_->triggerEdge());
+        ui_->btnSoftTrigger->setEnabled(manual && triggerMode != 0);
+
+        ui_->edtExposure->setText(QString::number(current_->exposure()));
+        ui_->lblExposure->setText(QString("Exposure(%1 us)").arg(current_->exposure()));
+        ui_->edtGain->setText(QString::number(current_->gain()));
+        ui_->lblGain->setText(QString("Gain(%1)").arg(current_->gain()));
+        ui_->edtWidth->setText(QString::number(current_->width()));
+        ui_->lblWidth->setText(QString("Width(%1)").arg(current_->width()));
+        ui_->edtHeight->setText(QString::number(current_->height()));
+        ui_->lblHeight->setText(QString("Height(%1)").arg(current_->height()));
+        ui_->edtOffsetX->setText(QString::number(current_->offsetX()));
+        ui_->lblOffsetX->setText(QString("OffsetX(%1)").arg(current_->offsetX()));
+        ui_->edtOffsetY->setText(QString::number(current_->offsetY()));
+        ui_->lblOffsetY->setText(QString("OffsetY(%1)").arg(current_->offsetY()));
     }
     void PageCamera::setStatus(bool ok, const QString &message)
     {
@@ -419,22 +615,37 @@ namespace pva
     void PageCamera::openImage()
     {
         const QString path = QFileDialog::getOpenFileName(this, "Open image", {}, "Images (*.bmp *.png *.jpg *.jpeg *.tif *.tiff)");
-        if (path.isEmpty()) return;
+        if (path.isEmpty())
+            return;
         QFile file(path);
-        if (!file.open(QIODevice::ReadOnly)) return;
+        if (!file.open(QIODevice::ReadOnly))
+            return;
         const QByteArray bytes = file.readAll();
         const cv::Mat buffer(1, bytes.size(), CV_8U, const_cast<char *>(bytes.constData()));
         originalImage_ = cv::imdecode(buffer, cv::IMREAD_UNCHANGED);
-        if (!originalImage_.empty()) { ui_->orgGraphicsView->showImage(originalImage_); runPreviewPipeline(); }
+        if (!originalImage_.empty())
+        {
+            ui_->orgGraphicsView->showImage(originalImage_);
+            runPreviewPipeline();
+        }
     }
     void PageCamera::runPreviewPipeline()
     {
-        if (originalImage_.empty() || graphPath_.isEmpty()) return;
+        if (originalImage_.empty() || graphPath_.isEmpty())
+            return;
         QFile file(graphPath_);
-        if (!file.open(QIODevice::ReadOnly)) { setStatus(false, file.errorString()); return; }
+        if (!file.open(QIODevice::ReadOnly))
+        {
+            setStatus(false, file.errorString());
+            return;
+        }
         QJsonParseError parseError;
         const auto document = QJsonDocument::fromJson(file.readAll(), &parseError);
-        if (parseError.error != QJsonParseError::NoError || !document.isObject()) { setStatus(false, parseError.errorString()); return; }
+        if (parseError.error != QJsonParseError::NoError || !document.isObject())
+        {
+            setStatus(false, parseError.errorString());
+            return;
+        }
         const auto root = document.object();
         const auto nodes = root.value("nodes").toArray();
         const auto edges = root.value("edges").toArray();
@@ -459,7 +670,8 @@ namespace pva
         }
         QQueue<QString> ready;
         for (auto iterator = indegree.cbegin(); iterator != indegree.cend(); ++iterator)
-            if (iterator.value() == 0) ready.enqueue(iterator.key());
+            if (iterator.value() == 0)
+                ready.enqueue(iterator.key());
         QHash<QString, cv::Mat> results;
         cv::Mat output;
         int processed = 0;
@@ -469,12 +681,22 @@ namespace pva
             const auto definition = definitions.value(id);
             const cv::Mat input = predecessor.contains(id) ? results.value(predecessor.value(id)) : originalImage_;
             output = processGraphNode(definition.value("type").toString(), definition.value("params").toObject(), input);
-            if (output.empty()) { setStatus(false, QString("Pipeline node failed: %1").arg(definition.value("type").toString())); return; }
+            if (output.empty())
+            {
+                setStatus(false, QString("Pipeline node failed: %1").arg(definition.value("type").toString()));
+                return;
+            }
             results[id] = output;
             ++processed;
-            for (const auto &next : successors.value(id)) if (--indegree[next] == 0) ready.enqueue(next);
+            for (const auto &next : successors.value(id))
+                if (--indegree[next] == 0)
+                    ready.enqueue(next);
         }
-        if (processed != nodes.size()) { setStatus(false, "Pipeline graph contains a cycle"); return; }
+        if (processed != nodes.size())
+        {
+            setStatus(false, "Pipeline graph contains a cycle");
+            return;
+        }
         ui_->transGraphicsView->showImage(output, true);
         setStatus(true, QString("Pipeline completed: %1 nodes").arg(processed));
     }
@@ -482,18 +704,25 @@ namespace pva
     void PageCamera::loadPipeline()
     {
         const QString path = QFileDialog::getOpenFileName(this, "Load pipeline", graphPath_, "Pipeline (*.json)");
-        if (path.isEmpty()) return;
+        if (path.isEmpty())
+            return;
         graphPath_ = path;
         runPreviewPipeline();
     }
 
     void PageCamera::savePipeline()
     {
-        if (graphPath_.isEmpty()) return;
+        if (graphPath_.isEmpty())
+            return;
         const QString destination = QFileDialog::getSaveFileName(this, "Save pipeline", graphPath_, "Pipeline (*.json)");
-        if (destination.isEmpty()) return;
+        if (destination.isEmpty())
+            return;
         QFile source(graphPath_);
-        if (!source.open(QIODevice::ReadOnly)) { setStatus(false, source.errorString()); return; }
+        if (!source.open(QIODevice::ReadOnly))
+        {
+            setStatus(false, source.errorString());
+            return;
+        }
         QSaveFile target(destination);
         if (!target.open(QIODevice::WriteOnly) || target.write(source.readAll()) < 0 || !target.commit())
         {

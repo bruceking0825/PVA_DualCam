@@ -29,7 +29,8 @@ namespace
 
     qint64 nowNs()
     {
-        static QElapsedTimer timer = [] { QElapsedTimer value; value.start(); return value; }();
+        static QElapsedTimer timer = []
+        { QElapsedTimer value; value.start(); return value; }();
         return timer.nsecsElapsed();
     }
 
@@ -64,7 +65,8 @@ namespace pva
             if (!SapManager::Open())
             {
                 saperaUsers.store(0);
-                if (error) *error = "SapManager::Open failed";
+                if (error)
+                    *error = "SapManager::Open failed";
                 return false;
             }
             // SDK 错误由程序状态栏和日志统一显示，禁止 Sapera 弹出阻塞式错误窗口。
@@ -73,7 +75,8 @@ namespace pva
         }
         return true;
 #else
-        if (error) *error = "Sapera LT SDK was not found when C++ was built";
+        if (error)
+            *error = "Sapera LT SDK was not found when C++ was built";
         return false;
 #endif
     }
@@ -126,11 +129,13 @@ namespace pva
         {
             QStringList missing;
             for (const auto &role : {QString("1"), QString("2")})
-                if (!descriptors.contains(role)) missing.append(role);
+                if (!descriptors.contains(role))
+                    missing.append(role);
             *error = "Camera User Name not found: " + missing.join(", ");
         }
 #else
-        if (error) *error = "Sapera LT SDK was not found when C++ was built";
+        if (error)
+            *error = "Sapera LT SDK was not found when C++ was built";
 #endif
         return roles;
     }
@@ -138,18 +143,22 @@ namespace pva
     bool DalsaCamera::open(QString *error)
     {
 #ifdef PVA_HAS_SAPERA
-        if (open_) return true;
-        if (!descriptors.contains(role_)) enumerate(error);
+        if (open_)
+            return true;
+        if (!descriptors.contains(role_))
+            enumerate(error);
         if (!descriptors.contains(role_))
         {
-            if (error && error->isEmpty()) *error = "Missing Nano-M2020 with User Name: " + role_;
+            if (error && error->isEmpty())
+                *error = "Missing Nano-M2020 with User Name: " + role_;
             return false;
         }
         const auto descriptor = descriptors.value(role_);
         impl_->device = std::make_unique<SapAcqDevice>(SapLocation(descriptor.server.c_str(), descriptor.resource), FALSE);
         if (!impl_->device->Create())
         {
-            if (error) *error = "Sapera failed to open CAM" + role_ + " (" + descriptor.model + ")";
+            if (error)
+                *error = "Sapera failed to open CAM" + role_ + " (" + descriptor.model + ")";
             impl_->device.reset();
             return false;
         }
@@ -159,7 +168,8 @@ namespace pva
         if (!modelName.contains("Nano-M2020", Qt::CaseInsensitive) &&
             !modelName.contains("M2020", Qt::CaseInsensitive))
         {
-            if (error) *error = "Camera User Name " + role_ + " is not Nano-M2020: " + modelName;
+            if (error)
+                *error = "Camera User Name " + role_ + " is not Nano-M2020: " + modelName;
             impl_->device->Destroy();
             impl_->device.reset();
             return false;
@@ -170,13 +180,15 @@ namespace pva
         const QString acquisitionMode = getEnum("AcquisitionMode");
         if (!acquisitionMode.isEmpty() && acquisitionMode.compare("Continuous", Qt::CaseInsensitive) != 0)
         {
-            if (error) *error = "Unsupported AcquisitionMode: " + acquisitionMode;
+            if (error)
+                *error = "Unsupported AcquisitionMode: " + acquisitionMode;
             close();
             return false;
         }
         return true;
 #else
-        if (error) *error = "Sapera LT SDK was not found when C++ was built";
+        if (error)
+            *error = "Sapera LT SDK was not found when C++ was built";
         return false;
 #endif
     }
@@ -205,29 +217,35 @@ namespace pva
     bool DalsaCamera::startStream(QString *error)
     {
 #ifdef PVA_HAS_SAPERA
-        if (streaming_) return true;
-        if (!open(error)) return false;
+        if (streaming_)
+            return true;
+        if (!open(error))
+            return false;
         impl_->buffers = std::make_unique<SapBufferWithTrash>(2, impl_->device.get());
         if (!impl_->buffers->Create())
         {
             impl_->buffers.reset();
-            if (error) *error = "Sapera failed to create acquisition buffers";
+            if (error)
+                *error = "Sapera failed to create acquisition buffers";
             return false;
         }
         impl_->transfer = std::make_unique<SapAcqDeviceToBuf>(impl_->device.get(), impl_->buffers.get(), &DalsaCamera::captureCallback, this);
         if (!impl_->transfer->Create() || !impl_->transfer->Grab())
         {
-            if (impl_->transfer) impl_->transfer->Destroy();
+            if (impl_->transfer)
+                impl_->transfer->Destroy();
             impl_->transfer.reset();
             impl_->buffers->Destroy();
             impl_->buffers.reset();
-            if (error) *error = "Sapera failed to start acquisition";
+            if (error)
+                *error = "Sapera failed to start acquisition";
             return false;
         }
         streaming_ = true;
         return true;
 #else
-        if (error) *error = "Sapera LT SDK was not found when C++ was built";
+        if (error)
+            *error = "Sapera LT SDK was not found when C++ was built";
         return false;
 #endif
     }
@@ -237,8 +255,10 @@ namespace pva
 #ifdef PVA_HAS_SAPERA
         if (impl_->transfer)
         {
-            impl_->transfer->Freeze();
-            impl_->transfer->Wait(5000);
+            // 软件触发模式下 Freeze 会等待下一帧完成；没有待触发帧时，
+            // Wait(5000) 会直接卡住界面。模式切换不需要保留最后一帧，
+            // Sapera 官方示例也使用 Abort 取消活动采集。
+            impl_->transfer->Abort();
             impl_->transfer->Destroy();
             impl_->transfer.reset();
         }
@@ -259,12 +279,14 @@ namespace pva
 #ifdef PVA_HAS_SAPERA
         if (!impl_->device || !impl_->device->SetFeatureValue("TriggerSoftware", TRUE))
         {
-            if (error) *error = featureError("command", "TriggerSoftware");
+            if (error)
+                *error = featureError("command", "TriggerSoftware");
             return false;
         }
         return true;
 #else
-        if (error) *error = "Sapera LT SDK unavailable";
+        if (error)
+            *error = "Sapera LT SDK unavailable";
         return false;
 #endif
     }
@@ -276,27 +298,33 @@ namespace pva
         const QString current = getEnum(feature);
         if (!current.isEmpty() && current.compare(QString::fromLatin1(value), Qt::CaseInsensitive) == 0)
             return true;
-        if (impl_->device && impl_->device->SetFeatureValue(feature, value)) return true;
+        if (impl_->device && impl_->device->SetFeatureValue(feature, value))
+            return true;
 #endif
-        if (error) *error = featureError("set", feature);
+        if (error)
+            *error = featureError("set", feature);
         return false;
     }
 
     bool DalsaCamera::setDouble(const char *feature, double value, QString *error)
     {
 #ifdef PVA_HAS_SAPERA
-        if (impl_->device && impl_->device->SetFeatureValue(feature, value)) return true;
+        if (impl_->device && impl_->device->SetFeatureValue(feature, value))
+            return true;
 #endif
-        if (error) *error = featureError("set", feature);
+        if (error)
+            *error = featureError("set", feature);
         return false;
     }
 
     bool DalsaCamera::setInteger(const char *feature, qint64 value, QString *error)
     {
 #ifdef PVA_HAS_SAPERA
-        if (impl_->device && impl_->device->SetFeatureValue(feature, INT64(value))) return true;
+        if (impl_->device && impl_->device->SetFeatureValue(feature, INT64(value)))
+            return true;
 #endif
-        if (error) *error = featureError("set", feature);
+        if (error)
+            *error = featureError("set", feature);
         return false;
     }
 
@@ -304,7 +332,8 @@ namespace pva
     {
 #ifdef PVA_HAS_SAPERA
         std::array<char, 128> value{};
-        if (impl_->device) impl_->device->GetFeatureValue(feature, value.data(), int(value.size()));
+        if (impl_->device)
+            impl_->device->GetFeatureValue(feature, value.data(), int(value.size()));
         return QString::fromLocal8Bit(value.data());
 #else
         return {};
@@ -315,7 +344,8 @@ namespace pva
     {
 #ifdef PVA_HAS_SAPERA
         double value = 0;
-        if (impl_->device) impl_->device->GetFeatureValue(feature, &value);
+        if (impl_->device)
+            impl_->device->GetFeatureValue(feature, &value);
         return value;
 #else
         return 0;
@@ -326,7 +356,8 @@ namespace pva
     {
 #ifdef PVA_HAS_SAPERA
         INT64 value = 0;
-        if (impl_->device) impl_->device->GetFeatureValue(feature, &value);
+        if (impl_->device)
+            impl_->device->GetFeatureValue(feature, &value);
         return qint64(value);
 #else
         return 0;
@@ -361,7 +392,8 @@ namespace pva
             return;
         }
         // UI 尚未消费上一帧时直接丢弃本帧，避免自由运行模式淹没 Qt 事件队列。
-        if (framePending_.exchange(true)) return;
+        if (framePending_.exchange(true))
+            return;
         const int index = impl_->buffers->GetIndex();
         void *address = nullptr;
         if (!impl_->buffers->GetAddress(index, &address) || !address)

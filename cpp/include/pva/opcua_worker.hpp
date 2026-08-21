@@ -2,6 +2,7 @@
 
 #include <QMutex>
 #include <QThread>
+#include <QWaitCondition>
 #include <atomic>
 #include <optional>
 
@@ -26,8 +27,11 @@ namespace pva
         void run() override;
 
     private:
+        bool waitForStop(unsigned long milliseconds);
         std::atomic_bool stopping_{false};
         QMutex mutex_;
+        QMutex waitMutex_;
+        QWaitCondition stopCondition_;
         std::optional<double> pendingDiameter_;
         int comValue_{-1};
     };

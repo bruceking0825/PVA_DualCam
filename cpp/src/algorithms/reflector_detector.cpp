@@ -200,7 +200,7 @@ namespace pva::algorithms
             return {};
         const double centerX = (leftX + rightX) * 0.5;
         const double sagitta = polynomialValue(quadratic, centerX) -
-                                0.5 * (polynomialValue(quadratic, leftX) + polynomialValue(quadratic, rightX));
+                               0.5 * (polynomialValue(quadratic, leftX) + polynomialValue(quadratic, rightX));
 
         ReflectorHit hit;
         hit.edgePoints = points;
@@ -230,14 +230,17 @@ namespace pva::algorithms
         auto backward = cyclicSlice(sampled, rightIndex, leftIndex);
         std::reverse(backward.begin(), backward.end());
         auto maximumY = [](const auto &curve)
-        { return std::max_element(curve.begin(), curve.end(), [](auto a, auto b) { return a.y < b.y; })->y; };
+        { return std::max_element(curve.begin(), curve.end(), [](auto a, auto b)
+                                  { return a.y < b.y; })
+              ->y; };
         hit.roi.bottomCurve = maximumY(forward) >= maximumY(backward) ? std::move(forward) : std::move(backward);
         if (hit.roi.bottomCurve.front().x > hit.roi.bottomCurve.back().x)
             std::reverse(hit.roi.bottomCurve.begin(), hit.roi.bottomCurve.end());
         hit.roi.leftBoundary = hit.roi.bottomCurve.front();
         hit.roi.rightBoundary = hit.roi.bottomCurve.back();
         hit.roi.center = *std::max_element(hit.roi.bottomCurve.begin(), hit.roi.bottomCurve.end(),
-                                          [](auto a, auto b) { return a.y < b.y; });
+                                           [](auto a, auto b)
+                                           { return a.y < b.y; });
         return hit;
     }
 }

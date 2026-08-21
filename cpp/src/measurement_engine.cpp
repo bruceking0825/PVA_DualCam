@@ -42,17 +42,23 @@ namespace
         out.push_back({pva::OverlayType::Cross, {hit.ellipse.center}, {0, 255, 0}, 2, false});
         out.push_back({pva::OverlayType::Cross,
                        {cv::Point2d(hit.ellipse.center.x, hit.ellipse.center.y + radiusY)},
-                       {0, 0, 255}, 2, false});
+                       {0, 0, 255},
+                       2,
+                       false});
     }
     void addReflectorOverlay(const pva::ReflectorRoi &roi, std::vector<pva::OverlayElement> &out, bool showCenter)
     {
         const double markerHeight = std::max(30.0, std::abs(roi.rightBoundary.x - roi.leftBoundary.x) * 0.12);
         out.push_back({pva::OverlayType::Line,
                        {{roi.leftBoundary.x, std::max(0.0, roi.leftBoundary.y - markerHeight)}, roi.leftBoundary},
-                       {255, 0, 0}, 3, false});
+                       {255, 0, 0},
+                       3,
+                       false});
         out.push_back({pva::OverlayType::Line,
                        {{roi.rightBoundary.x, std::max(0.0, roi.rightBoundary.y - markerHeight)}, roi.rightBoundary},
-                       {255, 0, 0}, 3, false});
+                       {255, 0, 0},
+                       3,
+                       false});
         out.push_back({pva::OverlayType::Polyline, roi.bottomCurve, {255, 0, 0}, 3, false});
         if (showCenter)
             out.push_back({pva::OverlayType::Cross, {roi.center}, {0, 255, 255}, 2, false});
@@ -150,7 +156,8 @@ namespace pva
             result.message = "Brightness is outside configured limits";
             result.values = state_.values;
             result.diagnostics["cycle_ms"] = std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - started).count();
+                                                 std::chrono::steady_clock::now() - started)
+                                                 .count();
             return result;
         }
         std::pair<bool, std::string> outcome;
@@ -168,7 +175,8 @@ namespace pva
         result.message = outcome.second;
         result.values = state_.values;
         result.diagnostics["cycle_ms"] = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - started).count();
+                                             std::chrono::steady_clock::now() - started)
+                                             .count();
         return result;
     }
 

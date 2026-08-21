@@ -122,15 +122,20 @@ void CustomGraphicsView::contextMenuEvent(QContextMenuEvent *event)
     auto *figure = menu.addAction("Save as Figure");
     auto *load = menu.addAction("Load Figure");
     const auto *selected = menu.exec(event->globalPos());
-    if (selected == png) savePng();
-    else if (selected == figure) saveFigure();
-    else if (selected == load) loadFigure();
+    if (selected == png)
+        savePng();
+    else if (selected == figure)
+        saveFigure();
+    else if (selected == load)
+        loadFigure();
 }
 void CustomGraphicsView::savePng()
 {
-    if (image_.empty()) return;
+    if (image_.empty())
+        return;
     const QString path = QFileDialog::getSaveFileName(this, "Save PNG", {}, "PNG Files (*.png)");
-    if (path.isEmpty()) return;
+    if (path.isEmpty())
+        return;
     QImage output(sceneRect().size().toSize(), QImage::Format_ARGB32);
     output.fill(Qt::black);
     QPainter painter(&output);
@@ -139,19 +144,20 @@ void CustomGraphicsView::savePng()
 }
 void CustomGraphicsView::saveFigure()
 {
-    if (image_.empty()) return;
+    if (image_.empty())
+        return;
     const QString path = QFileDialog::getSaveFileName(this, "Save Figure", {}, "Figure Files (*.json)");
-    if (path.isEmpty()) return;
+    if (path.isEmpty())
+        return;
     std::vector<uchar> encoded;
     cv::imencode(".png", image_, encoded);
     QJsonArray elements;
     for (const auto &element : overlays_)
     {
         QJsonArray points;
-        for (const auto &p : element.points) points.append(QJsonArray{p.x, p.y});
-        elements.append(QJsonObject{{"type", int(element.type)}, {"points", points},
-                                    {"color", QJsonArray{element.colorBgr[0], element.colorBgr[1], element.colorBgr[2]}},
-                                    {"width", element.width}, {"closed", element.closed}});
+        for (const auto &p : element.points)
+            points.append(QJsonArray{p.x, p.y});
+        elements.append(QJsonObject{{"type", int(element.type)}, {"points", points}, {"color", QJsonArray{element.colorBgr[0], element.colorBgr[1], element.colorBgr[2]}}, {"width", element.width}, {"closed", element.closed}});
     }
     QFile file(path);
     if (file.open(QIODevice::WriteOnly))
@@ -160,14 +166,17 @@ void CustomGraphicsView::saveFigure()
 void CustomGraphicsView::loadFigure()
 {
     const QString path = QFileDialog::getOpenFileName(this, "Load Figure", {}, "Figure Files (*.json)");
-    if (path.isEmpty()) return;
+    if (path.isEmpty())
+        return;
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) return;
+    if (!file.open(QIODevice::ReadOnly))
+        return;
     const auto object = QJsonDocument::fromJson(file.readAll()).object();
     const QByteArray encoded = QByteArray::fromBase64(object.value("image_png").toString().toLatin1());
     const cv::Mat buffer(1, encoded.size(), CV_8U, const_cast<char *>(encoded.constData()));
     const cv::Mat image = cv::imdecode(buffer, cv::IMREAD_UNCHANGED);
-    if (image.empty()) return;
+    if (image.empty())
+        return;
     std::vector<pva::OverlayElement> elements;
     for (const auto &entry : object.value("overlays").toArray())
     {
@@ -177,10 +186,12 @@ void CustomGraphicsView::loadFigure()
         for (const auto &pointValue : value.value("points").toArray())
         {
             const auto point = pointValue.toArray();
-            if (point.size() >= 2) element.points.emplace_back(point[0].toDouble(), point[1].toDouble());
+            if (point.size() >= 2)
+                element.points.emplace_back(point[0].toDouble(), point[1].toDouble());
         }
         const auto color = value.value("color").toArray();
-        if (color.size() >= 3) element.colorBgr = {color[0].toDouble(), color[1].toDouble(), color[2].toDouble()};
+        if (color.size() >= 3)
+            element.colorBgr = {color[0].toDouble(), color[1].toDouble(), color[2].toDouble()};
         element.width = value.value("width").toInt(2);
         element.closed = value.value("closed").toBool(false);
         elements.push_back(std::move(element));
@@ -200,7 +211,8 @@ void CustomGraphicsView::wheelEvent(QWheelEvent *e)
     suppressResizeFit_ = true;
     scale(factor, factor);
     imageScale_ = transform().m11();
-    QTimer::singleShot(0, this, [this] { suppressResizeFit_ = false; });
+    QTimer::singleShot(0, this, [this]
+                       { suppressResizeFit_ = false; });
     e->accept();
 }
 void CustomGraphicsView::mousePressEvent(QMouseEvent *e)
@@ -248,16 +260,32 @@ void CustomGraphicsView::mouseReleaseEvent(QMouseEvent *e)
 }
 void CustomGraphicsView::keyPressEvent(QKeyEvent *e)
 {
-    if (!cursorItem_ || image_.empty()) { QGraphicsView::keyPressEvent(e); return; }
+    if (!cursorItem_ || image_.empty())
+    {
+        QGraphicsView::keyPressEvent(e);
+        return;
+    }
     int dx = 0, dy = 0;
-    if (e->key() == Qt::Key_Left) dx = -1;
-    else if (e->key() == Qt::Key_Right) dx = 1;
-    else if (e->key() == Qt::Key_Up) dy = -1;
-    else if (e->key() == Qt::Key_Down) dy = 1;
-    else { QGraphicsView::keyPressEvent(e); return; }
+    if (e->key() == Qt::Key_Left)
+        dx = -1;
+    else if (e->key() == Qt::Key_Right)
+        dx = 1;
+    else if (e->key() == Qt::Key_Up)
+        dy = -1;
+    else if (e->key() == Qt::Key_Down)
+        dy = 1;
+    else
+    {
+        QGraphicsView::keyPressEvent(e);
+        return;
+    }
     const int x = qRound(cursorItem_->pos().x() - 0.5) + dx;
     const int y = qRound(cursorItem_->pos().y() - 0.5) + dy;
-    if (x >= 0 && x < image_.cols && y >= 0 && y < image_.rows) { drawCursor(x, y); updatePixelInfo(x, y); }
+    if (x >= 0 && x < image_.cols && y >= 0 && y < image_.rows)
+    {
+        drawCursor(x, y);
+        updatePixelInfo(x, y);
+    }
     e->accept();
 }
 void CustomGraphicsView::resizeEvent(QResizeEvent *e)
@@ -268,12 +296,17 @@ void CustomGraphicsView::resizeEvent(QResizeEvent *e)
 }
 void CustomGraphicsView::drawCursor(int x, int y)
 {
-    if (cursorItem_) { scene_.removeItem(cursorItem_); delete cursorItem_; }
+    if (cursorItem_)
+    {
+        scene_.removeItem(cursorItem_);
+        delete cursorItem_;
+    }
     cursorItem_ = new QGraphicsItemGroup();
     QPen pen(QColor(0, 255, 0), 2);
     auto *horizontal = new QGraphicsLineItem(-9, 0, 9, 0, cursorItem_);
     auto *vertical = new QGraphicsLineItem(0, -9, 0, 9, cursorItem_);
-    horizontal->setPen(pen); vertical->setPen(pen);
+    horizontal->setPen(pen);
+    vertical->setPen(pen);
     cursorItem_->setPos(x + 0.5, y + 0.5);
     cursorItem_->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
     cursorItem_->setZValue(1000);
@@ -282,13 +315,16 @@ void CustomGraphicsView::drawCursor(int x, int y)
 void CustomGraphicsView::updatePixelInfo(int x, int y)
 {
     cv::Mat gray;
-    if (image_.channels() == 1) gray = image_;
-    else cv::cvtColor(image_, gray, image_.channels() == 4 ? cv::COLOR_BGRA2GRAY : cv::COLOR_BGR2GRAY);
+    if (image_.channels() == 1)
+        gray = image_;
+    else
+        cv::cvtColor(image_, gray, image_.channels() == 4 ? cv::COLOR_BGRA2GRAY : cv::COLOR_BGR2GRAY);
     emit pixelInfoChanged(viewId_, x, y, gray.at<uchar>(y, x));
 }
 void CustomGraphicsView::fitImage()
 {
-    if (!imageItem_ || imageItem_->pixmap().isNull()) return;
+    if (!imageItem_ || imageItem_->pixmap().isNull())
+        return;
     fitInView(imageItem_, Qt::KeepAspectRatio);
     imageScale_ = transform().m11();
 }

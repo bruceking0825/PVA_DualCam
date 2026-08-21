@@ -28,8 +28,7 @@ namespace
         QJsonArray curve;
         for (const auto &value : roi.bottomCurve)
             curve.append(point(value));
-        return {{"center", point(roi.center)}, {"left", point(roi.leftBoundary)},
-                {"right", point(roi.rightBoundary)}, {"bottom_curve", curve}};
+        return {{"center", point(roi.center)}, {"left", point(roi.leftBoundary)}, {"right", point(roi.rightBoundary)}, {"bottom_curve", curve}};
     }
     pva::ReflectorRoi reflector(const QJsonValue &value)
     {
@@ -53,14 +52,16 @@ namespace pva
             return {};
         if (!file.open(QIODevice::ReadOnly))
         {
-            if (warning) *warning = file.errorString();
+            if (warning)
+                *warning = file.errorString();
             return {};
         }
         QJsonParseError parseError;
         const auto document = QJsonDocument::fromJson(file.readAll(), &parseError);
         if (parseError.error != QJsonParseError::NoError || !document.isObject())
         {
-            if (warning) *warning = parseError.errorString();
+            if (warning)
+                *warning = parseError.errorString();
             return {};
         }
         const auto root = document.object();
@@ -69,10 +70,13 @@ namespace pva
         const auto object = root.value("state").toObject();
         MeasurementState state;
         const auto values = object.value("values").toObject();
-        if (values.value("diameter_mm").isDouble()) state.values.diameterMm = values.value("diameter_mm").toDouble();
+        if (values.value("diameter_mm").isDouble())
+            state.values.diameterMm = values.value("diameter_mm").toDouble();
         const auto light = object.value("filtered_light").toArray();
-        if (light.size() >= 2) state.filteredLight = {light[0].toDouble(), light[1].toDouble()};
-        if (object.contains("neck_centers_px")) state.neckCentersPx = points(object.value("neck_centers_px"));
+        if (light.size() >= 2)
+            state.filteredLight = {light[0].toDouble(), light[1].toDouble()};
+        if (object.contains("neck_centers_px"))
+            state.neckCentersPx = points(object.value("neck_centers_px"));
         if (object.contains("neck_x_spans"))
         {
             const auto spans = object.value("neck_x_spans").toArray();
@@ -86,10 +90,14 @@ namespace pva
             if (rois.size() >= 2)
                 state.neckReflectorRois = std::array<ReflectorRoi, 2>{reflector(rois.at(0)), reflector(rois.at(1))};
         }
-        if (object.contains("crown_boundary_points_px")) state.crownBoundaryPointsPx = points(object.value("crown_boundary_points_px"));
-        if (object.contains("body_centers_px")) state.bodyCentersPx = points(object.value("body_centers_px"));
-        if (object.contains("body_boundary_points_px")) state.bodyBoundaryPointsPx = points(object.value("body_boundary_points_px"));
-        if (object.value("mm_per_pixel").isDouble()) state.mmPerPixel = object.value("mm_per_pixel").toDouble();
+        if (object.contains("crown_boundary_points_px"))
+            state.crownBoundaryPointsPx = points(object.value("crown_boundary_points_px"));
+        if (object.contains("body_centers_px"))
+            state.bodyCentersPx = points(object.value("body_centers_px"));
+        if (object.contains("body_boundary_points_px"))
+            state.bodyBoundaryPointsPx = points(object.value("body_boundary_points_px"));
+        if (object.value("mm_per_pixel").isDouble())
+            state.mmPerPixel = object.value("mm_per_pixel").toDouble();
         state.validNeck = object.value("valid_neck").toBool(false) && state.neckReflectorRois.has_value();
         return state;
     }
@@ -99,26 +107,32 @@ namespace pva
         const QFileInfo info(path_);
         if (!QDir().mkpath(info.absolutePath()))
         {
-            if (error) *error = "Cannot create state directory";
+            if (error)
+                *error = "Cannot create state directory";
             return false;
         }
         QJsonObject object;
         object["values"] = QJsonObject{{"diameter_mm", state.values.diameterMm ? QJsonValue(*state.values.diameterMm) : QJsonValue()}};
         object["filtered_light"] = QJsonArray{state.filteredLight[0], state.filteredLight[1]};
-        if (state.neckCentersPx) object["neck_centers_px"] = points(*state.neckCentersPx);
+        if (state.neckCentersPx)
+            object["neck_centers_px"] = points(*state.neckCentersPx);
         if (state.neckXSpans)
             object["neck_x_spans"] = QJsonArray{QJsonArray{(*state.neckXSpans)[0][0], (*state.neckXSpans)[0][1]}, QJsonArray{(*state.neckXSpans)[1][0], (*state.neckXSpans)[1][1]}};
         if (state.neckReflectorRois)
             object["neck_reflector_rois"] = QJsonArray{reflector((*state.neckReflectorRois)[0]), reflector((*state.neckReflectorRois)[1])};
-        if (state.crownBoundaryPointsPx) object["crown_boundary_points_px"] = points(*state.crownBoundaryPointsPx);
-        if (state.bodyCentersPx) object["body_centers_px"] = points(*state.bodyCentersPx);
-        if (state.bodyBoundaryPointsPx) object["body_boundary_points_px"] = points(*state.bodyBoundaryPointsPx);
+        if (state.crownBoundaryPointsPx)
+            object["crown_boundary_points_px"] = points(*state.crownBoundaryPointsPx);
+        if (state.bodyCentersPx)
+            object["body_centers_px"] = points(*state.bodyCentersPx);
+        if (state.bodyBoundaryPointsPx)
+            object["body_boundary_points_px"] = points(*state.bodyBoundaryPointsPx);
         object["mm_per_pixel"] = state.mmPerPixel ? QJsonValue(*state.mmPerPixel) : QJsonValue();
         object["valid_neck"] = state.validNeck;
         QSaveFile file(path_);
         if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(QJsonObject{{"schema_version", schemaVersion}, {"state", object}}).toJson(QJsonDocument::Indented)) < 0 || !file.commit())
         {
-            if (error) *error = file.errorString();
+            if (error)
+                *error = file.errorString();
             return false;
         }
         return true;

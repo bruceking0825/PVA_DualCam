@@ -7,6 +7,31 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
+# CMake's Ninja/MSVC toolchain file leaves CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES
+# empty. cl.exe still finds these directories through the Developer Prompt, but
+# VS Code's compile_commands consumer does not inherit that environment. Add
+# them explicitly so every translation unit and header gets an IntelliSense
+# configuration that can resolve the C++ standard library and Windows SDK.
+if(MSVC)
+    get_filename_component(PVA_MSVC_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    get_filename_component(PVA_MSVC_ROOT "${PVA_MSVC_BIN_DIR}/../../.." ABSOLUTE)
+    set(PVA_MSVC_INCLUDE_DIR "${PVA_MSVC_ROOT}/include")
+
+    file(TO_CMAKE_PATH "$ENV{WindowsSdkDir}" PVA_WINDOWS_SDK_ROOT)
+    string(REGEX REPLACE "[/\\\\]+$" "" PVA_WINDOWS_SDK_VERSION "$ENV{WindowsSDKVersion}")
+    set(PVA_WINDOWS_SDK_INCLUDE_ROOT
+        "${PVA_WINDOWS_SDK_ROOT}/Include/${PVA_WINDOWS_SDK_VERSION}")
+
+    set(PVA_TOOLCHAIN_INCLUDE_DIRS "${PVA_MSVC_INCLUDE_DIR}")
+    foreach(PVA_SDK_COMPONENT ucrt shared um winrt cppwinrt)
+        if(EXISTS "${PVA_WINDOWS_SDK_INCLUDE_ROOT}/${PVA_SDK_COMPONENT}")
+            list(APPEND PVA_TOOLCHAIN_INCLUDE_DIRS
+                "${PVA_WINDOWS_SDK_INCLUDE_ROOT}/${PVA_SDK_COMPONENT}")
+        endif()
+    endforeach()
+    include_directories(BEFORE ${PVA_TOOLCHAIN_INCLUDE_DIRS})
+endif()
+
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets)
 find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc imgcodecs)
 

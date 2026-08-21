@@ -48,7 +48,8 @@ namespace pva::algorithms
     static double value(const cv::Vec3d &c, double x) { return c[0] * x * x + c[1] * x + c[2]; }
     static double percentile(std::vector<double> values, double fraction)
     {
-        if (values.empty()) return 0.0;
+        if (values.empty())
+            return 0.0;
         std::sort(values.begin(), values.end());
         const double index = std::clamp(fraction, 0.0, 1.0) * (values.size() - 1);
         const size_t lower = size_t(std::floor(index));
@@ -113,7 +114,7 @@ namespace pva::algorithms
                                                   { return a.x < b.x; });
         const double minX = minIt->x, maxX = maxIt->x, coverage = (maxX - minX + 1) / width;
         const double sagitta = value(coefficients, middle) -
-                                .5 * (value(coefficients, minX) + value(coefficients, maxX));
+                               .5 * (value(coefficients, minX) + value(coefficients, maxX));
         // Python 以 Neck 中心投影到曲线得到下顶点，并拒绝外推、反向弯曲及低覆盖结果。
         if ((enforceCoverage && coverage < minCoverage) || middle < minX || middle > maxX || sagitta < 0)
             return {};
@@ -136,7 +137,8 @@ namespace pva::algorithms
         hit.fitErrorPx = std::sqrt(squaredError / std::max<size_t>(hit.edges.size(), 1));
         std::vector<double> fittedY;
         fittedY.reserve(hit.edges.size());
-        for (const auto &point : hit.edges) fittedY.push_back(point.y);
+        for (const auto &point : hit.edges)
+            fittedY.push_back(point.y);
         hit.seedY = percentile(std::move(fittedY), 0.5);
         for (int x = int(minX); x <= int(maxX); ++x)
             hit.curve.emplace_back(x, value(coefficients, x));
@@ -164,8 +166,8 @@ namespace pva::algorithms
     }
 
     std::optional<CurveHit> findCrownMeniscus(const cv::Mat &gray, const ReflectorRoi &roi,
-                                               cv::Point2d expectedCenter, const CrownSettings &s,
-                                               std::optional<double> previous)
+                                              cv::Point2d expectedCenter, const CrownSettings &s,
+                                              std::optional<double> previous)
     {
         const double left = std::min(roi.leftBoundary.x, roi.rightBoundary.x);
         const double right = std::max(roi.leftBoundary.x, roi.rightBoundary.x);
@@ -278,8 +280,8 @@ namespace pva::algorithms
     }
 
     std::optional<CurveHit> findBodyMeniscus(const cv::Mat &gray, const ReflectorRoi &roi,
-                                              cv::Point2d expectedCenter, const BodySettings &s,
-                                              double offset, std::optional<double> previous)
+                                             cv::Point2d expectedCenter, const BodySettings &s,
+                                             double offset, std::optional<double> previous)
     {
         const double left = std::min(roi.leftBoundary.x, roi.rightBoundary.x);
         const double right = std::max(roi.leftBoundary.x, roi.rightBoundary.x);
