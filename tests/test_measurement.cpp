@@ -37,6 +37,28 @@ int main(int argc, char **argv)
         check(QDir::isAbsolutePath(parsed.runtime.offlineImageDir), "Offline directory resolved relative to cnf");
         check(QDir(parsed.runtime.offlineImageDir).exists(), "Configured offline directory exists");
 
+        pva::ConfigEntryUpdate update;
+        QString configError;
+        check(pva::applyConfigEntry(parsed, cnf, "Camera", "auto_exposure_target", "999",
+                                    &update, &configError) &&
+                  update.recognized && update.changed && parsed.camera.autoExposureTarget == 254,
+              "Shared config registry applies and clamps live numeric edits");
+        check(pva::applyConfigEntry(parsed, cnf, "Measurement", "auto_exposure_roi_camera1",
+                                    "10,20,30,40", &update, &configError) &&
+                  update.recognized && update.changed &&
+                  parsed.measurement.autoExposureRoiCamera1 == cv::Rect(10, 20, 30, 40),
+              "Shared config registry parses live ROI edits");
+        check(pva::applyConfigEntry(parsed, cnf, "Custom", "future_parameter", "value",
+                                    &update, &configError) &&
+                  !update.recognized && !update.changed,
+              "Unknown INI entries remain accepted");
+        const double previousTarget = parsed.camera.autoExposureTarget;
+        check(!pva::applyConfigEntry(parsed, cnf, "Camera", "auto_exposure_target", "bad",
+                                     &update, &configError) &&
+                  parsed.camera.autoExposureTarget == previousTarget &&
+                  configError.contains("Camera.auto_exposure_target"),
+              "Invalid registered edits are rejected without changing runtime config");
+
         // 用现场目录验证：读取合成图、左右拆分、提交测量引擎。
         QDir offlineDirectory(parsed.runtime.offlineImageDir);
         const QFileInfoList images = offlineDirectory.entryInfoList(

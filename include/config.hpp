@@ -114,4 +114,23 @@ namespace pva
         static MeasurementConfig loadIni(const QString &path);
     };
 
+    // Result metadata returned by the shared configuration registry.
+    // Unknown entries remain valid INI entries, but are not copied into the
+    // typed runtime model until they are registered.
+    struct ConfigEntryUpdate
+    {
+        bool recognized{false};
+        bool changed{false};
+    };
+
+    // Apply one textual INI value through the same registry used by loadIni().
+    // Returns false only when a registered entry contains an invalid value.
+    bool applyConfigEntry(MeasurementConfig &config,
+                          const QString &configPath,
+                          const QString &group,
+                          const QString &key,
+                          const QString &value,
+                          ConfigEntryUpdate *update = nullptr,
+                          QString *error = nullptr);
+
 } // namespace pva
