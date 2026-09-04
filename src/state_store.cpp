@@ -11,13 +11,19 @@ namespace
 {
     constexpr int schemaVersion = 4;
 
-    QJsonArray point(cv::Point2d value) { return {value.x, value.y}; }
+    QJsonArray point(cv::Point2d value) 
+    { 
+        return {value.x, value.y}; 
+    }
     cv::Point2d point(const QJsonValue &value)
     {
         const auto values = value.toArray();
         return values.size() >= 2 ? cv::Point2d(values[0].toDouble(), values[1].toDouble()) : cv::Point2d{};
     }
-    QJsonArray points(const std::array<cv::Point2d, 2> &values) { return {point(values[0]), point(values[1])}; }
+    QJsonArray points(const std::array<cv::Point2d, 2> &values) 
+    { 
+        return {point(values[0]), point(values[1])}; 
+    }
     std::array<cv::Point2d, 2> points(const QJsonValue &value)
     {
         const auto values = value.toArray();
