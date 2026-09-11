@@ -52,8 +52,8 @@ namespace pva
 #endif
     };
 
-    DalsaCamera::DalsaCamera(QString role, QObject *parent)
-        : QObject(parent), impl_(std::make_unique<Impl>()), role_(std::move(role)) {}
+    DalsaCamera::DalsaCamera(QString userId, QObject *parent)
+        : QObject(parent), impl_(std::make_unique<Impl>()), userId_(std::move(userId)) {}
 
     DalsaCamera::~DalsaCamera() { close(); }
 
@@ -83,61 +83,52 @@ namespace pva
 
     void DalsaCamera::shutdown()
     {
-        descriptors.clear();
 #ifdef PVA_HAS_SAPERA
         if (saperaUsers.load() > 0 && saperaUsers.fetch_sub(1) == 1)
         {
+            descriptors.clear();
             SapManager::SetDisplayStatusMode(previousStatusMode);
             SapManager::Close();
         }
+#else
+        descriptors.clear();
 #endif
     }
 
     QStringList DalsaCamera::enumerate(QString *error)
     {
         descriptors.clear();
-        QStringList roles;
+        QStringList userIds;
 #ifdef PVA_HAS_SAPERA
-        // 先枚举 Acquisition Device，再按资源标签（CamExpert User Name）建立角色映射。
-        // 避免按不存在的用户名查询服务器时由 Sapera 弹出模态错误框。
-        for (const auto &role : {QString("1"), QString("2")})
+        // 枚举所有 Acquisition Device。资源标签就是 CamExpert 中配置的 Device User ID；
+        // 不在程序中假设设备数量或名称。
+        const int serverCount = SapManager::GetServerCount();
+        for (int serverIndex = 0; serverIndex < serverCount; ++serverIndex)
         {
-            bool found = false;
-            const int serverCount = SapManager::GetServerCount();
-            for (int serverIndex = 0; serverIndex < serverCount && !found; ++serverIndex)
+            std::array<char, CORSERVER_MAX_STRLEN> serverName{};
+            if (!SapManager::GetServerName(serverIndex, serverName.data(), int(serverName.size())))
+                continue;
+            const int resourceCount = SapManager::GetResourceCount(serverIndex, SapManager::ResourceAcqDevice);
+            for (int resourceIndex = 0; resourceIndex < resourceCount; ++resourceIndex)
             {
-                std::array<char, CORSERVER_MAX_STRLEN> serverName{};
-                if (!SapManager::GetServerName(serverIndex, serverName.data(), int(serverName.size())))
+                std::array<char, SapManager::MaxLabelSize> userName{};
+                if (!SapManager::GetResourceName(serverIndex, SapManager::ResourceAcqDevice,
+                                                 resourceIndex, userName.data(), int(userName.size())))
                     continue;
-                const int resourceCount = SapManager::GetResourceCount(serverIndex, SapManager::ResourceAcqDevice);
-                for (int resourceIndex = 0; resourceIndex < resourceCount; ++resourceIndex)
-                {
-                    std::array<char, SapManager::MaxLabelSize> userName{};
-                    if (!SapManager::GetResourceName(serverIndex, SapManager::ResourceAcqDevice,
-                                                     resourceIndex, userName.data(), int(userName.size())))
-                        continue;
-                    if (QString::fromLocal8Bit(userName.data()).trimmed() != role)
-                        continue;
-                    descriptors.insert(role, {serverName.data(), resourceIndex, {}, role});
-                    roles.append(role);
-                    found = true;
-                    break;
-                }
+                const QString userId = QString::fromLocal8Bit(userName.data()).trimmed();
+                if (userId.isEmpty() || descriptors.contains(userId))
+                    continue;
+                descriptors.insert(userId, {serverName.data(), resourceIndex, {}, userId});
+                userIds.append(userId);
             }
         }
-        if (error && roles.size() < 2)
-        {
-            QStringList missing;
-            for (const auto &role : {QString("1"), QString("2")})
-                if (!descriptors.contains(role))
-                    missing.append(role);
-            *error = "Camera User Name not found: " + missing.join(", ");
-        }
+        if (error)
+            *error = userIds.isEmpty() ? "No Sapera camera Device User ID found" : QString{};
 #else
         if (error)
             *error = "Sapera LT SDK was not found when C++ was built";
 #endif
-        return roles;
+        return userIds;
     }
 
     bool DalsaCamera::open(QString *error)
@@ -145,20 +136,20 @@ namespace pva
 #ifdef PVA_HAS_SAPERA
         if (open_)
             return true;
-        if (!descriptors.contains(role_))
+        if (!descriptors.contains(userId_))
             enumerate(error);
-        if (!descriptors.contains(role_))
+        if (!descriptors.contains(userId_))
         {
             if (error && error->isEmpty())
-                *error = "Missing Nano-M2020 with User Name: " + role_;
+                *error = "Missing Nano-M2020 with Device User ID: " + userId_;
             return false;
         }
-        const auto descriptor = descriptors.value(role_);
+        const auto descriptor = descriptors.value(userId_);
         impl_->device = std::make_unique<SapAcqDevice>(SapLocation(descriptor.server.c_str(), descriptor.resource), FALSE);
         if (!impl_->device->Create())
         {
             if (error)
-                *error = "Sapera failed to open CAM" + role_ + " (" + descriptor.model + ")";
+                *error = "Sapera failed to open camera " + userId_;
             impl_->device.reset();
             return false;
         }
@@ -169,7 +160,7 @@ namespace pva
             !modelName.contains("M2020", Qt::CaseInsensitive))
         {
             if (error)
-                *error = "Camera User Name " + role_ + " is not Nano-M2020: " + modelName;
+                *error = "Camera " + userId_ + " is not Nano-M2020: " + modelName;
             impl_->device->Destroy();
             impl_->device.reset();
             return false;
@@ -178,7 +169,7 @@ namespace pva
         // Nano-M2020 的 AcquisitionMode 可能是只读的 Continuous。
         // Sapera 的 SapAcqDeviceToBuf::Grab() 不要求先写这个特征。
         const QString acquisitionMode = getEnum("AcquisitionMode");
-        if (!acquisitionMode.isEmpty() && acquisitionMode.compare("Continuous", Qt::CaseInsensitive) != 0)
+        if (!acquisitionMode.isEmpty())
         {
             if (error)
                 *error = "Unsupported AcquisitionMode: " + acquisitionMode;
@@ -388,7 +379,7 @@ namespace pva
 #ifdef PVA_HAS_SAPERA
         if (trash || !impl_->buffers)
         {
-            emit captureFailed(role_, "Sapera returned an incomplete frame");
+            emit captureFailed(userId_, "Sapera returned an incomplete frame");
             return;
         }
         // UI 尚未消费上一帧时直接丢弃本帧，避免自由运行模式淹没 Qt 事件队列。
@@ -399,7 +390,7 @@ namespace pva
         if (!impl_->buffers->GetAddress(index, &address) || !address)
         {
             framePending_.store(false);
-            emit captureFailed(role_, "Sapera buffer address is unavailable");
+            emit captureFailed(userId_, "Sapera buffer address is unavailable");
             return;
         }
         const int width = impl_->buffers->GetWidth();
@@ -415,10 +406,10 @@ namespace pva
             raw.convertTo(image, CV_8UC1, 255.0 / double((1u << depth) - 1u));
         }
         else
-            emit captureFailed(role_, QString("Unsupported Nano-M2020 pixel depth: %1").arg(depth));
+            emit captureFailed(userId_, QString("Unsupported Nano-M2020 pixel depth: %1").arg(depth));
         impl_->buffers->ReleaseAddress(index, address);
         if (!image.empty())
-            emit frameReady(role_, image, nowNs());
+            emit frameReady(userId_, image, nowNs());
         else
             framePending_.store(false);
 #endif

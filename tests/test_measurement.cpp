@@ -39,6 +39,14 @@ int main(int argc, char **argv)
 
         pva::ConfigEntryUpdate update;
         QString configError;
+        check(parsed.camera.deviceUserIdCamera1 == "cam1" &&
+                  parsed.camera.deviceUserIdCamera2 == "cam2",
+              "Camera Device User IDs parsed as strings");
+        check(pva::applyConfigEntry(parsed, cnf, "Camera", "device_user_id_camera1", "renamed-camera",
+                                    &update, &configError) &&
+                  update.recognized && update.changed &&
+                  parsed.camera.deviceUserIdCamera1 == "renamed-camera",
+              "Shared config registry applies live string edits");
         check(pva::applyConfigEntry(parsed, cnf, "Camera", "auto_exposure_target", "999",
                                     &update, &configError) &&
                   update.recognized && update.changed && parsed.camera.autoExposureTarget == 254,

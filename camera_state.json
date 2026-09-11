@@ -1,7 +1,7 @@
 {
     "exposure_us": {
-        "camera1": 31056,
-        "camera2": 14992
+        "camera:cam1": 28339,
+        "camera:cam2": 40375
     },
     "version": 1
 }

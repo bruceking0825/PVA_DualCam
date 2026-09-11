@@ -14,14 +14,14 @@ namespace pva
     {
         Q_OBJECT
     public:
-        explicit DalsaCamera(QString role, QObject *parent = nullptr);
+        explicit DalsaCamera(QString userId, QObject *parent = nullptr);
         ~DalsaCamera() override;
 
         static bool initialize(QString *error = nullptr);
         static void shutdown();
         static QStringList enumerate(QString *error = nullptr);
 
-        [[nodiscard]] QString userId() const { return role_; }
+        [[nodiscard]] QString userId() const { return userId_; }
         [[nodiscard]] bool isOpen() const { return open_; }
         [[nodiscard]] bool isStreaming() const { return streaming_; }
         bool open(QString *error = nullptr);
@@ -51,13 +51,13 @@ namespace pva
         [[nodiscard]] qint64 offsetY() const;
 
     signals:
-        void frameReady(const QString &role, const cv::Mat &frame, qint64 monotonicNs);
-        void captureFailed(const QString &role, const QString &message);
+        void frameReady(const QString &userId, const cv::Mat &frame, qint64 monotonicNs);
+        void captureFailed(const QString &userId, const QString &message);
 
     private:
         struct Impl;
         std::unique_ptr<Impl> impl_;
-        QString role_;
+        QString userId_;
         bool open_{false};
         bool streaming_{false};
         std::atomic_bool framePending_{false};

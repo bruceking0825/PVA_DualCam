@@ -5,6 +5,7 @@
 #include "measurement_engine.hpp"
 #include <QElapsedTimer>
 #include <QHash>
+#include <QStringList>
 #include <memory>
 
 QT_BEGIN_NAMESPACE
@@ -43,8 +44,8 @@ namespace pva
         void startOnlineCameras();
         void stopOnlineCameras();
         void triggerOnlineCameras();
-        void onFrame(const QString &role, const cv::Mat &frame, qint64 timestampNs);
-        void onCaptureFailed(const QString &role, const QString &message);
+        void onFrame(const QString &userId, const cv::Mat &frame, qint64 timestampNs);
+        void onCaptureFailed(const QString &userId, const QString &message);
         void runPreviewPipeline();
         void loadPipeline();
         void savePipeline();
@@ -69,7 +70,9 @@ namespace pva
         qint64 lastManualPreviewNs_{};
         bool cameraDiscoveryRunning_{false};
 
-        DalsaCamera *camera(const QString &role) const;
+        DalsaCamera *camera(const QString &userId) const;
+        [[nodiscard]] QStringList onlineCameraUserIds() const;
+        [[nodiscard]] int cameraSlot(const QString &userId) const;
         bool applyConfiguredParameters(DalsaCamera &camera, const cv::Rect &roi, bool online, QString *error);
         void closeAll();
         void refreshUi();

@@ -201,6 +201,8 @@ namespace
             setting("Runtime", "state_file", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::stateFile, path()),
             setting("Runtime", "stereo_pair_max_delta_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::stereoPairMaxDeltaMs, minimum(1)),
 
+            setting("Camera", "device_user_id_camera1", &pva::MeasurementConfig::camera, &pva::CameraSettings::deviceUserIdCamera1),
+            setting("Camera", "device_user_id_camera2", &pva::MeasurementConfig::camera, &pva::CameraSettings::deviceUserIdCamera2),
             setting("Camera", "initial_exposure_camera1", &pva::MeasurementConfig::camera, &pva::CameraSettings::initialExposureCamera1),
             setting("Camera", "gain_camera1", &pva::MeasurementConfig::camera, &pva::CameraSettings::gainCamera1),
             setting("Camera", "initial_exposure_camera2", &pva::MeasurementConfig::camera, &pva::CameraSettings::initialExposureCamera2),

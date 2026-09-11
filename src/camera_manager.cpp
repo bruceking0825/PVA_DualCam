@@ -24,9 +24,10 @@ namespace pva
     {
         closeAll();
         cameras_.clear();
-        for (const QString &id : userIds)
+        for (const QString &rawId : userIds)
         {
-            if (id != "1" && id != "2")
+            const QString id = rawId.trimmed();
+            if (id.isEmpty() || cameras_.contains(id))
                 continue;
             auto camera = std::make_unique<DalsaCamera>(id);
             connect(camera.get(), &DalsaCamera::frameReady, this, &CameraManager::frameReady,
@@ -37,9 +38,9 @@ namespace pva
         }
     }
 
-    DalsaCamera *CameraManager::getByRole(const QString &role) const
+    DalsaCamera *CameraManager::getByUserId(const QString &userId) const
     {
-        const auto iterator = cameras_.find(role);
+        const auto iterator = cameras_.find(userId);
         return iterator == cameras_.end() ? nullptr : iterator->second.get();
     }
 

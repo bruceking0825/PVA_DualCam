@@ -39,6 +39,6 @@ ctest --test-dir cpp/build --output-on-failure
 
 The executable is `cpp/build/pva_dualcam_cpp.exe`. Run it from the repository root so it automatically loads `src/cnf.ini`.
 
-Both offline and online workflows are implemented. Online mode requires Sapera LT at `SAPERA_ROOT` (default `C:/Program Files/Teledyne DALSA/Sapera`) and two Nano-M2020 cameras. Set their CamExpert **User Name** (`DeviceUserID`) values to `1` and `2`; these values map strictly to CAM1 and CAM2. It also requires access to the configured plant OPC UA endpoint.
+Both offline and online workflows are implemented. Online mode requires Sapera LT at `SAPERA_ROOT` (default `C:/Program Files/Teledyne DALSA/Sapera`) and two Nano-M2020 cameras. The two logical measurement slots use the configurable `device_user_id_camera1` and `device_user_id_camera2` values from `cnf.ini`; the Camera page enumerates every available Sapera Device User ID. It also requires access to the configured plant OPC UA endpoint.
 
 Relative paths in `cnf.ini` are resolved from the configuration directory, matching Python. The Parameters page displays values without outer brackets and writes them back as `key = [value]`. Offline composite images are decoded with Qt file IO, split equally into Camera 1 and Camera 2, then submitted to `MeasurementWorker`.

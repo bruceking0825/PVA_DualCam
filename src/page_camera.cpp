@@ -210,12 +210,12 @@ namespace pva
                     QString error;
                     DalsaCamera *target = nullptr;
                     if (key.endsWith("camera1"))
-                        target = camera("1");
+                        target = camera(config_.camera.deviceUserIdCamera1.trimmed());
                     else if (key.endsWith("camera2"))
-                        target = camera("2");
+                        target = camera(config_.camera.deviceUserIdCamera2.trimmed());
                     if (target && target->isOpen())
                     {
-                        const bool first = target->userId() == "1";
+                        const bool first = cameraSlot(target->userId()) != 1;
                         if (key.startsWith("initial_exposure_") && streamOwner_ != "online")
                             target->setExposure(first ? config_.camera.initialExposureCamera1
                                                       : config_.camera.initialExposureCamera2,
@@ -253,15 +253,35 @@ namespace pva
         else
             refreshCameras();
     }
+
     PageCamera::~PageCamera()
     {
         closeAll();
     }
+
     void PageCamera::reloadConfig(const MeasurementConfig &config) { config_ = config; }
-    DalsaCamera *PageCamera::camera(const QString &role) const
+
+    DalsaCamera *PageCamera::camera(const QString &userId) const
     {
-        return cameraManager_->getByRole(role);
+        return cameraManager_->getByUserId(userId);
     }
+
+    QStringList PageCamera::onlineCameraUserIds() const
+    {
+        return {config_.camera.deviceUserIdCamera1.trimmed(),
+                config_.camera.deviceUserIdCamera2.trimmed()};
+    }
+
+    int PageCamera::cameraSlot(const QString &userId) const
+    {
+        const QStringList ids = onlineCameraUserIds();
+        if (userId == ids[0])
+            return 0;
+        if (userId == ids[1])
+            return 1;
+        return -1;
+    }
+
     void PageCamera::refreshCameras()
     {
         if (cameraDiscoveryRunning_)
@@ -288,8 +308,7 @@ namespace pva
                 guard->cameraDiscoveryRunning_ = false;
                 guard->cameraManager_->reset(ids);
                 for (const auto &id : ids)
-                    if (id == "1" || id == "2")
-                        guard->ui_->combCameraList->addItem("CAM" + id, id);
+                    guard->ui_->combCameraList->addItem(id, id);
                 if (guard->ui_->combCameraList->count()) guard->ui_->combCameraList->setCurrentIndex(0);
                 guard->setStatus(error.isEmpty(), error.isEmpty() ? QString("%1 camera(s) found").arg(guard->cameraManager_->size()) : error);
                 guard->refreshUi();
@@ -297,14 +316,16 @@ namespace pva
         connect(thread, &QThread::finished, thread, &QObject::deleteLater);
         thread->start();
     }
+
     void PageCamera::selectCamera(int index)
     {
         current_ = index < 0 ? nullptr : camera(ui_->combCameraList->itemData(index).toString());
         refreshUi();
     }
+
     bool PageCamera::applyConfiguredParameters(DalsaCamera &value, const cv::Rect &roi, bool online, QString *error)
     {
-        const bool first = value.userId() == "1";
+        const bool first = cameraSlot(value.userId()) != 1;
         const double initial = first ? config_.camera.initialExposureCamera1 : config_.camera.initialExposureCamera2;
         const double exposure = online ? loadRememberedExposure(value.userId(), initial) : initial;
         const double gain = first ? config_.camera.gainCamera1 : config_.camera.gainCamera2;
@@ -314,6 +335,7 @@ namespace pva
                value.setOffsetX(roi.x, error) && value.setOffsetY(roi.y, error) &&
                value.setExposure(exposure, error) && value.setGain(gain, error);
     }
+
     void PageCamera::toggleCamera(bool checked)
     {
         if (!current_ || !streamOwner_.isEmpty())
@@ -331,6 +353,7 @@ namespace pva
             current_->close();
         refreshUi();
     }
+
     void PageCamera::toggleStream(bool checked)
     {
         if (!current_ || !streamOwner_.isEmpty())
@@ -348,12 +371,14 @@ namespace pva
             current_->stopStream();
         refreshUi();
     }
+
     void PageCamera::softwareTrigger()
     {
         QString error;
         if (!current_ || !current_->softwareTrigger(&error))
             setStatus(false, error);
     }
+
     void PageCamera::applyExposure()
     {
         QString e;
@@ -361,6 +386,7 @@ namespace pva
             setStatus(false, e);
         refreshUi();
     }
+
     void PageCamera::applyGain()
     {
         QString e;
@@ -368,6 +394,7 @@ namespace pva
             setStatus(false, e);
         refreshUi();
     }
+
     void PageCamera::applyWidth()
     {
         QString e;
@@ -375,6 +402,7 @@ namespace pva
             setStatus(false, e);
         refreshUi();
     }
+
     void PageCamera::applyHeight()
     {
         QString e;
@@ -382,6 +410,7 @@ namespace pva
             setStatus(false, e);
         refreshUi();
     }
+
     void PageCamera::applyOffsetX()
     {
         QString e;
@@ -389,6 +418,7 @@ namespace pva
             setStatus(false, e);
         refreshUi();
     }
+
     void PageCamera::applyOffsetY()
     {
         QString e;
@@ -396,6 +426,7 @@ namespace pva
             setStatus(false, e);
         refreshUi();
     }
+
     void PageCamera::applyTriggerMode(int)
     {
         QString e;
@@ -403,6 +434,7 @@ namespace pva
             setStatus(false, e);
         refreshUi();
     }
+
     void PageCamera::applyTriggerSource(int)
     {
         QString e;
@@ -410,6 +442,7 @@ namespace pva
             setStatus(false, e);
         refreshUi();
     }
+
     void PageCamera::applyTriggerEdge(int)
     {
         QString e;
@@ -426,12 +459,19 @@ namespace pva
             return;
         }
         QString error;
-        for (const auto &role : {QString("1"), QString("2")})
+        const QStringList userIds = onlineCameraUserIds();
+        if (userIds[0].isEmpty() || userIds[1].isEmpty())
+            error = "Configure both camera Device User IDs";
+        else if (userIds[0] == userIds[1])
+            error = "Camera 1 and Camera 2 must use different Device User IDs";
+        for (const auto &userId : userIds)
         {
-            auto *value = camera(role);
+            if (!error.isEmpty())
+                break;
+            auto *value = camera(userId);
             if (!value)
             {
-                error = "Missing camera user id: " + role;
+                error = "Camera Device User ID not found: " + userId;
                 break;
             }
             if (!value->open(&error) || !applyConfiguredParameters(*value, config_.camera.onlineCropRoi, true, &error) ||
@@ -448,8 +488,9 @@ namespace pva
         streamOwner_ = "online";
         refreshUi();
         emit AppSignals::instance().onlineCameraStarted();
-        setStatus(true, "Online cameras started: CAM1, CAM2");
+        setStatus(true, "Online cameras started: " + userIds.join(", "));
     }
+
     void PageCamera::stopOnlineCameras()
     {
         if (streamOwner_ != "online")
@@ -458,30 +499,35 @@ namespace pva
         closeAll();
         emit AppSignals::instance().onlineCameraStopped();
     }
+
     void PageCamera::triggerOnlineCameras()
     {
         if (streamOwner_ != "online")
             return;
-        for (const auto &role : {QString("1"), QString("2")})
+        for (const auto &userId : onlineCameraUserIds())
         {
             QString error;
-            if (!camera(role)->softwareTrigger(&error))
+            auto *value = camera(userId);
+            if (!value || !value->softwareTrigger(&error))
             {
-                emit AppSignals::instance().onlineCameraFailed("CAM" + role + " trigger failed: " + error);
+                emit AppSignals::instance().onlineCameraFailed(
+                    "Camera " + userId + " trigger failed: " + error);
                 return;
             }
         }
     }
-    void PageCamera::onFrame(const QString &role, const cv::Mat &frame, qint64 timestampNs)
+
+    void PageCamera::onFrame(const QString &userId, const cv::Mat &frame, qint64 timestampNs)
     {
-        auto *value = camera(role);
+        auto *value = camera(userId);
         if (value)
             adjustAutoExposure(*value, frame, timestampNs);
         // GigE 特征读取是同步操作，不在每个图像回调中执行。
-        if (value && timestampNs - lastExposurePublishNs_.value(role, 0) >= 500000000LL)
+        const int slot = cameraSlot(userId);
+        if (value && slot >= 0 && timestampNs - lastExposurePublishNs_.value(userId, 0) >= 500000000LL)
         {
-            lastExposurePublishNs_[role] = timestampNs;
-            emit AppSignals::instance().cameraExposureChanged(role, value -> exposure());
+            lastExposurePublishNs_[userId] = timestampNs;
+            emit AppSignals::instance().cameraExposureChanged(QString::number(slot + 1), value->exposure());
         }
         // 手动自由运行预览限制为 10 FPS，图像管线不会占满 UI 线程。
         if (streamOwner_.isEmpty() && timestampNs - lastManualPreviewNs_ >= 100000000LL)
@@ -491,16 +537,19 @@ namespace pva
             ui_->orgGraphicsView->showImage(frame, true);
             runPreviewPipeline();
         }
-        emit AppSignals::instance().cameraFrameCaptured(role, frame);
+        if (slot >= 0)
+            emit AppSignals::instance().cameraFrameCaptured(QString::number(slot + 1), frame);
         if (value)
             value->frameConsumed();
     }
-    void PageCamera::onCaptureFailed(const QString &role, const QString &message)
+
+    void PageCamera::onCaptureFailed(const QString &userId, const QString &message)
     {
-        setStatus(false, "CAM" + role + ": " + message);
-        if (streamOwner_ == "online")
-            emit AppSignals::instance().onlineCameraFailed("CAM" + role + ": " + message);
+        setStatus(false, "Camera " + userId + ": " + message);
+        if (streamOwner_ == "online" && cameraSlot(userId) >= 0)
+            emit AppSignals::instance().onlineCameraFailed("Camera " + userId + ": " + message);
     }
+
     void PageCamera::adjustAutoExposure(DalsaCamera &value, const cv::Mat &frame, qint64 timestampNs)
     {
         if (streamOwner_ != "online" || !config_.camera.autoExposureEnabled ||
@@ -509,7 +558,12 @@ namespace pva
         const qint64 minimumDelta = qint64(std::max(config_.camera.autoExposureIntervalMs, 50)) * 1000000;
         if (timestampNs - lastExposureAdjustNs_.value(value.userId(), 0) < minimumDelta)
             return;
-        const cv::Rect roi = clippedRoi(value.userId() == "1" ? config_.measurement.autoExposureRoiCamera1 : config_.measurement.autoExposureRoiCamera2, frame.size());
+        const int slot = cameraSlot(value.userId());
+        if (slot < 0)
+            return;
+        const cv::Rect roi = clippedRoi(slot == 0 ? config_.measurement.autoExposureRoiCamera1
+                                                   : config_.measurement.autoExposureRoiCamera2,
+                                        frame.size());
         if (roi.empty())
             return;
         cv::Mat gray;
@@ -529,30 +583,35 @@ namespace pva
         value.setExposure(next);
         saveRememberedExposures();
     }
-    double PageCamera::loadRememberedExposure(const QString &role, double fallback) const
+
+    double PageCamera::loadRememberedExposure(const QString &userId, double fallback) const
     {
+        const QString key = "camera:" + userId;
         CameraStateStore store(cameraStatePath(config_));
-        return store.loadExposures({{"camera" + role, fallback}},
+        return store.loadExposures({{key, fallback}},
                                    config_.camera.autoExposureMinUs,
                                    config_.camera.autoExposureMaxUs)
-            .value("camera" + role, fallback);
+            .value(key, fallback);
     }
+
     void PageCamera::saveRememberedExposures() const
     {
         QHash<QString, double> exposures;
-        for (const auto &role : {QString("1"), QString("2")})
-            if (auto *value = camera(role); value && value->isOpen())
-                exposures.insert("camera" + role, value->exposure());
+        for (const auto &userId : onlineCameraUserIds())
+            if (auto *value = camera(userId); value && value->isOpen())
+                exposures.insert("camera:" + userId, value->exposure());
         if (exposures.isEmpty())
             return;
         CameraStateStore(cameraStatePath(config_)).saveExposures(exposures);
     }
+
     void PageCamera::closeAll()
     {
         cameraManager_->closeAll();
         streamOwner_.clear();
         refreshUi();
     }
+
     void PageCamera::setManualControlsEnabled(bool enabled)
     {
         const std::array<QWidget *, 11> widgets{
@@ -562,6 +621,7 @@ namespace pva
         for (auto *widget : widgets)
             widget->setEnabled(enabled);
     }
+
     void PageCamera::refreshUi()
     {
         const bool open = current_ && current_->isOpen(), streaming = current_ && current_->isStreaming(), manual = streamOwner_.isEmpty();
@@ -606,12 +666,14 @@ namespace pva
         ui_->edtOffsetY->setText(QString::number(current_->offsetY()));
         ui_->lblOffsetY->setText(QString("OffsetY(%1)").arg(current_->offsetY()));
     }
+
     void PageCamera::setStatus(bool ok, const QString &message)
     {
         ui_->lblStatus->setToolTip(message);
         ui_->lblStatus->setPixmap(QPixmap(ok ? ":/images/images/images/ledLow.png" : ":/images/images/images/ledHigh.png"));
         emit AppSignals::instance().status("Camera", ok ? "OK" : "NG", ok ? "info" : "error", message);
     }
+
     void PageCamera::openImage()
     {
         const QString path = QFileDialog::getOpenFileName(this, "Open image", {}, "Images (*.bmp *.png *.jpg *.jpeg *.tif *.tiff)");
@@ -629,6 +691,7 @@ namespace pva
             runPreviewPipeline();
         }
     }
+
     void PageCamera::runPreviewPipeline()
     {
         if (originalImage_.empty() || graphPath_.isEmpty())
