@@ -10,6 +10,13 @@ namespace pva
 {
     class DalsaCamera;
 
+    namespace CameraRole
+    {
+        inline const QString Cam1 = QStringLiteral("cam1");
+        inline const QString Cam2 = QStringLiteral("cam2");
+        inline const QStringList Stereo{Cam1, Cam2};
+    }
+
     class CameraManager final : public QObject
     {
         Q_OBJECT
@@ -19,7 +26,7 @@ namespace pva
 
         bool initialize(QString *error = nullptr);
         void reset(const QStringList &userIds);
-        DalsaCamera *getByUserId(const QString &userId) const;
+        DalsaCamera *get(const QString &userId) const;
         QList<DalsaCamera *> getAll() const;
         qsizetype size() const { return cameras_.size(); }
         void closeAll();

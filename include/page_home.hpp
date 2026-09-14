@@ -1,5 +1,6 @@
 #pragma once
 #include "base_page.hpp"
+#include "camera_manager.hpp"
 #include "config.hpp"
 #include "measurement_worker.hpp"
 #include <QElapsedTimer>
@@ -40,8 +41,8 @@ namespace pva
         void submitOfflineFrame();
         void showResult(const pva::MeasurementResult &result);
         void triggerOnlineCapture();
-        void onCameraFrame(const QString &role, const cv::Mat &image);
-        void onCameraExposure(const QString &role, double exposureUs);
+        void onCameraFrame(const QString &userId, const cv::Mat &image);
+        void onCameraExposure(const QString &userId, double exposureUs);
         void onOnlineCameraStarted();
         void onOnlineCameraStopped();
         void onOnlineCameraFailed(const QString &message);

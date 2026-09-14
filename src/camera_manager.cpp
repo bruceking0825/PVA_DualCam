@@ -38,7 +38,7 @@ namespace pva
         }
     }
 
-    DalsaCamera *CameraManager::getByUserId(const QString &userId) const
+    DalsaCamera *CameraManager::get(const QString &userId) const
     {
         const auto iterator = cameras_.find(userId);
         return iterator == cameras_.end() ? nullptr : iterator->second.get();
@@ -47,9 +47,9 @@ namespace pva
     QList<DalsaCamera *> CameraManager::getAll() const
     {
         QList<DalsaCamera *> result;
-        for (const auto &[role, camera] : cameras_)
+        for (const auto &[userId, camera] : cameras_)
         {
-            Q_UNUSED(role);
+            Q_UNUSED(userId);
             result.append(camera.get());
         }
         return result;
@@ -57,9 +57,9 @@ namespace pva
 
     void CameraManager::closeAll()
     {
-        for (const auto &[role, camera] : cameras_)
+        for (const auto &[userId, camera] : cameras_)
         {
-            Q_UNUSED(role);
+            Q_UNUSED(userId);
             camera->close();
         }
     }

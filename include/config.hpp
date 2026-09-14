@@ -23,8 +23,6 @@ namespace pva
 
     struct CameraSettings
     {
-        QString deviceUserIdCamera1;
-        QString deviceUserIdCamera2;
         double initialExposureCamera1{10000.0};
         double gainCamera1{1.0};
         double initialExposureCamera2{10000.0};

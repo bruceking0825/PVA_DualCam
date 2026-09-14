@@ -210,12 +210,12 @@ namespace pva
                     QString error;
                     DalsaCamera *target = nullptr;
                     if (key.endsWith("camera1"))
-                        target = camera(config_.camera.deviceUserIdCamera1.trimmed());
+                        target = camera(CameraRole::Cam1);
                     else if (key.endsWith("camera2"))
-                        target = camera(config_.camera.deviceUserIdCamera2.trimmed());
+                        target = camera(CameraRole::Cam2);
                     if (target && target->isOpen())
                     {
-                        const bool first = cameraSlot(target->userId()) != 1;
+                        const bool first = key.endsWith("camera1");
                         if (key.startsWith("initial_exposure_") && streamOwner_ != "online")
                             target->setExposure(first ? config_.camera.initialExposureCamera1
                                                       : config_.camera.initialExposureCamera2,
@@ -263,23 +263,7 @@ namespace pva
 
     DalsaCamera *PageCamera::camera(const QString &userId) const
     {
-        return cameraManager_->getByUserId(userId);
-    }
-
-    QStringList PageCamera::onlineCameraUserIds() const
-    {
-        return {config_.camera.deviceUserIdCamera1.trimmed(),
-                config_.camera.deviceUserIdCamera2.trimmed()};
-    }
-
-    int PageCamera::cameraSlot(const QString &userId) const
-    {
-        const QStringList ids = onlineCameraUserIds();
-        if (userId == ids[0])
-            return 0;
-        if (userId == ids[1])
-            return 1;
-        return -1;
+        return cameraManager_->get(userId);
     }
 
     void PageCamera::refreshCameras()
@@ -325,7 +309,7 @@ namespace pva
 
     bool PageCamera::applyConfiguredParameters(DalsaCamera &value, const cv::Rect &roi, bool online, QString *error)
     {
-        const bool first = cameraSlot(value.userId()) != 1;
+        const bool first = value.userId() != CameraRole::Cam2;
         const double initial = first ? config_.camera.initialExposureCamera1 : config_.camera.initialExposureCamera2;
         const double exposure = online ? loadRememberedExposure(value.userId(), initial) : initial;
         const double gain = first ? config_.camera.gainCamera1 : config_.camera.gainCamera2;
@@ -459,12 +443,7 @@ namespace pva
             return;
         }
         QString error;
-        const QStringList userIds = onlineCameraUserIds();
-        if (userIds[0].isEmpty() || userIds[1].isEmpty())
-            error = "Configure both camera Device User IDs";
-        else if (userIds[0] == userIds[1])
-            error = "Camera 1 and Camera 2 must use different Device User IDs";
-        for (const auto &userId : userIds)
+        for (const QString &userId : CameraRole::Stereo)
         {
             if (!error.isEmpty())
                 break;
@@ -488,7 +467,8 @@ namespace pva
         streamOwner_ = "online";
         refreshUi();
         emit AppSignals::instance().onlineCameraStarted();
-        setStatus(true, "Online cameras started: " + userIds.join(", "));
+        setStatus(true, QString("Online cameras started: %1, %2")
+                            .arg(CameraRole::Cam1, CameraRole::Cam2));
     }
 
     void PageCamera::stopOnlineCameras()
@@ -504,7 +484,7 @@ namespace pva
     {
         if (streamOwner_ != "online")
             return;
-        for (const auto &userId : onlineCameraUserIds())
+        for (const QString &userId : CameraRole::Stereo)
         {
             QString error;
             auto *value = camera(userId);
@@ -523,11 +503,11 @@ namespace pva
         if (value)
             adjustAutoExposure(*value, frame, timestampNs);
         // GigE 特征读取是同步操作，不在每个图像回调中执行。
-        const int slot = cameraSlot(userId);
-        if (value && slot >= 0 && timestampNs - lastExposurePublishNs_.value(userId, 0) >= 500000000LL)
+        const bool onlineCamera = CameraRole::Stereo.contains(userId);
+        if (value && onlineCamera && timestampNs - lastExposurePublishNs_.value(userId, 0) >= 500000000LL)
         {
             lastExposurePublishNs_[userId] = timestampNs;
-            emit AppSignals::instance().cameraExposureChanged(QString::number(slot + 1), value->exposure());
+            emit AppSignals::instance().cameraExposureChanged(userId, value->exposure());
         }
         // 手动自由运行预览限制为 10 FPS，图像管线不会占满 UI 线程。
         if (streamOwner_.isEmpty() && timestampNs - lastManualPreviewNs_ >= 100000000LL)
@@ -537,8 +517,8 @@ namespace pva
             ui_->orgGraphicsView->showImage(frame, true);
             runPreviewPipeline();
         }
-        if (slot >= 0)
-            emit AppSignals::instance().cameraFrameCaptured(QString::number(slot + 1), frame);
+        if (onlineCamera)
+            emit AppSignals::instance().cameraFrameCaptured(userId, frame);
         if (value)
             value->frameConsumed();
     }
@@ -546,7 +526,7 @@ namespace pva
     void PageCamera::onCaptureFailed(const QString &userId, const QString &message)
     {
         setStatus(false, "Camera " + userId + ": " + message);
-        if (streamOwner_ == "online" && cameraSlot(userId) >= 0)
+        if (streamOwner_ == "online" && CameraRole::Stereo.contains(userId))
             emit AppSignals::instance().onlineCameraFailed("Camera " + userId + ": " + message);
     }
 
@@ -558,11 +538,11 @@ namespace pva
         const qint64 minimumDelta = qint64(std::max(config_.camera.autoExposureIntervalMs, 50)) * 1000000;
         if (timestampNs - lastExposureAdjustNs_.value(value.userId(), 0) < minimumDelta)
             return;
-        const int slot = cameraSlot(value.userId());
-        if (slot < 0)
+        if (!CameraRole::Stereo.contains(value.userId()))
             return;
-        const cv::Rect roi = clippedRoi(slot == 0 ? config_.measurement.autoExposureRoiCamera1
-                                                   : config_.measurement.autoExposureRoiCamera2,
+        const cv::Rect roi = clippedRoi(value.userId() == CameraRole::Cam1
+                                            ? config_.measurement.autoExposureRoiCamera1
+                                            : config_.measurement.autoExposureRoiCamera2,
                                         frame.size());
         if (roi.empty())
             return;
@@ -597,9 +577,11 @@ namespace pva
     void PageCamera::saveRememberedExposures() const
     {
         QHash<QString, double> exposures;
-        for (const auto &userId : onlineCameraUserIds())
+        for (const QString &userId : CameraRole::Stereo)
+        {
             if (auto *value = camera(userId); value && value->isOpen())
                 exposures.insert("camera:" + userId, value->exposure());
+        }
         if (exposures.isEmpty())
             return;
         CameraStateStore(cameraStatePath(config_)).saveExposures(exposures);

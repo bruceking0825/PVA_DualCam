@@ -392,19 +392,20 @@ namespace pva
         onlineFrames_.clear();
         emit AppSignals::instance().onlineCameraTriggerRequested();
     }
-    void PageHome::onCameraFrame(const QString &role, const cv::Mat &image)
+    void PageHome::onCameraFrame(const QString &userId, const cv::Mat &image)
     {
-        if (!running_ || !activeOnline_ || !worker_ || (role != "1" && role != "2"))
+        if (!running_ || !activeOnline_ || !worker_ || !CameraRole::Stereo.contains(userId))
             return;
-        onlineFrames_[role] = {onlineClock_.nsecsElapsed(), image.clone()};
-        if (!onlineFrames_.contains("1") || !onlineFrames_.contains("2"))
+        onlineFrames_[userId] = {onlineClock_.nsecsElapsed(), image.clone()};
+        if (!onlineFrames_.contains(CameraRole::Cam1) || !onlineFrames_.contains(CameraRole::Cam2))
             return;
-        const auto first = onlineFrames_.value("1"), second = onlineFrames_.value("2");
+        const auto first = onlineFrames_.value(CameraRole::Cam1);
+        const auto second = onlineFrames_.value(CameraRole::Cam2);
         const double deltaMs = std::abs(first.timestampNs - second.timestampNs) / 1.0e6;
         ui_->lblFrameDelta->setText(QString("Frame delta: %1 ms").arg(deltaMs, 0, 'f', 1));
         if (deltaMs > config_.runtime.stereoPairMaxDeltaMs)
         {
-            onlineFrames_.remove(first.timestampNs < second.timestampNs ? "1" : "2");
+            onlineFrames_.remove(first.timestampNs < second.timestampNs ? CameraRole::Cam1 : CameraRole::Cam2);
             const QString message = QString("Online stereo pair dropped: frame delta %1 ms > %2 ms").arg(deltaMs, 0, 'f', 1).arg(config_.runtime.stereoPairMaxDeltaMs);
             setStatus(message, false);
             log(message);
@@ -414,18 +415,13 @@ namespace pva
         const auto effective = stage_ == MeasurementStage::Idle ? MeasurementStage::Neck : stage_;
         worker_->submit(first.image, second.image, effective);
     }
-    void PageHome::onCameraExposure(const QString &role, double exposureUs)
+    void PageHome::onCameraExposure(const QString &userId, double exposureUs)
     {
-        if (role == "1")
-        {
-            viewInfo_[0].exposureUs = exposureUs;
-            updateViewInfo(1);
-        }
-        else if (role == "2")
-        {
-            viewInfo_[1].exposureUs = exposureUs;
-            updateViewInfo(2);
-        }
+        const qsizetype index = CameraRole::Stereo.indexOf(userId);
+        if (index < 0)
+            return;
+        viewInfo_[index].exposureUs = exposureUs;
+        updateViewInfo(int(index + 1));
     }
     void PageHome::onOnlineCameraStarted()
     {

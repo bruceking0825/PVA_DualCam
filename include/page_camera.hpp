@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base_page.hpp"
+#include "camera_manager.hpp"
 #include "config.hpp"
 #include "measurement_engine.hpp"
 #include <QElapsedTimer>
@@ -15,7 +16,6 @@ QT_END_NAMESPACE
 namespace pva
 {
     class DalsaCamera;
-    class CameraManager;
 
     class PageCamera final : public BasePage
     {
@@ -71,15 +71,13 @@ namespace pva
         bool cameraDiscoveryRunning_{false};
 
         DalsaCamera *camera(const QString &userId) const;
-        [[nodiscard]] QStringList onlineCameraUserIds() const;
-        [[nodiscard]] int cameraSlot(const QString &userId) const;
         bool applyConfiguredParameters(DalsaCamera &camera, const cv::Rect &roi, bool online, QString *error);
         void closeAll();
         void refreshUi();
         void setManualControlsEnabled(bool enabled);
         void setStatus(bool ok, const QString &message);
         void adjustAutoExposure(DalsaCamera &camera, const cv::Mat &frame, qint64 timestampNs);
-        double loadRememberedExposure(const QString &role, double fallback) const;
+        double loadRememberedExposure(const QString &userId, double fallback) const;
         void saveRememberedExposures() const;
     };
 }

@@ -1,4 +1,5 @@
 #pragma once
+#include "camera_manager.hpp"
 #include <QObject>
 #include <opencv2/core.hpp>
 
@@ -20,8 +21,8 @@ namespace pva
         void onlineCameraStarted();
         void onlineCameraStopped();
         void onlineCameraFailed(const QString &message);
-        void cameraFrameCaptured(const QString &role, const cv::Mat &image);
-        void cameraExposureChanged(const QString &role, double exposureUs);
+        void cameraFrameCaptured(const QString &userId, const cv::Mat &image);
+        void cameraExposureChanged(const QString &userId, double exposureUs);
         void appClose();
     };
 }
