@@ -518,7 +518,7 @@ namespace pva
             runPreviewPipeline();
         }
         if (onlineCamera)
-            emit AppSignals::instance().cameraFrameCaptured(userId, frame);
+            emit AppSignals::instance().cameraFrameCaptured(userId, frame, timestampNs);
         if (value)
             value->frameConsumed();
     }

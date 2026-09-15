@@ -21,7 +21,7 @@ namespace pva
         void onlineCameraStarted();
         void onlineCameraStopped();
         void onlineCameraFailed(const QString &message);
-        void cameraFrameCaptured(const QString &userId, const cv::Mat &image);
+        void cameraFrameCaptured(const QString &userId, const cv::Mat &image, qint64 timestampNs);
         void cameraExposureChanged(const QString &userId, double exposureUs);
         void appClose();
     };

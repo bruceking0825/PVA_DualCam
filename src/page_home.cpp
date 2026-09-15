@@ -48,7 +48,6 @@ namespace pva
     {
         offlineTimer_ = new QTimer(this);
         onlineTimer_ = new QTimer(this);
-        onlineClock_.start();
         stage_ = MeasurementStage::Neck;
     }
 
@@ -392,11 +391,11 @@ namespace pva
         onlineFrames_.clear();
         emit AppSignals::instance().onlineCameraTriggerRequested();
     }
-    void PageHome::onCameraFrame(const QString &userId, const cv::Mat &image)
+    void PageHome::onCameraFrame(const QString &userId, const cv::Mat &image, qint64 timestampNs)
     {
         if (!running_ || !activeOnline_ || !worker_ || !CameraRole::Stereo.contains(userId))
             return;
-        onlineFrames_[userId] = {onlineClock_.nsecsElapsed(), image.clone()};
+        onlineFrames_[userId] = {timestampNs, image.clone()};
         if (!onlineFrames_.contains(CameraRole::Cam1) || !onlineFrames_.contains(CameraRole::Cam2))
             return;
         const auto first = onlineFrames_.value(CameraRole::Cam1);

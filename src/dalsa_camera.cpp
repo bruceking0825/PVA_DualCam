@@ -377,6 +377,7 @@ namespace pva
     void DalsaCamera::handleFrame(bool trash)
     {
 #ifdef PVA_HAS_SAPERA
+        const qint64 callbackTimestampNs = nowNs();
         if (trash || !impl_->buffers)
         {
             emit captureFailed(userId_, "Sapera returned an incomplete frame");
@@ -409,7 +410,7 @@ namespace pva
             emit captureFailed(userId_, QString("Unsupported Nano-M2020 pixel depth: %1").arg(depth));
         impl_->buffers->ReleaseAddress(index, address);
         if (!image.empty())
-            emit frameReady(userId_, image, nowNs());
+            emit frameReady(userId_, image, callbackTimestampNs);
         else
             framePending_.store(false);
 #endif

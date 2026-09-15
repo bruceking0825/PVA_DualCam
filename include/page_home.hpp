@@ -3,7 +3,6 @@
 #include "camera_manager.hpp"
 #include "config.hpp"
 #include "measurement_worker.hpp"
-#include <QElapsedTimer>
 #include <QHash>
 #include <array>
 #include <memory>
@@ -41,7 +40,7 @@ namespace pva
         void submitOfflineFrame();
         void showResult(const pva::MeasurementResult &result);
         void triggerOnlineCapture();
-        void onCameraFrame(const QString &userId, const cv::Mat &image);
+        void onCameraFrame(const QString &userId, const cv::Mat &image, qint64 timestampNs);
         void onCameraExposure(const QString &userId, double exposureUs);
         void onOnlineCameraStarted();
         void onOnlineCameraStopped();
@@ -67,7 +66,6 @@ namespace pva
         bool activeOnline_{false};
         struct OnlineFrame { qint64 timestampNs{}; cv::Mat image; };
         QHash<QString, OnlineFrame> onlineFrames_;
-        QElapsedTimer onlineClock_;
         struct ViewInfo
         {
             int x{};
