@@ -48,19 +48,14 @@ namespace pva
         double mmPerPixelAlpha{0.5};
         cv::Rect autoExposureRoiCamera1{0, 0, 512, 512};
         cv::Rect autoExposureRoiCamera2{0, 0, 512, 512};
+        cv::Rect reflectorRoiCamera1{0, 0, 512, 512};
+        cv::Rect reflectorRoiCamera2{0, 0, 512, 512};
     };
 
     struct NeckSettings
     {
         double minContourAreaPx{80.0};
         int minEdgePoints{24};
-        double reflectorThresholdCamera1{150.0};
-        double reflectorThresholdCamera2{150.0};
-        double reflectorBottomSearchTopRatio{0.55};
-        double reflectorBottomSearchBottomRatio{0.95};
-        double reflectorSideScoreMaxFactor{0.5};
-        int reflectorBottomMinPoints{40};
-        double reflectorFlatMaxSagPx{25.0};
         double gradientThresholdCamera1{70.0};
         double gradientThresholdCamera2{70.0};
         double startSearchRatio{0.0};

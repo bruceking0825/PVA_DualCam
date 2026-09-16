@@ -12,9 +12,9 @@ The main-window/page/worker/signal structure mirrors the Python application. Sta
 Implemented scope:
 
 - no calibration page or calibration core;
-- no triangulation, reflector elevation, or melt-level calculation; reflector boundaries are retained only to define Crown/Body ROIs;
+- no triangulation, reflector detection/elevation, or melt-level calculation; Crown/Body use the two manual reflector ROIs in `[Measurement]`;
 - Neck keeps the diameter calculation `major_axis_camera2 / neck_pixels_per_mm`;
-- Idle and Neck calculate reflector boundaries dynamically; Crown and Body reuse those boundaries as their ROIs and retain only the meniscus lower-vertex result;
+- fixed per-camera reflector ROIs limit the Neck ellipse search and the Crown/Body meniscus search; Crown and Body retain only the meniscus lower-vertex result;
 - Endcone keeps the neck/body-state based diameter calculation;
 - the original Home/Camera/Parameters page framework and offline composite-image sequence workflow;
 - `CustomGraphicsView`, measurement worker, application signals, and page controllers are separate classes;

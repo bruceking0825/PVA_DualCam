@@ -53,7 +53,6 @@ add_library(pva_measurement
     src/measurement_engine.cpp
     src/algorithms/image_utils.cpp
     src/algorithms/neck_detector.cpp
-    src/algorithms/reflector_detector.cpp
     src/algorithms/meniscus_detector.cpp
     src/algorithms/endcone_detector.cpp
 )

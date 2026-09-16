@@ -149,11 +149,20 @@ namespace pva::algorithms
         cv::Size2f size(float(2 * std::sqrt(term / xx) * scale.x), float(2 * std::sqrt(term / yy) * scale.y));
         return cv::RotatedRect(center, size, 0);
     }
-    std::optional<EllipseHit> findNeckEllipse(const cv::Mat &gray, double threshold, double minArea, double startRatio, double stopRatio, std::optional<double> expectedX)
+    std::optional<EllipseHit> findNeckEllipse(const cv::Mat &gray, const cv::Rect &configuredRoi,
+                                              double threshold, double minArea,
+                                              double startRatio, double stopRatio,
+                                              std::optional<double> expectedX)
     {
-        int y0 = std::clamp(int(std::lround(gray.rows * startRatio)), 0, std::max(gray.rows - 1, 0)), y1 = std::clamp(int(std::lround(gray.rows * stopRatio)), y0 + 1, gray.rows);
+        int y0 = std::clamp(int(std::lround(gray.rows * startRatio)), 0, std::max(gray.rows - 1, 0));
+        int y1 = std::clamp(int(std::lround(gray.rows * stopRatio)), y0 + 1, gray.rows);
+        const cv::Rect imageBounds(0, 0, gray.cols, gray.rows);
+        const cv::Rect verticalBounds(0, y0, gray.cols, y1 - y0);
+        const cv::Rect roi = configuredRoi & imageBounds & verticalBounds;
+        if (roi.width < 3 || roi.height < 3)
+            return {};
         cv::Mat blur, gx, gy, mag, binary;
-        cv::GaussianBlur(gray.rowRange(y0, y1), blur, {5, 5}, 0);
+        cv::GaussianBlur(gray(roi), blur, {5, 5}, 0);
         cv::Sobel(blur, gx, CV_32F, 1, 0, 3);
         cv::Sobel(blur, gy, CV_32F, 0, 1, 3);
         cv::magnitude(gx, gy, mag);
@@ -163,7 +172,7 @@ namespace pva::algorithms
         std::vector<std::vector<cv::Point>> contours;
         cv::findContours(binary, contours, cv::RETR_LIST, cv::CHAIN_APPROX_NONE);
         std::optional<EllipseHit> best;
-        double bestScore = -std::numeric_limits<double>::infinity(), imageArea = double((y1 - y0) * gray.cols);
+        double bestScore = -std::numeric_limits<double>::infinity(), imageArea = double(roi.area());
         for (auto contour : contours)
         {
             if (contour.size() < 5)
@@ -179,9 +188,13 @@ namespace pva::algorithms
             auto ellipse = *fit;
             if (std::min(ellipse.size.width, ellipse.size.height) < 4 || std::max(ellipse.size.width, ellipse.size.height) > std::max(gray.rows, gray.cols) * 1.5)
                 continue;
-            ellipse.center.y += float(y0);
+            ellipse.center.x += float(roi.x);
+            ellipse.center.y += float(roi.y);
             for (auto &p : fitContour.points)
-                p.y += y0;
+            {
+                p.x += roi.x;
+                p.y += roi.y;
+            }
             const double perimeter = std::max(cv::arcLength(contour, true), 1e-6);
             const double xPenalty = expectedX ? std::abs(ellipse.center.x - *expectedX) : 0.0;
             const double score = std::sqrt(area) + 400 * CV_PI * area / (perimeter * perimeter) - xPenalty * 0.1;

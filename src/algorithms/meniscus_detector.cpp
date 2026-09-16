@@ -7,43 +7,9 @@
 
 namespace pva::algorithms
 {
-    static std::vector<double> bottomProfile(const ReflectorRoi &roi, int x0, int x1)
+    static cv::Rect clippedRoi(const cv::Rect &roi, const cv::Mat &image)
     {
-        std::vector<cv::Point2d> curve = roi.bottomCurve;
-        if (curve.size() < 2)
-            curve = {roi.leftBoundary, roi.rightBoundary};
-        std::stable_sort(curve.begin(), curve.end(), [](const auto &left, const auto &right)
-                         { return left.x < right.x; });
-        curve.erase(std::unique(curve.begin(), curve.end(), [](const auto &left, const auto &right)
-                                { return left.x == right.x; }),
-                    curve.end());
-        if (curve.size() < 2 || x1 < x0)
-            return {};
-
-        // Match numpy.interp: sort and deduplicate x, then clamp outside the endpoint range.
-        std::vector<double> values;
-        values.reserve(x1 - x0 + 1);
-        size_t upperIndex = 1;
-        for (int x = x0; x <= x1; ++x)
-        {
-            if (x <= curve.front().x)
-            {
-                values.push_back(curve.front().y);
-                continue;
-            }
-            if (x >= curve.back().x)
-            {
-                values.push_back(curve.back().y);
-                continue;
-            }
-            while (upperIndex < curve.size() && curve[upperIndex].x < x)
-                ++upperIndex;
-            const auto &upper = curve[upperIndex];
-            const auto &lower = curve[upperIndex - 1];
-            const double fraction = (x - lower.x) / (upper.x - lower.x);
-            values.push_back(lower.y + fraction * (upper.y - lower.y));
-        }
-        return values;
+        return roi & cv::Rect(0, 0, image.cols, image.rows);
     }
     static double value(const cv::Vec3d &c, double x) { return c[0] * x * x + c[1] * x + c[2]; }
     static double percentile(std::vector<double> values, double fraction)
@@ -165,24 +131,23 @@ namespace pva::algorithms
         return lastPeak >= 0 ? lastPeak : int(maximumIt - scores.begin());
     }
 
-    std::optional<CurveHit> findCrownMeniscus(const cv::Mat &gray, const ReflectorRoi &roi,
+    std::optional<CurveHit> findCrownMeniscus(const cv::Mat &gray, const cv::Rect &configuredRoi,
                                               cv::Point2d expectedCenter, const CrownSettings &s,
                                               std::optional<double> previous)
     {
-        const double left = std::min(roi.leftBoundary.x, roi.rightBoundary.x);
-        const double right = std::max(roi.leftBoundary.x, roi.rightBoundary.x);
-        const int x0 = std::max(1, int(std::ceil(left)) + std::max(0, s.horizontalMarginPx));
-        const int x1 = std::min(gray.cols - 2, int(std::floor(right)) - std::max(0, s.horizontalMarginPx));
+        const cv::Rect roi = clippedRoi(configuredRoi, gray);
+        const int x0 = std::max(1, roi.x + std::max(0, s.horizontalMarginPx));
+        const int x1 = std::min(gray.cols - 2, roi.x + roi.width - 1 - std::max(0, s.horizontalMarginPx));
         if (x1 - x0 + 1 < s.minEdgePoints)
             return {};
 
-        auto bottom = bottomProfile(roi, x0, x1);
-        if (bottom.empty())
+        if (roi.height < 3)
             return {};
-        for (double &y : bottom)
-            y = std::min(y - std::max(0, s.bottomMarginPx), gray.rows - 2.0);
+        std::vector<double> bottom(x1 - x0 + 1,
+                                   std::min(double(roi.y + roi.height - 1 - std::max(0, s.bottomMarginPx)),
+                                            gray.rows - 2.0));
         const double maximumBottom = *std::max_element(bottom.begin(), bottom.end());
-        int searchStart = std::max(1, int(std::floor(expectedCenter.y)));
+        int searchStart = std::max({1, roi.y, int(std::floor(expectedCenter.y))});
         int searchStop = std::min(gray.rows - 1, int(std::ceil(maximumBottom)));
         const int trackingHalfHeight = std::max(8, s.searchHalfHeightPx);
         if (previous)
@@ -279,25 +244,24 @@ namespace pva::algorithms
         return hit;
     }
 
-    std::optional<CurveHit> findBodyMeniscus(const cv::Mat &gray, const ReflectorRoi &roi,
+    std::optional<CurveHit> findBodyMeniscus(const cv::Mat &gray, const cv::Rect &configuredRoi,
                                              cv::Point2d expectedCenter, const BodySettings &s,
                                              double offset, std::optional<double> previous)
     {
-        const double left = std::min(roi.leftBoundary.x, roi.rightBoundary.x);
-        const double right = std::max(roi.leftBoundary.x, roi.rightBoundary.x);
-        const int x0 = std::max(1, int(std::ceil(left)) + std::max(0, s.horizontalMarginPx));
-        const int x1 = std::min(gray.cols - 2, int(std::floor(right)) - std::max(0, s.horizontalMarginPx));
+        const cv::Rect roi = clippedRoi(configuredRoi, gray);
+        const int x0 = std::max(1, roi.x + std::max(0, s.horizontalMarginPx));
+        const int x1 = std::min(gray.cols - 2, roi.x + roi.width - 1 - std::max(0, s.horizontalMarginPx));
         if (x1 - x0 + 1 < s.minEdgePoints)
             return {};
-        auto bottom = bottomProfile(roi, x0, x1);
-        if (bottom.empty())
+        if (roi.height < 3)
             return {};
-        for (double &y : bottom)
-            y = std::min(y - std::max(0, s.bottomMarginPx), gray.rows - 2.0);
+        std::vector<double> bottom(x1 - x0 + 1,
+                                   std::min(double(roi.y + roi.height - 1 - std::max(0, s.bottomMarginPx)),
+                                            gray.rows - 2.0));
 
         const int ratioStart = std::clamp(int(std::nearbyint(gray.rows * s.startSearchRatio)), 0, gray.rows - 1);
         const int ratioStop = std::clamp(int(std::nearbyint(gray.rows * s.stopSearchRatio)), ratioStart + 1, gray.rows);
-        int y0 = std::max({ratioStart, 1, int(std::floor(expectedCenter.y))});
+        int y0 = std::max({ratioStart, roi.y, 1, int(std::floor(expectedCenter.y))});
         int y1 = std::min({ratioStop, gray.rows - 1,
                            int(std::ceil(*std::max_element(bottom.begin(), bottom.end())))});
         const int trackingHalfHeight = std::max(8, s.searchHalfHeightPx);

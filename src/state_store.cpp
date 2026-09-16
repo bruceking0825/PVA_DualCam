@@ -29,24 +29,6 @@ namespace
         const auto values = value.toArray();
         return {point(values.size() > 0 ? values.at(0) : QJsonValue{}), point(values.size() > 1 ? values.at(1) : QJsonValue{})};
     }
-    QJsonObject reflector(const pva::ReflectorRoi &roi)
-    {
-        QJsonArray curve;
-        for (const auto &value : roi.bottomCurve)
-            curve.append(point(value));
-        return {{"center", point(roi.center)}, {"left", point(roi.leftBoundary)}, {"right", point(roi.rightBoundary)}, {"bottom_curve", curve}};
-    }
-    pva::ReflectorRoi reflector(const QJsonValue &value)
-    {
-        const auto object = value.toObject();
-        pva::ReflectorRoi roi;
-        roi.center = point(object.value("center"));
-        roi.leftBoundary = point(object.value("left"));
-        roi.rightBoundary = point(object.value("right"));
-        for (const auto &entry : object.value("bottom_curve").toArray())
-            roi.bottomCurve.push_back(point(entry));
-        return roi;
-    }
 }
 
 namespace pva
@@ -90,12 +72,6 @@ namespace pva
             const auto b = spans.size() > 1 ? spans.at(1).toArray() : QJsonArray{};
             state.neckXSpans = std::array<cv::Vec2i, 2>{cv::Vec2i(a.size() > 0 ? a.at(0).toInt() : 0, a.size() > 1 ? a.at(1).toInt() : 0), cv::Vec2i(b.size() > 0 ? b.at(0).toInt() : 0, b.size() > 1 ? b.at(1).toInt() : 0)};
         }
-        if (object.contains("neck_reflector_rois"))
-        {
-            const auto rois = object.value("neck_reflector_rois").toArray();
-            if (rois.size() >= 2)
-                state.neckReflectorRois = std::array<ReflectorRoi, 2>{reflector(rois.at(0)), reflector(rois.at(1))};
-        }
         if (object.contains("crown_boundary_points_px"))
             state.crownBoundaryPointsPx = points(object.value("crown_boundary_points_px"));
         if (object.contains("body_centers_px"))
@@ -104,7 +80,7 @@ namespace pva
             state.bodyBoundaryPointsPx = points(object.value("body_boundary_points_px"));
         if (object.value("mm_per_pixel").isDouble())
             state.mmPerPixel = object.value("mm_per_pixel").toDouble();
-        state.validNeck = object.value("valid_neck").toBool(false) && state.neckReflectorRois.has_value();
+        state.validNeck = object.value("valid_neck").toBool(false) && state.neckCentersPx.has_value();
         return state;
     }
 
@@ -124,8 +100,6 @@ namespace pva
             object["neck_centers_px"] = points(*state.neckCentersPx);
         if (state.neckXSpans)
             object["neck_x_spans"] = QJsonArray{QJsonArray{(*state.neckXSpans)[0][0], (*state.neckXSpans)[0][1]}, QJsonArray{(*state.neckXSpans)[1][0], (*state.neckXSpans)[1][1]}};
-        if (state.neckReflectorRois)
-            object["neck_reflector_rois"] = QJsonArray{reflector((*state.neckReflectorRois)[0]), reflector((*state.neckReflectorRois)[1])};
         if (state.crownBoundaryPointsPx)
             object["crown_boundary_points_px"] = points(*state.crownBoundaryPointsPx);
         if (state.bodyCentersPx)

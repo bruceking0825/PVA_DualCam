@@ -46,22 +46,12 @@ namespace
                        2,
                        false});
     }
-    void addReflectorOverlay(const pva::ReflectorRoi &roi, std::vector<pva::OverlayElement> &out, bool showCenter)
+    cv::Vec2i ellipseXSpan(const pva::algorithms::EllipseHit &hit, int imageWidth)
     {
-        const double markerHeight = std::max(30.0, std::abs(roi.rightBoundary.x - roi.leftBoundary.x) * 0.12);
-        out.push_back({pva::OverlayType::Line,
-                       {{roi.leftBoundary.x, std::max(0.0, roi.leftBoundary.y - markerHeight)}, roi.leftBoundary},
-                       {255, 0, 0},
-                       3,
-                       false});
-        out.push_back({pva::OverlayType::Line,
-                       {{roi.rightBoundary.x, std::max(0.0, roi.rightBoundary.y - markerHeight)}, roi.rightBoundary},
-                       {255, 0, 0},
-                       3,
-                       false});
-        out.push_back({pva::OverlayType::Polyline, roi.bottomCurve, {255, 0, 0}, 3, false});
-        if (showCenter)
-            out.push_back({pva::OverlayType::Cross, {roi.center}, {0, 255, 255}, 2, false});
+        const double halfWidth = std::max(hit.ellipse.size.width, hit.ellipse.size.height) * 0.5;
+        const int left = std::clamp(cvRound(hit.ellipse.center.x - halfWidth), 0, imageWidth - 1);
+        const int right = std::clamp(cvRound(hit.ellipse.center.x + halfWidth), left, imageWidth - 1);
+        return {left, right};
     }
 
     void addStoredNeckCenterOverlays(const pva::MeasurementState &state, pva::MeasurementResult &result)
@@ -74,6 +64,20 @@ namespace
             {pva::OverlayType::Cross, {(*state.neckCentersPx)[0]}, {0, 255, 0}, 2, false});
         result.overlay2.push_back(
             {pva::OverlayType::Cross, {(*state.neckCentersPx)[1]}, {0, 255, 0}, 2, false});
+    }
+
+    void addRoiOverlay(const cv::Rect &configuredRoi, const cv::Size &imageSize,
+                       std::vector<pva::OverlayElement> &out)
+    {
+        const cv::Rect roi = configuredRoi & cv::Rect(0, 0, imageSize.width, imageSize.height);
+        if (roi.width <= 0 || roi.height <= 0)
+            return;
+        const double right = roi.x + roi.width - 1;
+        const double bottom = roi.y + roi.height - 1;
+        out.push_back({pva::OverlayType::Polyline,
+                       {{double(roi.x), double(roi.y)}, {right, double(roi.y)},
+                        {right, bottom}, {double(roi.x), bottom}},
+                       {0, 255, 0}, 2, true});
     }
 
     void initializeCrownDiagnostics(pva::MeasurementResult &result)
@@ -144,6 +148,8 @@ namespace pva
             result.diagnostics["cycle_ms"] = 0.0;
             return result;
         }
+        addRoiOverlay(config_.measurement.reflectorRoiCamera1, result.preview1.size(), result.overlay1);
+        addRoiOverlay(config_.measurement.reflectorRoiCamera2, result.preview2.size(), result.overlay2);
         double light1 = 0, light2 = 0;
         cv::minMaxLoc(result.preview1, nullptr, &light1);
         cv::minMaxLoc(result.preview2, nullptr, &light2);
@@ -182,26 +188,8 @@ namespace pva
 
     std::pair<bool, std::string> MeasurementEngine::processNeck(const cv::Mat &a, const cv::Mat &b, MeasurementResult &r)
     {
-        const auto reflector1 = algorithms::findReflectorBottom(a, config_.neck.reflectorThresholdCamera1, config_.neck);
-        const auto reflector2 = algorithms::findReflectorBottom(b, config_.neck.reflectorThresholdCamera2, config_.neck);
-        if (!reflector1 || !reflector2)
-        {
-            // 与 Python 版本一致：单帧检测失败只报告本帧无效，不能销毁最后一次
-            // 有效的 Neck/reflector 状态，否则 Crown/Body 会因瞬时丢边而失去 ROI。
-            return {false, "Reflector bottom not found for Crown/Body ROI"};
-        }
-        addReflectorOverlay(reflector1->roi, r.overlay1, true);
-        addReflectorOverlay(reflector2->roi, r.overlay2, true);
-        r.diagnostics["reflector_left_x_camera1_px"] = reflector1->roi.leftBoundary.x;
-        r.diagnostics["reflector_right_x_camera1_px"] = reflector1->roi.rightBoundary.x;
-        r.diagnostics["reflector_center_x_camera1_px"] = reflector1->roi.center.x;
-        r.diagnostics["reflector_center_y_camera1_px"] = reflector1->roi.center.y;
-        r.diagnostics["reflector_left_x_camera2_px"] = reflector2->roi.leftBoundary.x;
-        r.diagnostics["reflector_right_x_camera2_px"] = reflector2->roi.rightBoundary.x;
-        r.diagnostics["reflector_center_x_camera2_px"] = reflector2->roi.center.x;
-        r.diagnostics["reflector_center_y_camera2_px"] = reflector2->roi.center.y;
-        auto first = algorithms::findNeckEllipse(a, config_.neck.gradientThresholdCamera1, config_.neck.minContourAreaPx, config_.neck.startSearchRatio, config_.neck.stopSearchRatio, reflector1->roi.center.x);
-        auto second = algorithms::findNeckEllipse(b, config_.neck.gradientThresholdCamera2, config_.neck.minContourAreaPx, config_.neck.startSearchRatio, config_.neck.stopSearchRatio, reflector2->roi.center.x);
+        auto first = algorithms::findNeckEllipse(a, config_.measurement.reflectorRoiCamera1, config_.neck.gradientThresholdCamera1, config_.neck.minContourAreaPx, config_.neck.startSearchRatio, config_.neck.stopSearchRatio, {});
+        auto second = algorithms::findNeckEllipse(b, config_.measurement.reflectorRoiCamera2, config_.neck.gradientThresholdCamera2, config_.neck.minContourAreaPx, config_.neck.startSearchRatio, config_.neck.stopSearchRatio, {});
         if (!first || !second)
             return {false, "Neck meniscus not found"};
         const double majorAxis1 = std::max(first->ellipse.size.width, first->ellipse.size.height);
@@ -227,10 +215,8 @@ namespace pva
         state_.values.diameterMm = ema(state_.values.diameterMm, raw, config_.neck.diameterAlpha);
         state_.mmPerPixel = ema(state_.mmPerPixel, 1 / config_.neck.pixelsPerMm, config_.measurement.mmPerPixelAlpha);
         state_.neckCentersPx = std::array<cv::Point2d, 2>{first->ellipse.center, second->ellipse.center};
-        state_.neckReflectorRois = std::array<ReflectorRoi, 2>{reflector1->roi, reflector2->roi};
         state_.neckXSpans = std::array<cv::Vec2i, 2>{
-            cv::Vec2i(cvRound(reflector1->roi.leftBoundary.x), cvRound(reflector1->roi.rightBoundary.x)),
-            cv::Vec2i(cvRound(reflector2->roi.leftBoundary.x), cvRound(reflector2->roi.rightBoundary.x))};
+            ellipseXSpan(*first, a.cols), ellipseXSpan(*second, b.cols)};
         state_.validNeck = true;
         state_.crownBoundaryPointsPx.reset();
         state_.bodyCentersPx.reset();
@@ -243,8 +229,8 @@ namespace pva
 
     std::pair<bool, std::string> MeasurementEngine::processCrown(const cv::Mat &a, const cv::Mat &b, MeasurementResult &r)
     {
-        if (!state_.validNeck || !state_.neckReflectorRois || !state_.neckCentersPx)
-            return {false, "Crown mode requires reflector ROI from a valid Idle/Neck result"};
+        if (!state_.validNeck || !state_.neckCentersPx)
+            return {false, "Crown mode requires a valid Idle/Neck result"};
         std::optional<double> p1, p2;
         if (config_.crown.usePreviousBoundaryY && state_.crownBoundaryPointsPx)
         {
@@ -253,13 +239,10 @@ namespace pva
         }
         r.diagnostics["crown_edge_previous_tracking_active"] = p1.has_value() && p2.has_value();
         r.diagnostics["crown_edge_model"] = "maximum_negative_gradient_quadratic";
-        const auto &rois = *state_.neckReflectorRois;
         const auto &centers = *state_.neckCentersPx;
-        addReflectorOverlay(rois[0], r.overlay1, false);
-        addReflectorOverlay(rois[1], r.overlay2, false);
         addStoredNeckCenterOverlays(state_, r);
-        auto first = algorithms::findCrownMeniscus(a, rois[0], centers[0], config_.crown, p1);
-        auto second = algorithms::findCrownMeniscus(b, rois[1], centers[1], config_.crown, p2);
+        auto first = algorithms::findCrownMeniscus(a, config_.measurement.reflectorRoiCamera1, centers[0], config_.crown, p1);
+        auto second = algorithms::findCrownMeniscus(b, config_.measurement.reflectorRoiCamera2, centers[1], config_.crown, p2);
         if (!first || !second)
             return {false, "Crown meniscus curve not found in reflector ROI"};
         const auto addDiagnostics = [&r, this](const algorithms::CurveHit &hit, int camera)
@@ -293,8 +276,8 @@ namespace pva
 
     std::pair<bool, std::string> MeasurementEngine::processBody(const cv::Mat &a, const cv::Mat &b, MeasurementResult &r)
     {
-        if (!state_.validNeck || !state_.neckReflectorRois || !state_.neckCentersPx)
-            return {false, "Body mode requires reflector ROI from a valid Idle/Neck result"};
+        if (!state_.validNeck || !state_.neckCentersPx)
+            return {false, "Body mode requires a valid Idle/Neck result"};
         std::optional<double> p1, p2;
         if (config_.body.usePreviousBoundaryY && state_.bodyBoundaryPointsPx)
         {
@@ -303,13 +286,10 @@ namespace pva
         }
         r.diagnostics["body_edge_previous_tracking_active"] = p1.has_value() && p2.has_value();
         r.diagnostics["body_edge_model"] = "maximum_brightness_quadratic";
-        const auto &rois = *state_.neckReflectorRois;
         const auto &centers = *state_.neckCentersPx;
-        addReflectorOverlay(rois[0], r.overlay1, false);
-        addReflectorOverlay(rois[1], r.overlay2, false);
         addStoredNeckCenterOverlays(state_, r);
-        auto first = algorithms::findBodyMeniscus(a, rois[0], centers[0], config_.body, config_.body.brightnessOffsetCamera1, p1);
-        auto second = algorithms::findBodyMeniscus(b, rois[1], centers[1], config_.body, config_.body.brightnessOffsetCamera2, p2);
+        auto first = algorithms::findBodyMeniscus(a, config_.measurement.reflectorRoiCamera1, centers[0], config_.body, config_.body.brightnessOffsetCamera1, p1);
+        auto second = algorithms::findBodyMeniscus(b, config_.measurement.reflectorRoiCamera2, centers[1], config_.body, config_.body.brightnessOffsetCamera2, p2);
         if (!first || !second)
             return {false, "Body meniscus curve not found in reflector ROI"};
         const auto addDiagnostics = [&r](const algorithms::CurveHit &hit, int camera)
@@ -335,8 +315,7 @@ namespace pva
         };
         addDiagnostics(*first, 1);
         addDiagnostics(*second, 2);
-        state_.bodyCentersPx = state_.neckCentersPx.value_or(
-            std::array<cv::Point2d, 2>{rois[0].center, rois[1].center});
+        state_.bodyCentersPx = state_.neckCentersPx;
         state_.bodyBoundaryPointsPx = std::array<cv::Point2d, 2>{first->boundary, second->boundary};
         addCurveOverlay(*first, r.overlay1);
         addCurveOverlay(*second, r.overlay2);
