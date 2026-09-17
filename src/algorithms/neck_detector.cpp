@@ -1,8 +1,27 @@
 #include "algorithms/detectors.hpp"
 #include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <algorithm>
 #include <cmath>
 #include <limits>
+
+extern "C" __declspec(noinline)
+bool debugSaveImage(const char *path, const cv::Mat *image)
+{
+    if (!path || !image || image->empty())
+        return false;
+
+    try
+    {
+        cv::Mat output;
+        cv::normalize(*image, output, 0, 255, cv::NORM_MINMAX, CV_8U);
+        return cv::imwrite(path, output);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
 
 namespace pva::algorithms
 {
@@ -88,7 +107,7 @@ namespace pva::algorithms
             { return left[3] < right[3]; });
         const cv::Rect bounds = cv::boundingRect(contour);
         const double depthPx = (*deepest)[3] / 256.0;
-        const double minimumDepth = std::max(3.0, 0.05 * std::min(bounds.width, bounds.height));
+        const double minimumDepth = std::max(3.0, 0.5 * std::min(bounds.width, bounds.height));
         if (depthPx < minimumDepth)
             return {contour, true};
 
