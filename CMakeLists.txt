@@ -13,6 +13,12 @@ set(CMAKE_AUTORCC ON)
 # them explicitly so every translation unit and header gets an IntelliSense
 # configuration that can resolve the C++ standard library and Windows SDK.
 if(MSVC)
+    # Source files contain Chinese comments and UI strings and are saved as
+    # UTF-8.  Older MSVC toolsets otherwise decode them with the active ANSI
+    # code page, which can even turn valid code after a comment into syntax
+    # errors.
+    add_compile_options(/utf-8)
+
     get_filename_component(PVA_MSVC_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
     get_filename_component(PVA_MSVC_ROOT "${PVA_MSVC_BIN_DIR}/../../.." ABSOLUTE)
     set(PVA_MSVC_INCLUDE_DIR "${PVA_MSVC_ROOT}/include")
@@ -32,7 +38,12 @@ if(MSVC)
     include_directories(BEFORE ${PVA_TOOLCHAIN_INCLUDE_DIRS})
 endif()
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets)
+# Keep the source compatible with both the existing 64-bit Qt 6 build and the
+# locally built 32-bit Qt 5 package.  CMAKE_PREFIX_PATH decides which package
+# is selected for a particular build directory.
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Gui Widgets)
+set(PVA_QT_PACKAGE "Qt${QT_VERSION_MAJOR}")
 find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc imgcodecs)
 
 add_library(open62541 STATIC third_party/open62541/open62541.c)
@@ -45,7 +56,11 @@ endif()
 set(SAPERA_ROOT "C:/Program Files/Teledyne DALSA/Sapera" CACHE PATH "Teledyne DALSA Sapera SDK root")
 set(SAPERA_INCLUDE "${SAPERA_ROOT}/Include")
 set(SAPERA_BASIC_INCLUDE "${SAPERA_ROOT}/Classes/Basic")
-set(SAPERA_LIBRARY "${SAPERA_ROOT}/Lib/Win64/SapClassBasic.lib")
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    set(SAPERA_LIBRARY "${SAPERA_ROOT}/Lib/Win32/SapClassBasic.lib")
+else()
+    set(SAPERA_LIBRARY "${SAPERA_ROOT}/Lib/Win64/SapClassBasic.lib")
+endif()
 
 add_library(pva_measurement
     src/config.cpp
@@ -57,7 +72,7 @@ add_library(pva_measurement
     src/algorithms/endcone_detector.cpp
 )
 target_include_directories(pva_measurement PUBLIC include)
-target_link_libraries(pva_measurement PUBLIC Qt6::Core ${OpenCV_LIBS})
+target_link_libraries(pva_measurement PUBLIC ${PVA_QT_PACKAGE}::Core ${OpenCV_LIBS})
 target_compile_definitions(pva_measurement PUBLIC NOMINMAX)
 
 add_executable(pva_dualcam_cpp WIN32
@@ -95,7 +110,8 @@ add_executable(pva_dualcam_cpp WIN32
 )
 set_property(TARGET pva_dualcam_cpp PROPERTY AUTOUIC_SEARCH_PATHS
     "${CMAKE_CURRENT_SOURCE_DIR}/ui")
-target_link_libraries(pva_dualcam_cpp PRIVATE pva_measurement open62541 Qt6::Gui Qt6::Widgets)
+target_link_libraries(pva_dualcam_cpp PRIVATE pva_measurement open62541
+    ${PVA_QT_PACKAGE}::Gui ${PVA_QT_PACKAGE}::Widgets)
 if(EXISTS "${SAPERA_BASIC_INCLUDE}/SapClassBasic.h" AND EXISTS "${SAPERA_LIBRARY}")
     target_compile_definitions(pva_dualcam_cpp PRIVATE PVA_HAS_SAPERA=1)
     target_include_directories(pva_dualcam_cpp SYSTEM PRIVATE "${SAPERA_INCLUDE}" "${SAPERA_BASIC_INCLUDE}")
@@ -106,7 +122,7 @@ add_executable(test_cpp
     tools/test.cpp
 )
 
-target_link_libraries(test_cpp PRIVATE Qt6::Core)
+target_link_libraries(test_cpp PRIVATE ${PVA_QT_PACKAGE}::Core)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -117,7 +133,7 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(pva_measurement_tests PROPERTIES
             ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;PATH=path_list_prepend:${OpenCV_DIR}/../bin")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:${PVA_QT_PACKAGE}::Core>;PATH=path_list_prepend:${OpenCV_DIR}/../bin")
     endif()
 endif()
 

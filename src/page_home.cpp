@@ -634,12 +634,17 @@ namespace pva
         {
             if (!value.isValid() || value.isNull())
                 return QString("NA");
-            if (value.metaType().id() == QMetaType::Bool)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            const int valueType = value.metaType().id();
+#else
+            const int valueType = value.userType();
+#endif
+            if (valueType == QMetaType::Bool)
                 return value.toBool() ? QString("Yes") : QString("No");
-            if (value.metaType().id() == QMetaType::Int || value.metaType().id() == QMetaType::UInt ||
-                value.metaType().id() == QMetaType::LongLong || value.metaType().id() == QMetaType::ULongLong)
+            if (valueType == QMetaType::Int || valueType == QMetaType::UInt ||
+                valueType == QMetaType::LongLong || valueType == QMetaType::ULongLong)
                 return QString::number(value.toLongLong());
-            if (value.metaType().id() == QMetaType::QVariantList)
+            if (valueType == QMetaType::QVariantList)
             {
                 QStringList values;
                 for (const auto &entry : value.toList())

@@ -66,6 +66,8 @@ namespace pva
 
     struct CrownSettings
     {
+        double diameterThreshold1Mm{50.0};
+        double diameterThreshold2Mm{60.0};
         int minEdgePoints{24};
         double columnMaxFactor{0.5};
         bool usePreviousBoundaryY{true};

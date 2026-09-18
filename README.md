@@ -13,8 +13,8 @@ Implemented scope:
 
 - no calibration page or calibration core;
 - no triangulation, reflector detection/elevation, or melt-level calculation; Crown/Body use the two manual reflector ROIs in `[Measurement]`;
-- Neck keeps the diameter calculation `major_axis_camera2 / neck_pixels_per_mm`;
-- fixed per-camera reflector ROIs limit the Neck ellipse search and the Crown/Body meniscus search; Crown and Body retain only the meniscus lower-vertex result;
+- Neck uses only Camera 1 and keeps the diameter calculation `major_axis_camera1 / neck_pixels_per_mm`;
+- fixed per-camera reflector ROIs limit the Neck ellipse search and the Crown/Body meniscus search; during Crown, Camera 1 Neck diameter tracking overlaps Crown meniscus detection between the two configured diameter thresholds;
 - Endcone keeps the neck/body-state based diameter calculation;
 - the original Home/Camera/Parameters page framework and offline composite-image sequence workflow;
 - `CustomGraphicsView`, measurement worker, application signals, and page controllers are separate classes;

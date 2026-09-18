@@ -235,6 +235,8 @@ namespace
             setting("Neck", "neck_pixels_per_mm", &pva::MeasurementConfig::neck, &pva::NeckSettings::pixelsPerMm),
             setting("Neck", "neck_diameter_alpha", &pva::MeasurementConfig::neck, &pva::NeckSettings::diameterAlpha),
 
+            setting("Crown", "crown_diameter_threshold1_mm", &pva::MeasurementConfig::crown, &pva::CrownSettings::diameterThreshold1Mm, minimum(0)),
+            setting("Crown", "crown_diameter_threshold2_mm", &pva::MeasurementConfig::crown, &pva::CrownSettings::diameterThreshold2Mm, minimum(0)),
             setting("Crown", "crown_min_edge_points", &pva::MeasurementConfig::crown, &pva::CrownSettings::minEdgePoints),
             setting("Crown", "crown_edge_column_max_factor", &pva::MeasurementConfig::crown, &pva::CrownSettings::columnMaxFactor),
             setting("Crown", "crown_edge_use_previous_boundary_y", &pva::MeasurementConfig::crown, &pva::CrownSettings::usePreviousBoundaryY),

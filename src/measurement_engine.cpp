@@ -54,6 +54,73 @@ namespace
         return {left, right};
     }
 
+    cv::Rect clippedRoi(const cv::Rect &configuredRoi, const cv::Size &imageSize)
+    {
+        return configuredRoi & cv::Rect(0, 0, imageSize.width, imageSize.height);
+    }
+
+    cv::Point2d roiTopCenter(const cv::Rect &configuredRoi, const cv::Size &imageSize)
+    {
+        const cv::Rect roi = clippedRoi(configuredRoi, imageSize);
+        return {roi.x + (roi.width - 1) * 0.5, double(roi.y)};
+    }
+
+    cv::Vec2i roiXSpan(const cv::Rect &configuredRoi, const cv::Size &imageSize)
+    {
+        const cv::Rect roi = clippedRoi(configuredRoi, imageSize);
+        return {roi.x, std::max(roi.x, roi.x + roi.width - 1)};
+    }
+
+    std::pair<bool, std::string> applyCamera1Neck(
+        const pva::algorithms::EllipseHit &hit,
+        const cv::Size &camera1Size,
+        const cv::Size &camera2Size,
+        const pva::MeasurementConfig &config,
+        pva::MeasurementState &state,
+        pva::MeasurementResult &result,
+        bool resetFollowingStages)
+    {
+        if (hit.contour.size() < size_t(config.neck.minEdgePoints))
+            return {false, "Not enough Camera 1 neck edge points"};
+        if (!(config.neck.pixelsPerMm > 0.0))
+            return {false, "Neck pixels-per-mm must be positive"};
+
+        const double majorAxis = std::max(hit.ellipse.size.width, hit.ellipse.size.height);
+        const double rawDiameter = majorAxis / config.neck.pixelsPerMm;
+        if (!(rawDiameter > config.measurement.diameterMinMm &&
+              rawDiameter < config.measurement.diameterMaxMm))
+            return {false, "Neck diameter is outside physical limits"};
+
+        result.diagnostics["neck_contour_area_camera1_px"] = hit.area;
+        result.diagnostics["neck_edge_points_camera1"] = static_cast<double>(hit.contour.size());
+        result.diagnostics["neck_center_x_camera1_px"] = hit.ellipse.center.x;
+        result.diagnostics["neck_center_y_camera1_px"] = hit.ellipse.center.y;
+        result.diagnostics["neck_ellipse_vertex_y_camera1_px"] =
+            hit.ellipse.center.y + hit.ellipse.size.height * 0.5;
+        result.diagnostics["neck_major_axis_camera1_px"] = majorAxis;
+        result.diagnostics["neck_pixels_per_mm"] = config.neck.pixelsPerMm;
+        result.diagnostics["raw_diameter_mm"] = rawDiameter;
+
+        state.values.diameterMm = ema(state.values.diameterMm, rawDiameter, config.neck.diameterAlpha);
+        state.mmPerPixel = ema(state.mmPerPixel, 1.0 / config.neck.pixelsPerMm,
+                               config.measurement.mmPerPixelAlpha);
+        state.neckCentersPx = std::array<cv::Point2d, 2>{
+            hit.ellipse.center,
+            roiTopCenter(config.measurement.reflectorRoiCamera2, camera2Size)};
+        state.neckXSpans = std::array<cv::Vec2i, 2>{
+            ellipseXSpan(hit, camera1Size.width),
+            roiXSpan(config.measurement.reflectorRoiCamera2, camera2Size)};
+        state.validNeck = true;
+        if (resetFollowingStages)
+        {
+            state.crownBoundaryPointsPx.reset();
+            state.bodyCentersPx.reset();
+            state.bodyBoundaryPointsPx.reset();
+        }
+        addNeckOverlay(hit, result.overlay1);
+        return {true, {}};
+    }
+
     void addStoredNeckCenterOverlays(const pva::MeasurementState &state, pva::MeasurementResult &result)
     {
         if (!state.neckCentersPx)
@@ -189,48 +256,56 @@ namespace pva
     std::pair<bool, std::string> MeasurementEngine::processNeck(const cv::Mat &a, const cv::Mat &b, MeasurementResult &r)
     {
         auto first = algorithms::findNeckEllipse(a, config_.measurement.reflectorRoiCamera1, config_.neck.gradientThresholdCamera1, config_.neck.minContourAreaPx, config_.neck.startSearchRatio, config_.neck.stopSearchRatio, {});
-        auto second = algorithms::findNeckEllipse(b, config_.measurement.reflectorRoiCamera2, config_.neck.gradientThresholdCamera2, config_.neck.minContourAreaPx, config_.neck.startSearchRatio, config_.neck.stopSearchRatio, {});
-        if (!first || !second)
-            return {false, "Neck meniscus not found"};
-        const double majorAxis1 = std::max(first->ellipse.size.width, first->ellipse.size.height);
-        const double majorAxis2 = std::max(second->ellipse.size.width, second->ellipse.size.height);
-        r.diagnostics["neck_contour_area_camera1_px"] = first->area;
-        r.diagnostics["neck_contour_area_camera2_px"] = second->area;
-        r.diagnostics["neck_edge_points_camera1"] = static_cast<double>(first->contour.size());
-        r.diagnostics["neck_edge_points_camera2"] = static_cast<double>(second->contour.size());
-        r.diagnostics["neck_center_x_camera1_px"] = first->ellipse.center.x;
-        r.diagnostics["neck_center_y_camera1_px"] = first->ellipse.center.y;
-        r.diagnostics["neck_center_x_camera2_px"] = second->ellipse.center.x;
-        r.diagnostics["neck_center_y_camera2_px"] = second->ellipse.center.y;
-        r.diagnostics["neck_ellipse_vertex_y_camera1_px"] = first->ellipse.center.y + first->ellipse.size.height * 0.5;
-        r.diagnostics["neck_ellipse_vertex_y_camera2_px"] = second->ellipse.center.y + second->ellipse.size.height * 0.5;
-        r.diagnostics["neck_major_axis_camera1_px"] = majorAxis1;
-        r.diagnostics["neck_major_axis_camera2_px"] = majorAxis2;
-        r.diagnostics["neck_pixels_per_mm"] = config_.neck.pixelsPerMm;
-        if (std::min(first->contour.size(), second->contour.size()) < size_t(config_.neck.minEdgePoints))
-            return {false, "Not enough neck edge points"};
-        double raw = majorAxis2 / config_.neck.pixelsPerMm;
-        if (!(raw > config_.measurement.diameterMinMm && raw < config_.measurement.diameterMaxMm))
-            return {false, "Neck diameter is outside physical limits"};
-        state_.values.diameterMm = ema(state_.values.diameterMm, raw, config_.neck.diameterAlpha);
-        state_.mmPerPixel = ema(state_.mmPerPixel, 1 / config_.neck.pixelsPerMm, config_.measurement.mmPerPixelAlpha);
-        state_.neckCentersPx = std::array<cv::Point2d, 2>{first->ellipse.center, second->ellipse.center};
-        state_.neckXSpans = std::array<cv::Vec2i, 2>{
-            ellipseXSpan(*first, a.cols), ellipseXSpan(*second, b.cols)};
-        state_.validNeck = true;
-        state_.crownBoundaryPointsPx.reset();
-        state_.bodyCentersPx.reset();
-        state_.bodyBoundaryPointsPx.reset();
-        addNeckOverlay(*first, r.overlay1);
-        addNeckOverlay(*second, r.overlay2);
-        r.diagnostics["raw_diameter_mm"] = raw;
+        if (!first)
+            return {false, "Camera 1 neck meniscus not found"};
+        const auto updated = applyCamera1Neck(*first, a.size(), b.size(), config_, state_, r, true);
+        if (!updated.first)
+            return updated;
         return {true, "Neck measurement updated"};
     }
 
     std::pair<bool, std::string> MeasurementEngine::processCrown(const cv::Mat &a, const cv::Mat &b, MeasurementResult &r)
     {
+        if (!(config_.crown.diameterThreshold2Mm > config_.crown.diameterThreshold1Mm))
+            return {false, "Crown diameter threshold 2 must be greater than threshold 1"};
+
+        r.diagnostics["crown_diameter_threshold1_mm"] = config_.crown.diameterThreshold1Mm;
+        r.diagnostics["crown_diameter_threshold2_mm"] = config_.crown.diameterThreshold2Mm;
+        const bool neckTrackingActive = !state_.values.diameterMm ||
+                                        *state_.values.diameterMm <= config_.crown.diameterThreshold2Mm;
+        bool neckTrackingValid = false;
+        std::string neckTrackingError;
+        if (neckTrackingActive)
+        {
+            const auto neck = algorithms::findNeckEllipse(
+                a, config_.measurement.reflectorRoiCamera1,
+                config_.neck.gradientThresholdCamera1, config_.neck.minContourAreaPx,
+                config_.neck.startSearchRatio, config_.neck.stopSearchRatio, {});
+            if (neck)
+            {
+                const auto updated = applyCamera1Neck(*neck, a.size(), b.size(), config_, state_, r, false);
+                neckTrackingValid = updated.first;
+                neckTrackingError = updated.second;
+            }
+            else
+            {
+                neckTrackingError = "Camera 1 neck meniscus not found during Crown transition";
+            }
+        }
+        r.diagnostics["crown_neck_tracking_active"] = neckTrackingActive;
+        r.diagnostics["crown_neck_tracking_valid"] = neckTrackingValid;
+
+        if (!state_.values.diameterMm)
+            return {false, neckTrackingError.empty() ? "Crown transition requires a Camera 1 neck diameter" : neckTrackingError};
+        if (*state_.values.diameterMm <= config_.crown.diameterThreshold1Mm)
+        {
+            if (!neckTrackingValid)
+                return {false, neckTrackingError};
+            return {true, "Crown diameter updated from Camera 1 neck ellipse"};
+        }
         if (!state_.validNeck || !state_.neckCentersPx)
-            return {false, "Crown mode requires a valid Idle/Neck result"};
+            return {false, "Crown meniscus requires a valid Camera 1 neck reference"};
+
         std::optional<double> p1, p2;
         if (config_.crown.usePreviousBoundaryY && state_.crownBoundaryPointsPx)
         {

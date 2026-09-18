@@ -188,14 +188,22 @@ namespace pva
     void MainWindow::mousePressEvent(QMouseEvent *event)
     {
         if (event->button() == Qt::LeftButton)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
             dragPosition_ = event->globalPosition().toPoint() - frameGeometry().topLeft();
+#else
+            dragPosition_ = event->globalPos() - frameGeometry().topLeft();
+#endif
         QMainWindow::mousePressEvent(event);
     }
     void MainWindow::mouseMoveEvent(QMouseEvent *event)
     {
         if ((event->buttons() & Qt::LeftButton) && !isMaximized())
         {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
             move(event->globalPosition().toPoint() - dragPosition_);
+#else
+            move(event->globalPos() - dragPosition_);
+#endif
             event->accept();
             return;
         }
@@ -203,7 +211,11 @@ namespace pva
     }
     void MainWindow::mouseDoubleClickEvent(QMouseEvent *event)
     {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         if (event->button() == Qt::LeftButton && event->position().y() <= ui_->contentTopBg->height())
+#else
+        if (event->button() == Qt::LeftButton && event->pos().y() <= ui_->contentTopBg->height())
+#endif
         {
             toggleMaximizeRestore();
             event->accept();

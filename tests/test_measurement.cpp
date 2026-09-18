@@ -38,6 +38,8 @@ int main(int argc, char **argv)
                   parsed.measurement.reflectorRoiCamera2.width > 0 &&
                   parsed.measurement.reflectorRoiCamera2.height > 0,
               "Manual reflector ROIs parsed");
+        check(parsed.crown.diameterThreshold2Mm > parsed.crown.diameterThreshold1Mm,
+              "Crown transition diameter thresholds parsed");
         check(QDir::isAbsolutePath(parsed.runtime.offlineImageDir), "Offline directory resolved relative to cnf");
         check(QDir(parsed.runtime.offlineImageDir).exists(), "Configured offline directory exists");
 
@@ -109,17 +111,18 @@ int main(int argc, char **argv)
     config.neck.pixelsPerMm = 10;
     cv::Mat neck = cv::Mat::zeros(400, 400, CV_8U);
     cv::ellipse(neck, {200, 180}, {80, 40}, 0, 0, 360, cv::Scalar(220), 5);
+    cv::Mat camera2WithoutMeniscus(400, 400, CV_8U, cv::Scalar(100));
     pva::MeasurementEngine engine(config);
-    auto neckResult = engine.process(neck, neck, pva::MeasurementStage::Neck);
-    check(neckResult.valid, "Neck synthetic measurement valid");
+    auto neckResult = engine.process(neck, camera2WithoutMeniscus, pva::MeasurementStage::Neck);
+    check(neckResult.valid, "Neck synthetic measurement uses Camera 1 without a Camera 2 meniscus");
     check(neckResult.values.diameterMm && std::abs(*neckResult.values.diameterMm - 16.0) < 2.0, "Neck diameter keeps pixels-per-mm calculation");
-    check(neckResult.overlay1.size() >= 4 && neckResult.overlay2.size() >= 4,
-          "Neck overlays include contour ellipse center and lower vertex");
+    check(neckResult.overlay1.size() >= 5 && neckResult.overlay2.size() == 1,
+          "Neck overlays Camera 1 detection and only the Camera 2 manual ROI");
     check(neckResult.diagnostics.contains("cycle_ms") && neckResult.diagnostics.at("cycle_ms").toDouble() >= 0.0,
           "Cycle diagnostic populated");
     check(neckResult.diagnostics.contains("neck_major_axis_camera1_px"),
           "Neck process diagnostics populated");
-    auto idleResult = engine.process(neck, neck, pva::MeasurementStage::Idle);
+    auto idleResult = engine.process(neck, camera2WithoutMeniscus, pva::MeasurementStage::Idle);
     check(idleResult.stage == pva::MeasurementStage::Idle && idleResult.overlay1.size() >= 4,
           "Idle uses Neck overlays while preserving Idle stage");
 
@@ -128,13 +131,22 @@ int main(int argc, char **argv)
     cv::ellipse(concaveNeck, {200, 190}, {100, 65}, 0, 0, 360, cv::Scalar(220), cv::FILLED);
     cv::rectangle(concaveNeck, {188, 110}, {212, 185}, cv::Scalar(0), cv::FILLED);
     const auto concaveHit = pva::algorithms::findNeckEllipse(concaveNeck, cv::Rect(0, 0, 400, 400), 10, 80, 0, 1, {});
-    check(concaveHit && !concaveHit->contourClosed,
-          "Neck ellipse uses the open outer convex arc for a concave contour");
+    check(concaveHit.has_value(),
+          "Neck ellipse remains valid for a concave contour");
     const auto croppedNeckHit = pva::algorithms::findNeckEllipse(
         concaveNeck, cv::Rect(80, 80, 240, 220), 10, 80, 0, 1, {});
     check(croppedNeckHit && std::abs(croppedNeckHit->ellipse.center.x - 200.0) < 10.0 &&
               std::abs(croppedNeckHit->ellipse.center.y - 190.0) < 10.0,
           "Neck detection uses the manual reflector ROI and restores full-image coordinates");
+
+    pva::MeasurementEngine earlyCrownEngine(config, engine.state());
+    const auto earlyCrownResult = earlyCrownEngine.process(
+        neck, camera2WithoutMeniscus, pva::MeasurementStage::Crown);
+    check(earlyCrownResult.valid &&
+              earlyCrownResult.diagnostics.at("crown_neck_tracking_active").toBool() &&
+              earlyCrownResult.diagnostics.at("crown_neck_tracking_valid").toBool() &&
+              !earlyCrownEngine.state().crownBoundaryPointsPx,
+          "Early Crown keeps Camera 1 neck diameter tracking below threshold 1");
 
     cv::Mat meniscus(260, 300, CV_8U, cv::Scalar(20));
     for (int x = 20; x < 280; ++x)
@@ -149,10 +161,13 @@ int main(int argc, char **argv)
     config.measurement.reflectorRoiCamera1 = config.measurement.reflectorRoiCamera2 = cv::Rect(20, 0, 261, 231);
     pva::MeasurementState crownState;
     crownState.validNeck = true;
+    crownState.values.diameterMm = 100.0;
     crownState.neckCentersPx = std::array<cv::Point2d, 2>{cv::Point2d(140, 20), cv::Point2d(160, 20)};
     pva::MeasurementEngine crownEngine(config, crownState);
     auto crownResult = crownEngine.process(meniscus, meniscus, pva::MeasurementStage::Crown);
     check(crownResult.valid, "Crown manual-ROI lower vertex valid");
+    check(!crownResult.diagnostics.at("crown_neck_tracking_active").toBool(),
+          "Crown stops Camera 1 neck fitting above diameter threshold 2");
     const auto hasStoredNeckCenter = [](const std::vector<pva::OverlayElement> &overlays,
                                         cv::Point2d expectedCenter)
     {

@@ -162,7 +162,8 @@ namespace pva
                 [this](int, int x, int y, int gray)
                 { ui_->lblTransformedInfo->setText(QString("View 2 - Pos: (%1, %2) | Value: %3").arg(x).arg(y).arg(gray)); });
         connect(ui_->btnRefresh, &QPushButton::clicked, this, &PageCamera::refreshCameras);
-        connect(ui_->combCameraList, &QComboBox::currentIndexChanged, this, &PageCamera::selectCamera);
+        connect(ui_->combCameraList, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, &PageCamera::selectCamera);
         connect(ui_->btnCamON, &QPushButton::toggled, this, &PageCamera::toggleCamera);
         connect(ui_->btnStartSnap, &QPushButton::toggled, this, &PageCamera::toggleStream);
         connect(ui_->btnSoftTrigger, &QPushButton::clicked, this, &PageCamera::softwareTrigger);
@@ -172,9 +173,12 @@ namespace pva
         connect(ui_->edtHeight, &QLineEdit::returnPressed, this, &PageCamera::applyHeight);
         connect(ui_->edtOffsetX, &QLineEdit::returnPressed, this, &PageCamera::applyOffsetX);
         connect(ui_->edtOffsetY, &QLineEdit::returnPressed, this, &PageCamera::applyOffsetY);
-        connect(ui_->combTrigMode, &QComboBox::currentIndexChanged, this, &PageCamera::applyTriggerMode);
-        connect(ui_->combTrigSource, &QComboBox::currentIndexChanged, this, &PageCamera::applyTriggerSource);
-        connect(ui_->combTrigEdge, &QComboBox::currentIndexChanged, this, &PageCamera::applyTriggerEdge);
+        connect(ui_->combTrigMode, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, &PageCamera::applyTriggerMode);
+        connect(ui_->combTrigSource, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, &PageCamera::applyTriggerSource);
+        connect(ui_->combTrigEdge, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, &PageCamera::applyTriggerEdge);
         connect(ui_->btnRun, &QPushButton::clicked, this, &PageCamera::runPreviewPipeline);
         connect(ui_->btnConfig, &QPushButton::clicked, this, [this]
                 { setStatus(true, QString("Pipeline: %1").arg(graphPath_)); });
