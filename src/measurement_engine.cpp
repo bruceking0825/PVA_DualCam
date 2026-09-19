@@ -121,6 +121,34 @@ namespace
         return {true, {}};
     }
 
+    std::pair<bool, std::string> applyCamera2NeckReference(
+        const pva::algorithms::EllipseHit &hit,
+        const cv::Size &camera2Size,
+        const pva::MeasurementConfig &config,
+        pva::MeasurementState &state,
+        pva::MeasurementResult &result)
+    {
+        if (hit.contour.size() < size_t(config.neck.minEdgePoints))
+            return {false, "Not enough Camera 2 neck edge points"};
+        if (!state.neckCentersPx || !state.neckXSpans)
+            return {false, "Camera 2 neck reference requires a valid Camera 1 result"};
+
+        const double majorAxis = std::max(hit.ellipse.size.width, hit.ellipse.size.height);
+        result.diagnostics["neck_contour_area_camera2_px"] = hit.area;
+        result.diagnostics["neck_edge_points_camera2"] = static_cast<double>(hit.contour.size());
+        result.diagnostics["neck_center_x_camera2_px"] = hit.ellipse.center.x;
+        result.diagnostics["neck_center_y_camera2_px"] = hit.ellipse.center.y;
+        result.diagnostics["neck_ellipse_vertex_y_camera2_px"] =
+            hit.ellipse.center.y + hit.ellipse.size.height * 0.5;
+        result.diagnostics["neck_major_axis_camera2_px"] = majorAxis;
+
+        // Camera 2 只提供过渡阶段的空间参考；直径和毫米比例始终由 Camera 1 更新。
+        (*state.neckCentersPx)[1] = hit.ellipse.center;
+        (*state.neckXSpans)[1] = ellipseXSpan(hit, camera2Size.width);
+        addNeckOverlay(hit, result.overlay2);
+        return {true, {}};
+    }
+
     void addStoredNeckCenterOverlays(const pva::MeasurementState &state, pva::MeasurementResult &result)
     {
         if (!state.neckCentersPx)
@@ -292,8 +320,40 @@ namespace pva
                 neckTrackingError = "Camera 1 neck meniscus not found during Crown transition";
             }
         }
+
+        bool camera2NeckTrackingActive = false;
+        bool camera2NeckTrackingValid = false;
+        std::string camera2NeckTrackingError;
+        if (neckTrackingValid && state_.values.diameterMm)
+        {
+            camera2NeckTrackingActive =
+                *state_.values.diameterMm > config_.crown.diameterThreshold1Mm &&
+                *state_.values.diameterMm <= config_.crown.diameterThreshold2Mm;
+            if (camera2NeckTrackingActive)
+            {
+                const auto neck = algorithms::findNeckEllipse(
+                    b, config_.measurement.reflectorRoiCamera2,
+                    config_.neck.gradientThresholdCamera2, config_.neck.minContourAreaPx,
+                    config_.neck.startSearchRatio, config_.neck.stopSearchRatio, {});
+                if (neck)
+                {
+                    const auto updated = applyCamera2NeckReference(
+                        *neck, b.size(), config_, state_, r);
+                    camera2NeckTrackingValid = updated.first;
+                    camera2NeckTrackingError = updated.second;
+                }
+                else
+                {
+                    camera2NeckTrackingError =
+                        "Camera 2 neck meniscus not found during Crown transition";
+                }
+            }
+        }
         r.diagnostics["crown_neck_tracking_active"] = neckTrackingActive;
         r.diagnostics["crown_neck_tracking_valid"] = neckTrackingValid;
+        r.diagnostics["crown_camera2_neck_tracking_active"] = camera2NeckTrackingActive;
+        r.diagnostics["crown_camera2_neck_tracking_valid"] = camera2NeckTrackingValid;
+        r.diagnostics["neck_diameter_source_camera"] = 1;
 
         if (!state_.values.diameterMm)
             return {false, neckTrackingError.empty() ? "Crown transition requires a Camera 1 neck diameter" : neckTrackingError};
@@ -303,6 +363,8 @@ namespace pva
                 return {false, neckTrackingError};
             return {true, "Crown diameter updated from Camera 1 neck ellipse"};
         }
+        if (camera2NeckTrackingActive && !camera2NeckTrackingValid)
+            return {false, camera2NeckTrackingError};
         if (!state_.validNeck || !state_.neckCentersPx)
             return {false, "Crown meniscus requires a valid Camera 1 neck reference"};
 

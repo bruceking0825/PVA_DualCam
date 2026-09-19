@@ -148,6 +148,38 @@ int main(int argc, char **argv)
               !earlyCrownEngine.state().crownBoundaryPointsPx,
           "Early Crown keeps Camera 1 neck diameter tracking below threshold 1");
 
+    // 直径进入两个阈值之间后，两台相机都拟合 Neck，但直径仍只取 Camera 1。
+    config.crown.diameterThreshold1Mm = 10.0;
+    config.crown.diameterThreshold2Mm = 30.0;
+    config.neck.diameterAlpha = 0.0;
+    cv::Mat camera2Neck = cv::Mat::zeros(400, 400, CV_8U);
+    cv::ellipse(camera2Neck, {240, 180}, {110, 45}, 0, 0, 360, cv::Scalar(220), 5);
+    pva::MeasurementState transitionState = engine.state();
+    transitionState.values.diameterMm = 20.0;
+    pva::MeasurementEngine transitionEngine(config, transitionState);
+    const auto transitionResult = transitionEngine.process(
+        neck, camera2Neck, pva::MeasurementStage::Crown);
+    const auto camera1TransitionHit = pva::algorithms::findNeckEllipse(
+        neck, config.measurement.reflectorRoiCamera1,
+        config.neck.gradientThresholdCamera1, config.neck.minContourAreaPx,
+        config.neck.startSearchRatio, config.neck.stopSearchRatio, {});
+    const double expectedCamera1Diameter = camera1TransitionHit
+                                               ? std::max(camera1TransitionHit->ellipse.size.width,
+                                                          camera1TransitionHit->ellipse.size.height) /
+                                                     config.neck.pixelsPerMm
+                                               : 0.0;
+    check(transitionResult.diagnostics.at("crown_camera2_neck_tracking_active").toBool() &&
+              transitionResult.diagnostics.at("crown_camera2_neck_tracking_valid").toBool(),
+          "Crown transition fits Camera 2 Neck between diameter thresholds");
+    check(transitionResult.values.diameterMm &&
+              std::abs(*transitionResult.values.diameterMm - expectedCamera1Diameter) < 0.01 &&
+              transitionResult.diagnostics.at("neck_diameter_source_camera").toInt() == 1,
+          "Crown transition diameter remains determined by Camera 1");
+    check(transitionEngine.state().neckCentersPx &&
+              std::abs((*transitionEngine.state().neckCentersPx)[1].x - 240.0) < 10.0 &&
+              transitionResult.diagnostics.contains("neck_major_axis_camera2_px"),
+          "Crown transition stores the fitted Camera 2 Neck reference");
+
     cv::Mat meniscus(260, 300, CV_8U, cv::Scalar(20));
     for (int x = 20; x < 280; ++x)
     {

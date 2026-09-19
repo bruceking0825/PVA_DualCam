@@ -216,7 +216,8 @@ namespace pva::algorithms
             }
             const double perimeter = std::max(cv::arcLength(contour, true), 1e-6);
             const double xPenalty = expectedX ? std::abs(ellipse.center.x - *expectedX) : 0.0;
-            const double score = std::sqrt(area) + 400 * CV_PI * area / (perimeter * perimeter) - xPenalty * 0.1;
+            // 月牙状颈部轮廓面积小且圆度低，因此直接按面积和周长奖励有效的大轮廓。
+            const double score = area + perimeter - xPenalty * 0.1;
             if (score > bestScore)
             {
                 bestScore = score;

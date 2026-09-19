@@ -5,6 +5,8 @@
 #include "opcua_worker.hpp"
 #include "ui_PageHome.h"
 #include <QButtonGroup>
+#include <QBrush>
+#include <QColor>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
@@ -625,6 +627,20 @@ namespace pva
         auto *camera2 = new QTreeWidgetItem(ui_->treeProcess, {"Camera 2"});
         auto *algorithm = new QTreeWidgetItem(ui_->treeProcess, {"Algorithm"});
         auto *runtime = new QTreeWidgetItem(ui_->treeProcess, {"Runtime"});
+        const auto highlightGroup = [this](QTreeWidgetItem *group)
+        {
+            QFont font = group->font(0);
+            font.setBold(true);
+            for (int column = 0; column < ui_->treeProcess->columnCount(); ++column)
+            {
+                group->setBackground(column, QBrush(QColor(98, 114, 164)));
+                group->setForeground(column, QBrush(Qt::white));
+                group->setFont(column, font);
+            }
+        };
+        // 四个顶层分组使用主题强调色，和普通诊断项形成清晰分隔。
+        for (auto *group : {camera1, camera2, algorithm, runtime})
+            highlightGroup(group);
         camera1->setExpanded(true);
         camera2->setExpanded(true);
         algorithm->setExpanded(true);
@@ -720,5 +736,11 @@ namespace pva
             item->setToolTip(0, QString::fromStdString(key));
             item->setToolTip(1, formattedValue(value));
         }
+
+        // 只按显示名称排序各分组的子项，保持四个顶层分组的固定顺序。
+        camera1->sortChildren(0, Qt::AscendingOrder);
+        camera2->sortChildren(0, Qt::AscendingOrder);
+        algorithm->sortChildren(0, Qt::AscendingOrder);
+        runtime->sortChildren(0, Qt::AscendingOrder);
     }
 }
