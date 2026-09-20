@@ -2,7 +2,8 @@
 #include "state_store.hpp"
 #include "app_signals.hpp"
 #include "config_manager.hpp"
-#include "opcua_worker.hpp"
+#include "sherlock_protocol.hpp"
+#include "sherlock_tcp_server.hpp"
 #include "ui_PageHome.h"
 #include <QButtonGroup>
 #include <QBrush>
@@ -18,11 +19,83 @@
 #include <QTreeWidgetItem>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+#include <cmath>
 
 namespace pva
 {
     namespace
     {
+        constexpr int PlcMeasurementTimeoutMs = 5000;
+
+        struct GrayStatistics
+        {
+            double average{};
+            double maximum{};
+            double minimum{};
+        };
+
+        GrayStatistics grayStatistics(const cv::Mat &image)
+        {
+            if (image.empty())
+                return {};
+            cv::Mat gray;
+            if (image.channels() == 1)
+                gray = image;
+            else
+                cv::cvtColor(image, gray, image.channels() == 4 ? cv::COLOR_BGRA2GRAY : cv::COLOR_BGR2GRAY);
+            double minimum = 0.0;
+            double maximum = 0.0;
+            cv::minMaxLoc(gray, &minimum, &maximum);
+            return {cv::mean(gray)[0], maximum, minimum};
+        }
+
+        std::optional<double> diagnosticNumber(const MeasurementResult &result, const char *key)
+        {
+            const auto found = result.diagnostics.find(key);
+            if (found == result.diagnostics.end() || !found->second.isValid())
+                return {};
+            bool ok = false;
+            const double value = found->second.toDouble(&ok);
+            return ok && std::isfinite(value) ? std::optional<double>(value) : std::nullopt;
+        }
+
+        cv::Point2d diagnosticCenter(const MeasurementResult &result, int camera)
+        {
+            const std::string xKey = "neck_center_x_camera" + std::to_string(camera) + "_px";
+            const std::string yKey = "neck_center_y_camera" + std::to_string(camera) + "_px";
+            const auto x = diagnosticNumber(result, xKey.c_str());
+            const auto y = diagnosticNumber(result, yKey.c_str());
+            const cv::Mat &image = camera == 1 ? result.preview1 : result.preview2;
+            return {x.value_or(image.cols * 0.5), y.value_or(image.rows * 0.5)};
+        }
+
+        QByteArray legacyMeasurementPayload(const QString &command, const MeasurementResult &result)
+        {
+            const auto firstStats = grayStatistics(result.preview1);
+            const auto secondStats = grayStatistics(result.preview2);
+            if (command == "dip_msr")
+                return SherlockProtocol::scaledPayload("dip", {firstStats.average});
+            if (command == "mlt_msr")
+            {
+                // 当前算法没有旧版Blob计数，协议字段暂以0表示未检出。
+                return SherlockProtocol::scaledPayload(
+                    "mlt", {0.0, firstStats.average, firstStats.maximum, firstStats.minimum,
+                            secondStats.average, secondStats.maximum, secondStats.minimum});
+            }
+
+            const double diameter1 = diagnosticNumber(result, "neck_major_axis_camera1_px")
+                                         .value_or(result.values.diameterMm.value_or(0.0));
+            const double diameter2 = diagnosticNumber(result, "neck_major_axis_camera2_px")
+                                         .value_or(diameter1);
+            const cv::Point2d center1 = diagnosticCenter(result, 1);
+            const cv::Point2d center2 = diagnosticCenter(result, 2);
+            return SherlockProtocol::scaledPayload(
+                "dia", {diameter1, diameter2, diameter1 * 0.5, diameter2 * 0.5,
+                        firstStats.average, firstStats.maximum, firstStats.minimum,
+                        secondStats.average, secondStats.maximum, secondStats.minimum,
+                        center1.x, center1.y, center2.x, center2.y});
+        }
+
         bool runtimeSettingsEqual(const RuntimeSettings &left, const RuntimeSettings &right)
         {
             return left.disableCameraForPlcTest == right.disableCameraForPlcTest &&
@@ -49,7 +122,8 @@ namespace pva
     void PageHome::initializeState()
     {
         offlineTimer_ = new QTimer(this);
-        onlineTimer_ = new QTimer(this);
+        plcMeasurementTimeout_ = new QTimer(this);
+        plcMeasurementTimeout_->setSingleShot(true);
         stage_ = MeasurementStage::Neck;
     }
 
@@ -71,7 +145,15 @@ namespace pva
     void PageHome::bindEvents()
     {
         connect(offlineTimer_, &QTimer::timeout, this, &PageHome::submitOfflineFrame);
-        connect(onlineTimer_, &QTimer::timeout, this, &PageHome::triggerOnlineCapture);
+        connect(plcMeasurementTimeout_, &QTimer::timeout, this, [this]
+                {
+                    if (pendingPlcCommand_.isEmpty())
+                        return;
+                    sendPlcPayload("exe_err=measurement timeout");
+                    log("PLC measurement timed out after 5000 ms");
+                    pendingPlcCommand_.clear();
+                    onlineFrames_.clear();
+                });
         connect(ui_->btnStart, &QPushButton::clicked, this, &PageHome::toggleRuntime);
         connect(ui_->btnOnline, &QPushButton::toggled, this, &PageHome::toggleOnline);
         for (auto *b : {ui_->btnStageIdle, ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody, ui_->btnStageEndcone})
@@ -154,9 +236,7 @@ namespace pva
             refreshControls();
         if (!restart)
         {
-            if (activeOnline_ && onlineTimer_->isActive())
-                onlineTimer_->start(onlineSampleInterval());
-            else if (running_ && offlineTimer_->isActive())
+            if (running_ && offlineTimer_->isActive())
                 offlineTimer_->start(std::max(50, config_.runtime.loopIntervalMs));
         }
         if (restart)
@@ -194,7 +274,13 @@ namespace pva
             connect(worker_.get(), &MeasurementWorker::failed, this, [this](const QString &m)
                     {
                         setStatus(m, false);
-                        log(m); });
+                        log(m);
+                        if (!pendingPlcCommand_.isEmpty())
+                        {
+                            plcMeasurementTimeout_->stop();
+                            sendPlcPayload("exe_err=" + m.toLatin1());
+                            pendingPlcCommand_.clear();
+                        } });
             worker_->start();
         }
         running_ = true;
@@ -226,8 +312,9 @@ namespace pva
         const bool wasOnline = activeOnline_;
         running_ = false;
         offlineTimer_->stop();
-        onlineTimer_->stop();
+        plcMeasurementTimeout_->stop();
         onlineFrames_.clear();
+        pendingPlcCommand_.clear();
         stopPlc();
         if (wasOnline)
             emit AppSignals::instance().onlineCameraStopRequested();
@@ -282,8 +369,6 @@ namespace pva
         if (activeOnline_)
         {
             emit AppSignals::instance().onlineStageChanged(int(stage_));
-            if (onlineTimer_->isActive())
-                onlineTimer_->start(onlineSampleInterval());
         }
         log(QString("Offline stage selected: %1").arg(b->text()));
         if (running_)
@@ -360,8 +445,15 @@ namespace pva
         if (!r.valid)
             log(QString::fromStdString(r.message));
         ui_->lblLastFrame->setText("Last frame: " + QDateTime::currentDateTime().toString("HH:mm:ss"));
-        if (r.valid && r.values.diameterMm && plcWorker_)
-            plcWorker_->queueDiameter(*r.values.diameterMm);
+        if (!pendingPlcCommand_.isEmpty())
+        {
+            plcMeasurementTimeout_->stop();
+            if (r.valid)
+                sendPlcPayload(legacyMeasurementPayload(pendingPlcCommand_, r));
+            else
+                sendPlcPayload("exe_err=" + QByteArray::fromStdString(r.message));
+            pendingPlcCommand_.clear();
+        }
         viewInfo_[0].light = r.diagnostics.contains("light_camera1") ? r.diagnostics.at("light_camera1").toDouble() : 0.0;
         viewInfo_[1].light = r.diagnostics.contains("light_camera2") ? r.diagnostics.at("light_camera2").toDouble() : 0.0;
         updateViewInfo(1);
@@ -410,6 +502,12 @@ namespace pva
             const QString message = QString("Online stereo pair dropped: frame delta %1 ms > %2 ms").arg(deltaMs, 0, 'f', 1).arg(config_.runtime.stereoPairMaxDeltaMs);
             setStatus(message, false);
             log(message);
+            if (!pendingPlcCommand_.isEmpty())
+            {
+                plcMeasurementTimeout_->stop();
+                sendPlcPayload("exe_err=stereo frame timestamp mismatch");
+                pendingPlcCommand_.clear();
+            }
             return;
         }
         onlineFrames_.clear();
@@ -430,13 +528,10 @@ namespace pva
             return;
         setConnectionLed(ui_->lblCamera1Status, true);
         setConnectionLed(ui_->lblCamera2Status, true);
-        onlineTimer_->start(onlineSampleInterval());
-        triggerOnlineCapture();
-        log("Online cameras started");
+        log("Online cameras started; waiting for Sherlock TCP command");
     }
     void PageHome::onOnlineCameraStopped()
     {
-        onlineTimer_->stop();
         setConnectionLed(ui_->lblCamera1Status, false);
         setConnectionLed(ui_->lblCamera2Status, false);
         log("Online cameras stopped");
@@ -444,6 +539,12 @@ namespace pva
     void PageHome::onOnlineCameraFailed(const QString &message)
     {
         log("Online camera failed: " + message);
+        if (!pendingPlcCommand_.isEmpty())
+        {
+            plcMeasurementTimeout_->stop();
+            sendPlcPayload("exe_err=" + message.toLatin1());
+            pendingPlcCommand_.clear();
+        }
         stopRuntime();
         {
             QSignalBlocker blocker(ui_->btnOnline);
@@ -452,22 +553,6 @@ namespace pva
         }
         setStatus("Online camera failed: " + message, false);
         refreshControls();
-    }
-    int PageHome::onlineSampleInterval() const
-    {
-        switch (stage_)
-        {
-        case MeasurementStage::Neck:
-            return config_.runtime.neckSampleIntervalMs;
-        case MeasurementStage::Crown:
-            return config_.runtime.crownSampleIntervalMs;
-        case MeasurementStage::Body:
-            return config_.runtime.bodySampleIntervalMs;
-        case MeasurementStage::Endcone:
-            return config_.runtime.endconeSampleIntervalMs;
-        default:
-            return config_.runtime.idleSampleIntervalMs;
-        }
     }
     void PageHome::setConnectionLed(QLabel *label, bool connected)
     {
@@ -522,61 +607,130 @@ namespace pva
     }
     void PageHome::startPlc()
     {
-        if (plcWorker_)
+        if (plcServer_)
             return;
-        plcWorker_ = std::make_unique<OpcUaWorker>();
-        connect(plcWorker_.get(), &OpcUaWorker::connectionChanged, this, [this](bool connected)
+        plcServer_ = std::make_unique<SherlockTcpServer>();
+        connect(plcServer_.get(), &SherlockTcpServer::connectionChanged, this, [this](bool connected)
                 {
                     setConnectionLed(ui_->lblPlcStatus, connected);
-                    log(connected ? "PLC connected" : "PLC disconnected"); });
-        connect(plcWorker_.get(), &OpcUaWorker::controlsChanged, this, &PageHome::onPlcControls);
-        connect(plcWorker_.get(), &OpcUaWorker::failed, this, [this](const QString &message)
+                    log(connected ? "PLC connected on Sherlock TCP 5000/5001" : "PLC Sherlock TCP connection incomplete"); });
+        connect(plcServer_.get(), &SherlockTcpServer::commandReceived, this, &PageHome::onSherlockCommand);
+        connect(plcServer_.get(), &SherlockTcpServer::failed, this, [this](const QString &message)
                 { log(message); });
-        plcWorker_->start();
+        QString error;
+        if (!plcServer_->start(&error))
+        {
+            log(error);
+            setStatus(error, false);
+            plcServer_.reset();
+            return;
+        }
+        log("Sherlock TCP compatibility server listening on ports 5000 and 5001");
     }
     void PageHome::stopPlc()
     {
-        if (!plcWorker_)
+        if (!plcServer_)
             return;
-        // OPC UA 读写即使设置了短超时也不应阻塞界面线程。
-        auto *retiringWorker = plcWorker_.release();
-        disconnect(retiringWorker, nullptr, this, nullptr);
-        retiringWorker->setParent(this);
-        connect(retiringWorker, &QThread::finished,
-                retiringWorker, &QObject::deleteLater);
-        retiringWorker->stop();
+        plcServer_->stop();
+        plcServer_.reset();
+        plcMeasurementTimeout_->stop();
+        pendingPlcCommand_.clear();
         setConnectionLed(ui_->lblPlcStatus, false);
     }
-    void PageHome::onPlcControls(int stageValue, bool shoulderTransition)
+
+    void PageHome::sendPlcPayload(const QByteArray &payload)
     {
-        if (!activeOnline_)
+        if (!plcServer_)
             return;
-        MeasurementStage next = MeasurementStage::Idle;
-        switch (stageValue)
+        QString error;
+        if (!plcServer_->sendPayload(payload, &error) && !error.isEmpty())
+            log(error);
+    }
+
+    void PageHome::onSherlockCommand(const SherlockCommand &command)
+    {
+        const QString name = command.name;
+        log("PLC -> " + QString::fromLatin1(command.raw));
+
+        if (name == "acq_on_")
         {
-        case 1:
-            next = MeasurementStage::Neck;
-            break;
-        case 2:
-            next = shoulderTransition ? MeasurementStage::Body : MeasurementStage::Crown;
-            break;
-        case 3:
-            next = MeasurementStage::Endcone;
-            break;
-        case 4:
-            next = MeasurementStage::Body;
-            break;
-        default:
-            break;
-        }
-        if (next == stage_)
+            acquisitionEnabled_ = true;
+            sendPlcPayload("acq_on_=ok");
             return;
-        stage_ = next;
+        }
+        if (name == "acq_off")
+        {
+            acquisitionEnabled_ = false;
+            sendPlcPayload("acq_off=ok");
+            return;
+        }
+        if (name == "acq_get")
+        {
+            sendPlcPayload("acq_get=" + QByteArray::number(acquisitionEnabled_ ? 1 : 0));
+            return;
+        }
+        if (name == "ver_get")
+        {
+            sendPlcPayload("ver_get=414");
+            return;
+        }
+        if (name == "rfr_get")
+        {
+            sendPlcPayload(SherlockProtocol::scaledPayload("rfr_get", {plcRefreshRate_}));
+            return;
+        }
+        if (name == "rfr_set")
+        {
+            if (command.parameters.size() != 1)
+            {
+                sendPlcPayload("err_prm=rfr_set requires one parameter");
+                return;
+            }
+            const auto value = SherlockProtocol::fromPlcNumber(command.parameters.front());
+            if (!value)
+            {
+                sendPlcPayload("err_prm=invalid refresh rate");
+                return;
+            }
+            plcRefreshRate_ = *value;
+            sendPlcPayload("rfr_set=ok");
+            return;
+        }
+        if (name == "cfit_ne" || name == "pfit_sb")
+        {
+            sendPlcPayload(name.toLatin1() + "=ok");
+            return;
+        }
+
+        if (name != "dia_msr" && name != "dia_rec" && name != "dip_msr" && name != "mlt_msr")
+        {
+            sendPlcPayload("err_unk=" + name.toLatin1());
+            return;
+        }
+        if (!acquisitionEnabled_ || !running_ || !activeOnline_ || !worker_)
+        {
+            sendPlcPayload("err_lck=Measurement are disabled");
+            return;
+        }
+        if (!pendingPlcCommand_.isEmpty())
+        {
+            sendPlcPayload("err_exc=measurement busy");
+            return;
+        }
+
+        if (name == "dia_msr")
+            stage_ = MeasurementStage::Neck;
+        else if (name == "dia_rec")
+            stage_ = MeasurementStage::Endcone;
+        else if (name == "dip_msr")
+            stage_ = MeasurementStage::Crown;
+        else
+            stage_ = MeasurementStage::Body;
+        pendingPlcCommand_ = name;
+        plcMeasurementTimeout_->start(PlcMeasurementTimeoutMs);
         applyStageToUi();
         emit AppSignals::instance().onlineStageChanged(int(stage_));
-        if (onlineTimer_->isActive())
-            onlineTimer_->start(onlineSampleInterval());
-        log(QString("PLC stage changed: %1").arg(stageValue));
+        triggerOnlineCapture();
     }
     void PageHome::applyStageToUi()
     {

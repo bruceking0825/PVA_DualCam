@@ -10,6 +10,7 @@
 
 class QTimer;
 class QLabel;
+class QByteArray;
 
 QT_BEGIN_NAMESPACE
 namespace Ui
@@ -20,7 +21,8 @@ QT_END_NAMESPACE
 
 namespace pva
 {
-    class OpcUaWorker;
+    class SherlockTcpServer;
+    struct SherlockCommand;
 
     class PageHome final : public BasePage
     {
@@ -45,7 +47,7 @@ namespace pva
         void onOnlineCameraStarted();
         void onOnlineCameraStopped();
         void onOnlineCameraFailed(const QString &message);
-        void onPlcControls(int stageValue, bool shoulderTransition);
+        void onSherlockCommand(const pva::SherlockCommand &command);
 
     private:
         void initializeState() override;
@@ -56,14 +58,17 @@ namespace pva
         std::unique_ptr<Ui::PageHome> ui_;
         MeasurementConfig config_;
         std::unique_ptr<MeasurementWorker> worker_;
-        std::unique_ptr<OpcUaWorker> plcWorker_;
+        std::unique_ptr<SherlockTcpServer> plcServer_;
         QTimer *offlineTimer_{};
-        QTimer *onlineTimer_{};
+        QTimer *plcMeasurementTimeout_{};
         QStringList imagePaths_;
         int imageIndex_{-1};
         MeasurementStage stage_{MeasurementStage::Idle};
         bool running_{false};
         bool activeOnline_{false};
+        bool acquisitionEnabled_{true};
+        QString pendingPlcCommand_;
+        double plcRefreshRate_{1.0};
         struct OnlineFrame { qint64 timestampNs{}; cv::Mat image; };
         QHash<QString, OnlineFrame> onlineFrames_;
         struct ViewInfo
@@ -85,13 +90,13 @@ namespace pva
         void updateProcessDiagnostics(const MeasurementResult &result);
         void startRuntime(bool online);
         void stopRuntime();
-        int onlineSampleInterval() const;
         void setConnectionLed(QLabel *label, bool connected);
         void addAutoExposureRoi(std::vector<OverlayElement> &elements, const cv::Rect &roi, const cv::Size &size) const;
         static double roiMean(const cv::Mat &image, const cv::Rect &roi);
         void updateViewInfo(int viewId);
         void startPlc();
         void stopPlc();
+        void sendPlcPayload(const QByteArray &payload);
         void applyStageToUi();
     };
 }
