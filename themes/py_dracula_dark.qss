@@ -541,26 +541,31 @@ Button */
 #pagesContainer QPushButton {
     background-color: rgb(70, 80, 110);
     color: white;
-    /* border: 1px solid #4b00bd19; */	
+    border: 1px solid rgb(70, 80, 110);
     border-radius: 4px;
     padding: 3px 6px;
+    min-height: 22px;
+    outline: none;
 }
 
 #pagesContainer QPushButton:hover {
-    background-color: rgb(70, 80, 110);
-	border: 1px solid rgb(33, 37, 43);
+    background-color: rgb(78, 89, 122);
+	border-color: rgb(33, 37, 43);
 }
-#pagesContainer QPushButton:pressed {	
+#pagesContainer QPushButton:pressed,
+#pagesContainer QPushButton:checked {
 	background-color: rgb(0, 145, 55);
+	border-color: rgb(0, 145, 55);
+	color: white;
 }
 
 #pagesContainer QPushButton:disabled {
     background-color: rgb(80, 90, 100);
-    color: gray;
+    border-color: rgb(80, 90, 100);
+    color: rgb(155, 160, 170);
 }
-#pagesContainer QPushButton:checked {
-        background-color: rgb(0, 145, 55);
-        color: white;
+#pagesContainer QPushButton:focus {
+	border-color: rgb(189, 147, 249);
 }
 
 #PageHome #rightPanel QPushButton {
@@ -598,12 +603,6 @@ Button */
 #PageHome #rightPanel QPushButton#btnStart[runtimeState="stopped"]:disabled {
 	background-color: rgb(70, 80, 110);
 	color: white;
-}
-#PageHome QLabel#lblStatus {
-	background-color: rgb(42, 170, 80);
-	color: black;
-	border-radius: 4px;
-	padding: 4px 6px;
 }
 #btnFirstImage,
 #btnPreviousImage,
@@ -645,14 +644,49 @@ QSplitter::handle {
 	border: 1px solid rgb(70, 80, 110);
 }
 
-QTabWidget::pane{
-	border: 0px solid rgb(70, 80, 110);
+QTabWidget::pane {
+	border: 1px solid rgb(70, 80, 110);
 	background-color: transparent;
+	top: -1px;
 }
-QTabBar::tab {
-	border: 0;
+
+QTabBar {
 	background-color: transparent;
-	padding: 5px;
+	qproperty-drawBase: 0;
+}
+
+QTabBar::tab {
+	min-height: 22px;
+	min-width: 64px;
+	padding: 4px 8px;
+	margin-right: 2px;
+	color: rgb(221, 221, 221);
+	background-color: rgb(44, 49, 58);
+	border: 1px solid rgb(70, 80, 110);
+	border-bottom: 0px;
+}
+
+QTabBar::tab:hover {
+	background-color: rgb(70, 80, 110);
+	border-color: rgb(33, 37, 43);
+}
+
+QTabBar::tab:selected {
+	background-color: rgb(86, 99, 136);
+	border-color: rgb(86, 99, 136);
+	border-left: 2px solid rgb(255, 121, 198);
+	color: white;
+}
+
+QTabBar::tab:disabled {
+	background-color: rgb(52, 58, 71);
+	border-color: rgb(70, 80, 110);
+	color: rgb(125, 130, 140);
+}
+
+#PageParameters QTabWidget::pane {
+	border: 0px;
+	background-color: transparent;
 }
 
 #detailsTabs::pane {
@@ -662,7 +696,7 @@ QTabBar::tab {
 #detailsTabs QTabBar::tab {
 	min-height: 22px;
 	min-width: 64px;
-	padding: 4px 4px;
+	padding: 4px 8px;
 	margin-right: 2px;
 	color: white;
 	background-color: rgb(70, 80, 110);
@@ -677,6 +711,7 @@ QTabBar::tab {
 #detailsTabs QTabBar::tab:selected {
 	background-color: rgb(54, 138, 90);
 	border-color: rgb(78, 170, 112);
+	border-left: 1px solid rgb(78, 170, 112);
 	color: white;
 }
 /*

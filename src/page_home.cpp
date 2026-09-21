@@ -758,10 +758,8 @@ namespace pva
     void PageHome::log(const QString &m) { ui_->txtLog->appendPlainText(QDateTime::currentDateTime().toString("HH:mm:ss ") + m); }
     void PageHome::setStatus(const QString &message, bool ok)
     {
-        ui_->lblStatus->setText(message);
-        ui_->lblStatus->setToolTip(message);
-        ui_->lblStatus->setStyleSheet(QString("background-color: %1; color: black; border-radius: 4px; padding: 4px 6px;")
-                                          .arg(ok ? "rgb(42, 170, 80)" : "rgb(220, 70, 70)"));
+        emit AppSignals::instance().status(
+            "Measurement", ok ? "OK" : "NG", ok ? "info" : "error", message);
     }
     cv::Mat PageHome::readImage(const QString &path)
     {

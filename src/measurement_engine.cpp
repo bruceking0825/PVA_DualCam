@@ -219,6 +219,26 @@ namespace
     {
         return QVariantList{point.x, point.y};
     }
+
+    std::string detectionFailure(const std::string &context, const std::string &reason)
+    {
+        return context + ": " + (reason.empty() ? "no failure detail was provided" : reason);
+    }
+
+    template <typename FirstResult, typename SecondResult>
+    std::string stereoDetectionFailure(const char *stage,
+                                       const FirstResult &first,
+                                       const SecondResult &second)
+    {
+        std::string message = std::string(stage) + " meniscus detection failed";
+        if (!first)
+            message += "; Camera 1: " +
+                       (first.error.empty() ? "no failure detail was provided" : first.error);
+        if (!second)
+            message += "; Camera 2: " +
+                       (second.error.empty() ? "no failure detail was provided" : second.error);
+        return message;
+    }
 }
 
 namespace pva
@@ -285,7 +305,7 @@ namespace pva
     {
         auto first = algorithms::findNeckEllipse(a, config_.measurement.reflectorRoiCamera1, config_.neck.gradientThresholdCamera1, config_.neck.minContourAreaPx, config_.neck.startSearchRatio, config_.neck.stopSearchRatio, {});
         if (!first)
-            return {false, "Camera 1 neck meniscus not found"};
+            return {false, detectionFailure("Camera 1 neck meniscus detection failed", first.error)};
         const auto updated = applyCamera1Neck(*first, a.size(), b.size(), config_, state_, r, true);
         if (!updated.first)
             return updated;
@@ -317,7 +337,9 @@ namespace pva
             }
             else
             {
-                neckTrackingError = "Camera 1 neck meniscus not found during Crown transition";
+                neckTrackingError = detectionFailure(
+                    "Camera 1 neck meniscus detection failed during Crown transition",
+                    neck.error);
             }
         }
 
@@ -344,8 +366,9 @@ namespace pva
                 }
                 else
                 {
-                    camera2NeckTrackingError =
-                        "Camera 2 neck meniscus not found during Crown transition";
+                    camera2NeckTrackingError = detectionFailure(
+                        "Camera 2 neck meniscus detection failed during Crown transition",
+                        neck.error);
                 }
             }
         }
@@ -381,7 +404,7 @@ namespace pva
         auto first = algorithms::findCrownMeniscus(a, config_.measurement.reflectorRoiCamera1, centers[0], config_.crown, p1);
         auto second = algorithms::findCrownMeniscus(b, config_.measurement.reflectorRoiCamera2, centers[1], config_.crown, p2);
         if (!first || !second)
-            return {false, "Crown meniscus curve not found in reflector ROI"};
+            return {false, stereoDetectionFailure("Crown", first, second)};
         const auto addDiagnostics = [&r, this](const algorithms::CurveHit &hit, int camera)
         {
             const std::string suffix = "_camera" + std::to_string(camera);
@@ -428,7 +451,7 @@ namespace pva
         auto first = algorithms::findBodyMeniscus(a, config_.measurement.reflectorRoiCamera1, centers[0], config_.body, config_.body.brightnessOffsetCamera1, p1);
         auto second = algorithms::findBodyMeniscus(b, config_.measurement.reflectorRoiCamera2, centers[1], config_.body, config_.body.brightnessOffsetCamera2, p2);
         if (!first || !second)
-            return {false, "Body meniscus curve not found in reflector ROI"};
+            return {false, stereoDetectionFailure("Body", first, second)};
         const auto addDiagnostics = [&r](const algorithms::CurveHit &hit, int camera)
         {
             const std::string suffix = "_camera" + std::to_string(camera);
@@ -466,7 +489,7 @@ namespace pva
         cv::Vec2i span = state_.neckXSpans ? (*state_.neckXSpans)[1] : cv::Vec2i(0, b.cols - 1);
         auto hit = algorithms::findEndcone(b, (*state_.bodyCentersPx)[1], span, *state_.mmPerPixel, config_.endcone);
         if (!hit)
-            return {false, "Endcone search area is invalid"};
+            return {false, detectionFailure("Camera 2 endcone detection failed", hit.error)};
         if (!(hit->diameterMm > config_.measurement.diameterMinMm && hit->diameterMm < config_.measurement.diameterMaxMm))
             return {false, "Endcone diameter is outside physical limits"};
         state_.values.diameterMm = ema(state_.values.diameterMm, hit->diameterMm, config_.endcone.diameterAlpha);

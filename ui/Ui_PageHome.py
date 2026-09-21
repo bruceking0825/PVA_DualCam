@@ -378,14 +378,6 @@ class Ui_PageHome(object):
 
         self.rightLayout.addWidget(self.detailsTabs)
 
-        self.lblStatus = QLabel(self.rightPanel)
-        self.lblStatus.setObjectName(u"lblStatus")
-        self.lblStatus.setMinimumSize(QSize(0, 28))
-        self.lblStatus.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lblStatus.setWordWrap(True)
-
-        self.rightLayout.addWidget(self.lblStatus)
-
         self.mainSplitter.addWidget(self.rightPanel)
 
         self.horizontalLayout.addWidget(self.mainSplitter)
@@ -452,6 +444,5 @@ class Ui_PageHome(object):
         ___qtreewidgetitem.setText(0, QCoreApplication.translate("PageHome", u"Name", None));
         self.detailsTabs.setTabText(self.detailsTabs.indexOf(self.tabProcess), QCoreApplication.translate("PageHome", u"Process", None))
         self.detailsTabs.setTabText(self.detailsTabs.indexOf(self.tabLog), QCoreApplication.translate("PageHome", u"Log", None))
-        self.lblStatus.setText(QCoreApplication.translate("PageHome", u"Ready", None))
     # retranslateUi
 

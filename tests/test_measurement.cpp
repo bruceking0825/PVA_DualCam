@@ -138,6 +138,18 @@ int main(int argc, char **argv)
     check(croppedNeckHit && std::abs(croppedNeckHit->ellipse.center.x - 200.0) < 10.0 &&
               std::abs(croppedNeckHit->ellipse.center.y - 190.0) < 10.0,
           "Neck detection uses the manual reflector ROI and restores full-image coordinates");
+    const auto invalidNeckRoiHit = pva::algorithms::findNeckEllipse(
+        concaveNeck, cv::Rect(-20, -20, 2, 2), 10, 80, 0, 1, {});
+    check(!invalidNeckRoiHit && invalidNeckRoiHit.error.find("ROI") != std::string::npos,
+          "Neck detector returns a detailed invalid-ROI reason");
+    auto invalidNeckConfig = config;
+    invalidNeckConfig.measurement.reflectorRoiCamera1 = cv::Rect(-20, -20, 2, 2);
+    const auto invalidNeckResult = pva::MeasurementEngine(invalidNeckConfig).process(
+        neck, camera2WithoutMeniscus, pva::MeasurementStage::Neck);
+    check(!invalidNeckResult.valid &&
+              invalidNeckResult.message.find("Camera 1") != std::string::npos &&
+              invalidNeckResult.message.find("ROI") != std::string::npos,
+          "Neck detector failure reason reaches MeasurementResult message");
 
     pva::MeasurementEngine earlyCrownEngine(config, engine.state());
     const auto earlyCrownResult = earlyCrownEngine.process(
@@ -225,6 +237,14 @@ int main(int argc, char **argv)
               crownResult.diagnostics.contains("crown_column_strengths_maximum_camera2") &&
               crownResult.diagnostics.contains("crown_edge_model"),
           "Crown Process diagnostics match the Python field set");
+    auto invalidCrownConfig = config;
+    invalidCrownConfig.measurement.reflectorRoiCamera1 = cv::Rect(0, 0, 1, 1);
+    const auto invalidCrownResult = pva::MeasurementEngine(invalidCrownConfig, crownState).process(
+        meniscus, meniscus, pva::MeasurementStage::Crown);
+    check(!invalidCrownResult.valid &&
+              invalidCrownResult.message.find("Crown meniscus detection failed") != std::string::npos &&
+              invalidCrownResult.message.find("Camera 1") != std::string::npos,
+          "Crown detector failure identifies the failed camera and reason");
     config.body.horizontalMarginPx = 10;
     config.body.bottomMarginPx = 10;
     config.body.minEdgePoints = 20;
@@ -247,6 +267,14 @@ int main(int argc, char **argv)
               bodyResult.diagnostics.contains("body_column_maximum_p90_camera2") &&
               bodyResult.diagnostics.contains("body_edge_model"),
           "Body Process diagnostics match the Python field set");
+    auto invalidBodyConfig = config;
+    invalidBodyConfig.measurement.reflectorRoiCamera2 = cv::Rect(0, 0, 1, 1);
+    const auto invalidBodyResult = pva::MeasurementEngine(invalidBodyConfig, crownState).process(
+        meniscus, meniscus, pva::MeasurementStage::Body);
+    check(!invalidBodyResult.valid &&
+              invalidBodyResult.message.find("Body meniscus detection failed") != std::string::npos &&
+              invalidBodyResult.message.find("Camera 2") != std::string::npos,
+          "Body detector failure identifies the failed camera and reason");
 
     pva::MeasurementState state;
     state.validNeck = true;
@@ -259,6 +287,14 @@ int main(int argc, char **argv)
     auto endconeResult = endconeEngine.process(endcone, endcone, pva::MeasurementStage::Endcone);
     check(endconeResult.valid, "Endcone state-based measurement valid");
     check(endconeResult.values.diameterMm && std::abs(*endconeResult.values.diameterMm - 4.9) < .3, "Endcone diameter unchanged");
+    auto invalidEndconeState = state;
+    invalidEndconeState.neckXSpans = std::array<cv::Vec2i, 2>{cv::Vec2i(50, 150), cv::Vec2i(100, 100)};
+    const auto invalidEndconeResult = pva::MeasurementEngine(config, invalidEndconeState).process(
+        endcone, endcone, pva::MeasurementStage::Endcone);
+    check(!invalidEndconeResult.valid &&
+              invalidEndconeResult.message.find("Camera 2") != std::string::npos &&
+              invalidEndconeResult.message.find("x-span") != std::string::npos,
+          "Endcone detector failure reason reaches MeasurementResult message");
 
     QTemporaryDir stateDirectory;
     pva::MeasurementState persisted = crownState;

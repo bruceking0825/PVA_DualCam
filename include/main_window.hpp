@@ -1,6 +1,10 @@
 #pragma once
 #include <QMainWindow>
+#include <QString>
 #include <memory>
+#include <optional>
+
+class QTimer;
 
 QT_BEGIN_NAMESPACE
 namespace Ui
@@ -32,12 +36,24 @@ namespace pva
         void toggleMenu();
         void toggleLeftBox();
         void toggleRightBox();
+        void showGlobalStatus(const QString &device, const QString &state,
+                              const QString &type, const QString &message);
 
     private:
+        struct StatusMessage
+        {
+            QString text;
+            bool alarm{};
+        };
+
         std::unique_ptr<Ui::MainWindow> ui_;
         PageHome *home_{};
         PageCamera *camera_{};
         PageParameters *parameters_{};
+        QTimer *statusHoldTimer_{};
+        std::optional<StatusMessage> pendingStatus_;
+        QString currentStatusText_;
+        bool currentStatusAlarm_{};
         QString configPath_;
         QString themePath_;
         QPoint dragPosition_;
@@ -45,5 +61,7 @@ namespace pva
         void updateSelectedMenu(QWidget *selected);
         void animateSideBoxes(int leftWidth, int rightWidth);
         void toggleMaximizeRestore();
+        void displayGlobalStatus(const StatusMessage &status);
+        void displayPendingStatus();
     };
 }

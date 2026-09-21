@@ -13,7 +13,6 @@
 #include <QInputDialog>
 #include <QSaveFile>
 #include <QScrollArea>
-#include <QTabBar>
 #include <QTextStream>
 #include <QVBoxLayout>
 
@@ -53,11 +52,7 @@ namespace pva
 
     void PageParameters::initializeState() {}
 
-    void PageParameters::setupPageUi()
-    {
-        ui_->tabWidget->setStyleSheet(
-            "QTabWidget::pane { border: none; background-color: transparent; }");
-    }
+    void PageParameters::setupPageUi() {}
 
     void PageParameters::bindEvents()
     {
@@ -78,14 +73,7 @@ namespace pva
                                          ? ui_->tabWidget->tabText(ui_->tabWidget->currentIndex())
                                          : QString{};
                     selectedRowIndex_ = -1;
-                    selectRow(-1);
-                    // Python Settings.WIDGET_TAB_STYLE：当前参数组使用粉色左边线和蓝灰背景。
-                    ui_->tabWidget->tabBar()->setStyleSheet(
-                        "QTabBar::tab:selected {"
-                        "border-left: 2px solid rgb(255, 121, 198);"
-                        "background-color: rgb(86, 99, 136);"
-                        "color: rgb(255, 255, 255);"
-                        "}"); });
+                    selectRow(-1); });
     }
 
     void PageParameters::bindSignals()
@@ -97,12 +85,6 @@ namespace pva
     {
         loadFromDisk();
         emit ConfigManager::instance().batchChanged();
-        ui_->tabWidget->tabBar()->setStyleSheet(
-            "QTabBar::tab:selected {"
-            "border-left: 2px solid rgb(255, 121, 198);"
-            "background-color: rgb(86, 99, 136);"
-            "color: rgb(255, 255, 255);"
-            "}");
     }
     PageParameters::~PageParameters() = default;
     void PageParameters::clearTabs()

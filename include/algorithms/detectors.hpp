@@ -2,10 +2,36 @@
 #include "config.hpp"
 #include "models.hpp"
 #include <optional>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace pva::algorithms
 {
+    template <typename T>
+    struct DetectionResult
+    {
+        std::optional<T> hit;
+        std::string error;
+
+        [[nodiscard]] static DetectionResult success(T value)
+        {
+            return {std::move(value), {}};
+        }
+
+        [[nodiscard]] static DetectionResult failure(std::string message)
+        {
+            return {std::nullopt, std::move(message)};
+        }
+
+        [[nodiscard]] bool has_value() const noexcept { return hit.has_value(); }
+        [[nodiscard]] explicit operator bool() const noexcept { return has_value(); }
+        [[nodiscard]] T &operator*() { return *hit; }
+        [[nodiscard]] const T &operator*() const { return *hit; }
+        [[nodiscard]] T *operator->() { return &*hit; }
+        [[nodiscard]] const T *operator->() const { return &*hit; }
+    };
+
     struct EllipseHit
     {
         cv::RotatedRect ellipse;
@@ -47,8 +73,8 @@ namespace pva::algorithms
     };
 
     cv::Mat normalizeGray8(const cv::Mat &source);
-    std::optional<EllipseHit> findNeckEllipse(const cv::Mat &gray, const cv::Rect &roi, double threshold, double minArea, double startRatio, double stopRatio, std::optional<double> expectedX);
-    std::optional<CurveHit> findCrownMeniscus(const cv::Mat &gray, const cv::Rect &roi, cv::Point2d expectedCenter, const CrownSettings &settings, std::optional<double> previousY);
-    std::optional<CurveHit> findBodyMeniscus(const cv::Mat &gray, const cv::Rect &roi, cv::Point2d expectedCenter, const BodySettings &settings, double brightnessOffset, std::optional<double> previousY);
-    std::optional<EndconeHit> findEndcone(const cv::Mat &gray, cv::Point2d bodyCenter, cv::Vec2i neckSpan, double mmPerPixel, const EndconeSettings &settings);
+    DetectionResult<EllipseHit> findNeckEllipse(const cv::Mat &gray, const cv::Rect &roi, double threshold, double minArea, double startRatio, double stopRatio, std::optional<double> expectedX);
+    DetectionResult<CurveHit> findCrownMeniscus(const cv::Mat &gray, const cv::Rect &roi, cv::Point2d expectedCenter, const CrownSettings &settings, std::optional<double> previousY);
+    DetectionResult<CurveHit> findBodyMeniscus(const cv::Mat &gray, const cv::Rect &roi, cv::Point2d expectedCenter, const BodySettings &settings, double brightnessOffset, std::optional<double> previousY);
+    DetectionResult<EndconeHit> findEndcone(const cv::Mat &gray, cv::Point2d bodyCenter, cv::Vec2i neckSpan, double mmPerPixel, const EndconeSettings &settings);
 }

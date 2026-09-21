@@ -168,18 +168,25 @@ namespace pva::algorithms
         cv::Size2f size(float(2 * std::sqrt(term / xx) * scale.x), float(2 * std::sqrt(term / yy) * scale.y));
         return cv::RotatedRect(center, size, 0);
     }
-    std::optional<EllipseHit> findNeckEllipse(const cv::Mat &gray, const cv::Rect &configuredRoi,
-                                              double threshold, double minArea,
-                                              double startRatio, double stopRatio,
-                                              std::optional<double> expectedX)
+    DetectionResult<EllipseHit> findNeckEllipse(const cv::Mat &gray, const cv::Rect &configuredRoi,
+                                                double threshold, double minArea,
+                                                double startRatio, double stopRatio,
+                                                std::optional<double> expectedX)
     {
+        if (gray.empty())
+            return DetectionResult<EllipseHit>::failure("input image is empty");
+        if (gray.channels() != 1)
+            return DetectionResult<EllipseHit>::failure("input image is not single-channel grayscale");
+
         int y0 = std::clamp(int(std::lround(gray.rows * startRatio)), 0, std::max(gray.rows - 1, 0));
         int y1 = std::clamp(int(std::lround(gray.rows * stopRatio)), y0 + 1, gray.rows);
         const cv::Rect imageBounds(0, 0, gray.cols, gray.rows);
         const cv::Rect verticalBounds(0, y0, gray.cols, y1 - y0);
         const cv::Rect roi = configuredRoi & imageBounds & verticalBounds;
         if (roi.width < 3 || roi.height < 3)
-            return {};
+            return DetectionResult<EllipseHit>::failure(
+                "effective ROI is too small after clipping (width=" + std::to_string(roi.width) +
+                ", height=" + std::to_string(roi.height) + ")");
         cv::Mat blur, gx, gy, mag, binary;
         cv::GaussianBlur(gray(roi), blur, {5, 5}, 0);
         cv::Sobel(blur, gx, CV_32F, 1, 0, 3);
@@ -190,23 +197,43 @@ namespace pva::algorithms
         cv::morphologyEx(binary, binary, cv::MORPH_CLOSE, cv::Mat::ones(3, 3, CV_8U));
         std::vector<std::vector<cv::Point>> contours;
         cv::findContours(binary, contours, cv::RETR_LIST, cv::CHAIN_APPROX_NONE);
+        if (contours.empty())
+            return DetectionResult<EllipseHit>::failure(
+                "gradient threshold produced no contours in the effective ROI");
+
         std::optional<EllipseHit> best;
         double bestScore = -std::numeric_limits<double>::infinity(), imageArea = double(roi.area());
+        int tooFewPoints = 0;
+        int rejectedArea = 0;
+        int failedFit = 0;
+        int rejectedSize = 0;
         for (auto contour : contours)
         {
             if (contour.size() < 5)
+            {
+                ++tooFewPoints;
                 continue;
+            }
             double area = std::abs(cv::contourArea(contour));
             if (area < minArea || area > imageArea * .8)
+            {
+                ++rejectedArea;
                 continue;
+            }
             // 与 Python 一致，只使用最大凸缺陷另一侧的外侧弧拟合椭圆。
             auto fitContour = extractOuterConvexArc(contour);
             auto fit = fitAxisAlignedEllipse(fitContour.points);
             if (!fit)
+            {
+                ++failedFit;
                 continue;
+            }
             auto ellipse = *fit;
             if (std::min(ellipse.size.width, ellipse.size.height) < 4 || std::max(ellipse.size.width, ellipse.size.height) > std::max(gray.rows, gray.cols) * 1.5)
+            {
+                ++rejectedSize;
                 continue;
+            }
             ellipse.center.x += float(roi.x);
             ellipse.center.y += float(roi.y);
             for (auto &p : fitContour.points)
@@ -224,6 +251,14 @@ namespace pva::algorithms
                 best = EllipseHit{ellipse, std::move(fitContour.points), area, fitContour.closed};
             }
         }
-        return best;
+        if (!best)
+            return DetectionResult<EllipseHit>::failure(
+                "no contour passed neck ellipse validation (contours=" +
+                std::to_string(contours.size()) + ", too_few_points=" +
+                std::to_string(tooFewPoints) + ", area_rejected=" +
+                std::to_string(rejectedArea) + ", fit_failed=" +
+                std::to_string(failedFit) + ", size_rejected=" +
+                std::to_string(rejectedSize) + ")");
+        return DetectionResult<EllipseHit>::success(std::move(*best));
     }
 }

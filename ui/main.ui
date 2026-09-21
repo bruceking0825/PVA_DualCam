@@ -2103,7 +2103,7 @@ li.checked::marker { content: &quot;\2612&quot;; }
                  <number>0</number>
                 </property>
                 <item>
-                 <widget class="QLabel" name="creditsLabel">
+                 <widget class="QLabel" name="lblStatus">
                   <property name="maximumSize">
                    <size>
                     <width>16777215</width>
@@ -2119,7 +2119,7 @@ li.checked::marker { content: &quot;\2612&quot;; }
                    </font>
                   </property>
                   <property name="text">
-                   <string>Zhonghuan equipment research sector</string>
+                   <string>System: Ready</string>
                   </property>
                   <property name="alignment">
                    <set>Qt::AlignmentFlag::AlignLeading|Qt::AlignmentFlag::AlignLeft|Qt::AlignmentFlag::AlignVCenter</set>

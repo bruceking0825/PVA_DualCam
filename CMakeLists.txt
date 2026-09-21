@@ -46,13 +46,52 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Gui Widgets Network)
 set(PVA_QT_PACKAGE "Qt${QT_VERSION_MAJOR}")
 find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc imgcodecs)
 
-set(SAPERA_ROOT "C:/Program Files/Teledyne DALSA/Sapera" CACHE PATH "Teledyne DALSA Sapera SDK root")
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    set(PVA_SAPERA_LIBRARY_SUBDIR "Win32")
+    set(PVA_SAPERA_ROOT_CANDIDATES
+        "C:/Program Files (x86)/Teledyne DALSA/Sapera"
+        "C:/Program Files/Teledyne DALSA/Sapera")
+else()
+    set(PVA_SAPERA_LIBRARY_SUBDIR "Win64")
+    set(PVA_SAPERA_ROOT_CANDIDATES
+        "C:/Program Files/Teledyne DALSA/Sapera"
+        "C:/Program Files (x86)/Teledyne DALSA/Sapera")
+endif()
+
+# Sapera x86 and x64 installers use different Program Files directories. Keep
+# an explicitly configured valid root, but repair an old/invalid cache entry
+# automatically after the installed SDK architecture changes.
+set(SAPERA_ROOT "" CACHE PATH "Teledyne DALSA Sapera SDK root")
+set(PVA_SAPERA_HEADER "${SAPERA_ROOT}/Classes/Basic/SapClassBasic.h")
+set(PVA_SAPERA_LIBRARY "${SAPERA_ROOT}/Lib/${PVA_SAPERA_LIBRARY_SUBDIR}/SapClassBasic.lib")
+if(NOT EXISTS "${PVA_SAPERA_HEADER}" OR NOT EXISTS "${PVA_SAPERA_LIBRARY}")
+    foreach(PVA_SAPERA_CANDIDATE IN LISTS PVA_SAPERA_ROOT_CANDIDATES)
+        if(EXISTS "${PVA_SAPERA_CANDIDATE}/Classes/Basic/SapClassBasic.h" AND
+           EXISTS "${PVA_SAPERA_CANDIDATE}/Lib/${PVA_SAPERA_LIBRARY_SUBDIR}/SapClassBasic.lib")
+            set(SAPERA_ROOT "${PVA_SAPERA_CANDIDATE}" CACHE PATH
+                "Teledyne DALSA Sapera SDK root" FORCE)
+            break()
+        endif()
+    endforeach()
+endif()
 set(SAPERA_INCLUDE "${SAPERA_ROOT}/Include")
 set(SAPERA_BASIC_INCLUDE "${SAPERA_ROOT}/Classes/Basic")
-if(CMAKE_SIZEOF_VOID_P EQUAL 4)
-    set(SAPERA_LIBRARY "${SAPERA_ROOT}/Lib/Win32/SapClassBasic.lib")
-else()
-    set(SAPERA_LIBRARY "${SAPERA_ROOT}/Lib/Win64/SapClassBasic.lib")
+set(SAPERA_LIBRARY "${SAPERA_ROOT}/Lib/${PVA_SAPERA_LIBRARY_SUBDIR}/SapClassBasic.lib")
+
+# The SDK may install both Win32 and Win64 import libraries even when only one
+# runtime architecture is present. Linking that import library produces an EXE
+# which waits at the Windows loader error dialog before main() is reached. Check
+# the architecture-specific runtime as well as the headers and import library.
+if(WIN32)
+    if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+        file(GLOB PVA_SAPERA_RUNTIME_DLLS
+            "$ENV{WINDIR}/SysWOW64/SapClassBasic*.dll"
+            "${SAPERA_ROOT}/Bin/SapClassBasic*.dll")
+    else()
+        file(GLOB PVA_SAPERA_RUNTIME_DLLS
+            "$ENV{WINDIR}/System32/SapClassBasic*.dll"
+            "${SAPERA_ROOT}/Bin64/SapClassBasic*.dll")
+    endif()
 endif()
 
 add_library(pva_sherlock_protocol
@@ -116,10 +155,16 @@ if(MSVC)
     # 当前工作站的cvtres.exe处理自动manifest时崩溃；程序不依赖自定义manifest。
     target_link_options(pva_dualcam_cpp PRIVATE /MANIFEST:NO /INCREMENTAL:NO)
 endif()
-if(EXISTS "${SAPERA_BASIC_INCLUDE}/SapClassBasic.h" AND EXISTS "${SAPERA_LIBRARY}")
+if(EXISTS "${SAPERA_BASIC_INCLUDE}/SapClassBasic.h" AND
+   EXISTS "${SAPERA_LIBRARY}" AND
+   (NOT WIN32 OR PVA_SAPERA_RUNTIME_DLLS))
+    message(STATUS "Sapera SDK enabled: ${SAPERA_ROOT} (${PVA_SAPERA_LIBRARY_SUBDIR})")
     target_compile_definitions(pva_dualcam_cpp PRIVATE PVA_HAS_SAPERA=1)
     target_include_directories(pva_dualcam_cpp SYSTEM PRIVATE "${SAPERA_INCLUDE}" "${SAPERA_BASIC_INCLUDE}")
     target_link_libraries(pva_dualcam_cpp PRIVATE "${SAPERA_LIBRARY}")
+else()
+    message(WARNING
+        "Sapera SDK/runtime not found for ${PVA_SAPERA_LIBRARY_SUBDIR}; camera support is disabled")
 endif()
 
 add_executable(test_cpp

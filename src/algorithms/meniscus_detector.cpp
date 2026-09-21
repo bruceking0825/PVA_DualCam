@@ -65,25 +65,47 @@ namespace pva::algorithms
         }
         return true;
     }
-    static std::optional<CurveHit> finish(std::vector<cv::Point2d> points, std::vector<double> strengths,
-                                          int minPoints, double residual, double middle, double width,
-                                          double minCoverage, bool enforceCoverage)
+    static DetectionResult<CurveHit> finish(std::vector<cv::Point2d> points,
+                                            std::vector<double> strengths,
+                                            int minPoints, double residual,
+                                            double middle, double width,
+                                            double minCoverage, bool enforceCoverage)
     {
         if (points.size() < size_t(minPoints))
-            return {};
+            return DetectionResult<CurveHit>::failure(
+                "too few edge points for curve fitting (found=" +
+                std::to_string(points.size()) + ", required=" +
+                std::to_string(minPoints) + ")");
         const int edgePointCount = int(points.size());
         const double residualLimit = std::max(1.0, residual);
         cv::Vec3d coefficients;
-        if (!robustFit(points, strengths, residualLimit, coefficients) || points.size() < size_t(minPoints))
-            return {};
+        if (!robustFit(points, strengths, residualLimit, coefficients))
+            return DetectionResult<CurveHit>::failure("robust quadratic curve fit failed");
+        if (points.size() < size_t(minPoints))
+            return DetectionResult<CurveHit>::failure(
+                "too few inliers after robust curve fitting (kept=" +
+                std::to_string(points.size()) + ", required=" +
+                std::to_string(minPoints) + ")");
         auto [minIt, maxIt] = std::minmax_element(points.begin(), points.end(), [](auto a, auto b)
                                                   { return a.x < b.x; });
         const double minX = minIt->x, maxX = maxIt->x, coverage = (maxX - minX + 1) / width;
         const double sagitta = value(coefficients, middle) -
                                .5 * (value(coefficients, minX) + value(coefficients, maxX));
         // Python 以 Neck 中心投影到曲线得到下顶点，并拒绝外推、反向弯曲及低覆盖结果。
-        if ((enforceCoverage && coverage < minCoverage) || middle < minX || middle > maxX || sagitta < 0)
-            return {};
+        if (enforceCoverage && coverage < minCoverage)
+            return DetectionResult<CurveHit>::failure(
+                "curve coverage is below the configured minimum (coverage=" +
+                std::to_string(coverage) + ", minimum=" +
+                std::to_string(minCoverage) + ")");
+        if (middle < minX || middle > maxX)
+            return DetectionResult<CurveHit>::failure(
+                "neck center x is outside the fitted curve range (center_x=" +
+                std::to_string(middle) + ", range=" + std::to_string(minX) +
+                ".." + std::to_string(maxX) + ")");
+        if (sagitta < 0)
+            return DetectionResult<CurveHit>::failure(
+                "fitted curve bends in the wrong direction (sagitta=" +
+                std::to_string(sagitta) + ")");
         CurveHit hit;
         hit.edges = std::move(points);
         hit.boundary = {middle, value(coefficients, middle)};
@@ -108,7 +130,7 @@ namespace pva::algorithms
         hit.seedY = percentile(std::move(fittedY), 0.5);
         for (int x = int(minX); x <= int(maxX); ++x)
             hit.curve.emplace_back(x, value(coefficients, x));
-        return hit;
+        return DetectionResult<CurveHit>::success(std::move(hit));
     }
 
     static int lastPeakIndex(const std::vector<double> &scores)
@@ -131,18 +153,34 @@ namespace pva::algorithms
         return lastPeak >= 0 ? lastPeak : int(maximumIt - scores.begin());
     }
 
-    std::optional<CurveHit> findCrownMeniscus(const cv::Mat &gray, const cv::Rect &configuredRoi,
-                                              cv::Point2d expectedCenter, const CrownSettings &s,
-                                              std::optional<double> previous)
+    DetectionResult<CurveHit> findCrownMeniscus(const cv::Mat &gray,
+                                                const cv::Rect &configuredRoi,
+                                                cv::Point2d expectedCenter,
+                                                const CrownSettings &s,
+                                                std::optional<double> previous)
     {
+        if (gray.empty())
+            return DetectionResult<CurveHit>::failure("input image is empty");
+        if (gray.channels() != 1)
+            return DetectionResult<CurveHit>::failure("input image is not single-channel grayscale");
+        if (gray.rows < 3 || gray.cols < 3)
+            return DetectionResult<CurveHit>::failure("input image is smaller than 3 x 3 pixels");
+        if (!std::isfinite(expectedCenter.x) || !std::isfinite(expectedCenter.y))
+            return DetectionResult<CurveHit>::failure("neck center contains a non-finite coordinate");
+
         const cv::Rect roi = clippedRoi(configuredRoi, gray);
         const int x0 = std::max(1, roi.x + std::max(0, s.horizontalMarginPx));
         const int x1 = std::min(gray.cols - 2, roi.x + roi.width - 1 - std::max(0, s.horizontalMarginPx));
         if (x1 - x0 + 1 < s.minEdgePoints)
-            return {};
+            return DetectionResult<CurveHit>::failure(
+                "ROI horizontal search width is smaller than min_edge_points (width=" +
+                std::to_string(std::max(0, x1 - x0 + 1)) + ", required=" +
+                std::to_string(s.minEdgePoints) + ")");
 
         if (roi.height < 3)
-            return {};
+            return DetectionResult<CurveHit>::failure(
+                "ROI height is smaller than 3 pixels after clipping (height=" +
+                std::to_string(roi.height) + ")");
         std::vector<double> bottom(x1 - x0 + 1,
                                    std::min(double(roi.y + roi.height - 1 - std::max(0, s.bottomMarginPx)),
                                             gray.rows - 2.0));
@@ -156,7 +194,10 @@ namespace pva::algorithms
             searchStop = std::min(searchStop, int(std::ceil(*previous)) + trackingHalfHeight + 1);
         }
         if (searchStop - searchStart < 3)
-            return {};
+            return DetectionResult<CurveHit>::failure(
+                "vertical search range is smaller than 3 pixels (start=" +
+                std::to_string(searchStart) + ", stop=" +
+                std::to_string(searchStop) + ")");
 
         cv::Mat blurred, gradient, score;
         cv::GaussianBlur(gray, blurred, {7, 7}, 1.5);
@@ -183,7 +224,11 @@ namespace pva::algorithms
                                                       [keepThreshold](double strength)
                                                       { return strength >= keepThreshold; }));
         if (keptColumnCount < s.minEdgePoints)
-            return {};
+            return DetectionResult<CurveHit>::failure(
+                "too few columns have sufficient negative-gradient strength (kept=" +
+                std::to_string(keptColumnCount) + ", required=" +
+                std::to_string(s.minEdgePoints) + ", maximum_strength=" +
+                std::to_string(globalMaximum) + ")");
 
         std::vector<double> rowScores(searchStop - searchStart, 0.0);
         std::vector<int> validCounts(searchStop - searchStart, 0);
@@ -244,17 +289,36 @@ namespace pva::algorithms
         return hit;
     }
 
-    std::optional<CurveHit> findBodyMeniscus(const cv::Mat &gray, const cv::Rect &configuredRoi,
-                                             cv::Point2d expectedCenter, const BodySettings &s,
-                                             double offset, std::optional<double> previous)
+    DetectionResult<CurveHit> findBodyMeniscus(const cv::Mat &gray,
+                                               const cv::Rect &configuredRoi,
+                                               cv::Point2d expectedCenter,
+                                               const BodySettings &s,
+                                               double offset,
+                                               std::optional<double> previous)
     {
+        if (gray.empty())
+            return DetectionResult<CurveHit>::failure("input image is empty");
+        if (gray.channels() != 1)
+            return DetectionResult<CurveHit>::failure("input image is not single-channel grayscale");
+        if (gray.rows < 3 || gray.cols < 3)
+            return DetectionResult<CurveHit>::failure("input image is smaller than 3 x 3 pixels");
+        if (!std::isfinite(expectedCenter.x) || !std::isfinite(expectedCenter.y))
+            return DetectionResult<CurveHit>::failure("neck center contains a non-finite coordinate");
+        if (!std::isfinite(offset))
+            return DetectionResult<CurveHit>::failure("brightness offset is not finite");
+
         const cv::Rect roi = clippedRoi(configuredRoi, gray);
         const int x0 = std::max(1, roi.x + std::max(0, s.horizontalMarginPx));
         const int x1 = std::min(gray.cols - 2, roi.x + roi.width - 1 - std::max(0, s.horizontalMarginPx));
         if (x1 - x0 + 1 < s.minEdgePoints)
-            return {};
+            return DetectionResult<CurveHit>::failure(
+                "ROI horizontal search width is smaller than min_edge_points (width=" +
+                std::to_string(std::max(0, x1 - x0 + 1)) + ", required=" +
+                std::to_string(s.minEdgePoints) + ")");
         if (roi.height < 3)
-            return {};
+            return DetectionResult<CurveHit>::failure(
+                "ROI height is smaller than 3 pixels after clipping (height=" +
+                std::to_string(roi.height) + ")");
         std::vector<double> bottom(x1 - x0 + 1,
                                    std::min(double(roi.y + roi.height - 1 - std::max(0, s.bottomMarginPx)),
                                             gray.rows - 2.0));
@@ -271,7 +335,9 @@ namespace pva::algorithms
             y1 = std::min(y1, int(std::ceil(*previous)) + trackingHalfHeight + 1);
         }
         if (y1 - y0 < 3)
-            return {};
+            return DetectionResult<CurveHit>::failure(
+                "vertical search range is smaller than 3 pixels (start=" +
+                std::to_string(y0) + ", stop=" + std::to_string(y1) + ")");
 
         // Python 仅在比例 ROI 内执行滤波，边界像素处理也保持一致。
         const cv::Mat ratioRoi = gray.rowRange(ratioStart, ratioStop);

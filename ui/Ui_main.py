@@ -1131,17 +1131,17 @@ class Ui_MainWindow(object):
         self.horizontalLayout_5.setSpacing(0)
         self.horizontalLayout_5.setObjectName(u"horizontalLayout_5")
         self.horizontalLayout_5.setContentsMargins(0, 0, 0, 0)
-        self.creditsLabel = QLabel(self.bottomBar)
-        self.creditsLabel.setObjectName(u"creditsLabel")
-        self.creditsLabel.setMaximumSize(QSize(16777215, 16))
+        self.lblStatus = QLabel(self.bottomBar)
+        self.lblStatus.setObjectName(u"lblStatus")
+        self.lblStatus.setMaximumSize(QSize(16777215, 16))
         font2 = QFont()
         font2.setFamilies([u"Segoe UI"])
         font2.setBold(False)
         font2.setItalic(False)
-        self.creditsLabel.setFont(font2)
-        self.creditsLabel.setAlignment(Qt.AlignmentFlag.AlignLeading|Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter)
+        self.lblStatus.setFont(font2)
+        self.lblStatus.setAlignment(Qt.AlignmentFlag.AlignLeading|Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter)
 
-        self.horizontalLayout_5.addWidget(self.creditsLabel)
+        self.horizontalLayout_5.addWidget(self.lblStatus)
 
         self.version = QLabel(self.bottomBar)
         self.version.setObjectName(u"version")
@@ -1229,7 +1229,7 @@ class Ui_MainWindow(object):
         self.btn_message.setText(QCoreApplication.translate("MainWindow", u"Message", None))
         self.btn_print.setText(QCoreApplication.translate("MainWindow", u"Print", None))
         self.btn_logout.setText(QCoreApplication.translate("MainWindow", u"Logout", None))
-        self.creditsLabel.setText(QCoreApplication.translate("MainWindow", u"Zhonghuan equipment research sector", None))
+        self.lblStatus.setText(QCoreApplication.translate("MainWindow", u"System: Ready", None))
         self.version.setText(QCoreApplication.translate("MainWindow", u"v1.0.0", None))
     # retranslateUi
 

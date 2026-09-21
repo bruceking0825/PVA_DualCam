@@ -5,6 +5,7 @@
 #include "page_home.hpp"
 #include "page_parameters.hpp"
 #include "ui_main.h"
+#include <QApplication>
 #include <QCloseEvent>
 #include <QColor>
 #include <QCoreApplication>
@@ -19,11 +20,15 @@
 #include <QEasingCurve>
 #include <QPushButton>
 #include <QSizeGrip>
+#include <QTimer>
 
 namespace pva
 {
     namespace
     {
+        constexpr int NormalStatusHoldMs = 2000;
+        constexpr int AlarmStatusHoldMs = 5000;
+
         QString findProjectFile(const QString &relativePath)
         {
             for (QDir directory : {QDir::current(), QDir(QCoreApplication::applicationDirPath())})
@@ -52,6 +57,12 @@ namespace pva
         ui_->btn_home->setText("Home");
         ui_->btn_statistics->hide();
         ui_->btn_IO->hide();
+        statusHoldTimer_ = new QTimer(this);
+        statusHoldTimer_->setSingleShot(true);
+        connect(statusHoldTimer_, &QTimer::timeout, this, &MainWindow::displayPendingStatus);
+        auto &appSignals = AppSignals::instance();
+        connect(&appSignals, &AppSignals::status, this, &MainWindow::showGlobalStatus);
+        showGlobalStatus("System", "OK", "info", "Ready");
         auto *shadow = new QGraphicsDropShadowEffect(this);
         shadow->setBlurRadius(17);
         shadow->setOffset(0, 0);
@@ -129,6 +140,67 @@ namespace pva
             button->setStyleSheet(style);
         }
     }
+    void MainWindow::showGlobalStatus(const QString &device, const QString &state,
+                                      const QString &type, const QString &message)
+    {
+        const bool alarm = state.compare("NG", Qt::CaseInsensitive) == 0 ||
+                           type.compare("error", Qt::CaseInsensitive) == 0;
+        const QString source = device.trimmed();
+        const QString text = source.isEmpty() ? message : QString("%1: %2").arg(source, message);
+        const StatusMessage incoming{text, alarm};
+
+        if (text == currentStatusText_ && alarm == currentStatusAlarm_)
+        {
+            // 持续出现的同一报警从最后一次发生起继续保留 5 秒，期间不被正常帧覆盖。
+            if (alarm)
+            {
+                if (pendingStatus_ && !pendingStatus_->alarm)
+                    pendingStatus_.reset();
+                statusHoldTimer_->start(AlarmStatusHoldMs);
+            }
+            return;
+        }
+
+        if (statusHoldTimer_->isActive())
+        {
+            // 报警可以立即打断普通信息；已经显示的报警则必须先让用户看清。
+            if (alarm && !currentStatusAlarm_)
+            {
+                pendingStatus_.reset();
+                displayGlobalStatus(incoming);
+                return;
+            }
+            // 已排队的报警不能被后续普通运行信息覆盖。
+            if (!alarm && pendingStatus_ && pendingStatus_->alarm)
+                return;
+            pendingStatus_ = incoming;
+            return;
+        }
+
+        displayGlobalStatus(incoming);
+    }
+
+    void MainWindow::displayGlobalStatus(const StatusMessage &status)
+    {
+        currentStatusText_ = status.text;
+        currentStatusAlarm_ = status.alarm;
+        ui_->lblStatus->setText(status.text);
+        ui_->lblStatus->setToolTip(status.text);
+        ui_->lblStatus->setStyleSheet(
+            QString("background-color: %1; color: white; border-radius: 3px; "
+                    "padding: 1px 8px;")
+                .arg(status.alarm ? "rgb(190, 55, 55)" : "rgb(42, 150, 75)"));
+        statusHoldTimer_->start(status.alarm ? AlarmStatusHoldMs : NormalStatusHoldMs);
+    }
+
+    void MainWindow::displayPendingStatus()
+    {
+        if (!pendingStatus_)
+            return;
+        const StatusMessage status = std::move(*pendingStatus_);
+        pendingStatus_.reset();
+        displayGlobalStatus(status);
+    }
     void MainWindow::toggleMenu()
     {
         auto *animation = new QPropertyAnimation(ui_->leftMenuBg, "minimumWidth", this);
@@ -172,7 +244,14 @@ namespace pva
         {
             QFile file(path);
             if (file.open(QIODevice::ReadOnly | QIODevice::Text))
-                ui_->styleSheet->setStyleSheet(QString::fromUtf8(file.readAll()));
+            {
+                const QString styleSheet = QString::fromUtf8(file.readAll());
+                // main.ui contains a design-time copy of the theme. Clear it so
+                // one application-wide style sheet controls every widget,
+                // including message boxes and file dialogs.
+                ui_->styleSheet->setStyleSheet({});
+                qApp->setStyleSheet(styleSheet);
+            }
         }
     }
     void MainWindow::closeEvent(QCloseEvent *event)

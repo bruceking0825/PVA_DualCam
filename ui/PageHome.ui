@@ -641,25 +641,6 @@
          </widget>
         </widget>
        </item>
-       <item>
-        <widget class="QLabel" name="lblStatus">
-         <property name="minimumSize">
-          <size>
-           <width>0</width>
-           <height>28</height>
-          </size>
-         </property>
-         <property name="text">
-          <string>Ready</string>
-         </property>
-         <property name="alignment">
-          <set>Qt::AlignmentFlag::AlignCenter</set>
-         </property>
-         <property name="wordWrap">
-          <bool>true</bool>
-         </property>
-        </widget>
-       </item>
       </layout>
      </widget>
     </widget>
