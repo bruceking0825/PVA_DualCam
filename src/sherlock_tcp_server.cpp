@@ -1,6 +1,7 @@
 #include "sherlock_tcp_server.hpp"
 
 #include <QAbstractSocket>
+#include <QDebug>
 #include <QHostAddress>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -82,6 +83,8 @@ namespace pva
                 *error = "PLC result connection on TCP 5001 is not connected; response queued";
             return false;
         }
+        // 打印最终写入 TCP 5001 的完整协议帧，便于与 PLC 抓包逐字节比对。
+        qDebug().noquote() << "PLC TX hex:" << packet.toHex(' ');
         if (resultSocket_->write(packet) != packet.size())
         {
             if (error)
@@ -188,6 +191,8 @@ namespace pva
         while (!pendingPackets_.isEmpty())
         {
             const QByteArray packet = pendingPackets_.dequeue();
+            // 队列中的响应在真正补发时同样打印，避免把“入队”误认为已经发送。
+            qDebug().noquote() << "PLC TX queued hex:" << packet.toHex(' ');
             if (resultSocket_->write(packet) != packet.size())
             {
                 emit failed("Cannot flush queued PLC response: " + resultSocket_->errorString());

@@ -20,6 +20,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <cmath>
+#include <QDebug>
 
 namespace pva
 {
@@ -650,6 +651,12 @@ namespace pva
     void PageHome::onSherlockCommand(const SherlockCommand &command)
     {
         const QString name = command.name;
+        qDebug().noquote()
+            << "PLC raw size =" << command.raw.size()
+            << "raw hex =" << command.raw.toHex(' ')
+            << "name size =" << name.size()
+            << "name hex =" << name.toLatin1().toHex(' ');
+
         log("PLC -> " + QString::fromLatin1(command.raw));
 
         if (name == "acq_on_")
