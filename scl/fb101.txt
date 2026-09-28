@@ -1,0 +1,146 @@
+FUNCTION_BLOCK BM_CAM_COM
+(*
+    --------------------------------------------------------------------------------
+    program     :    BM_CAM_COM
+    description :    TCP IP Communication with CP343   
+    name        :    G. Eibelsh鋟ser
+    date        :    03.05.2010
+
+    revision    :
+    name        :
+    date        :    
+                    (c)PVA Tepla AG
+    --------------------------------------------------------------------------------
+*)
+
+VAR_IN_OUT
+    IO_SEND_REQ         :   BOOL;
+    IO_DATA_STR_RECV    :   BOOL;
+    
+END_VAR
+
+VAR_INPUT
+    I_SEND_CON_ID       :   INT;
+    I_RECV_CON_ID       :   INT;
+
+    I_CP_ADR            :   WORD;
+    I_DATA_STRING       :   STRING;
+    
+    Recv_DB : STRUCT
+        Any_id              :   BYTE;
+        Recv_DataType       :   BYTE;
+        Recv_Lenght         :   WORD;
+        Recv_DB_Number      :   WORD;
+        Recv_Byte_Pointer   :   DWORD;
+    END_STRUCT;
+
+    pAny_recv_db AT Recv_DB :   ANY;
+    
+END_VAR
+
+VAR_OUTPUT
+    O_SEND_DONE         :   BOOL;
+    O_SEND_ERR          :   BOOL;
+    O_RECV_NDR          :   BOOL;
+    O_RECV_ERR          :   BOOL;
+    O_SEND_STAT         :   WORD;
+    O_RECV_STAT         :   WORD;
+    O_RECV_LEN          :   INT;
+    
+END_VAR
+
+VAR
+    size_of_buf         :   BYTE;
+    send_len            :   INT;
+    state_cnt           :   INT;
+    send_data           :   STRING;
+       
+END_VAR
+
+CONST   
+    crlf                :=  '$R$L';         //carriage return, line feed
+    
+END_CONST
+
+BEGIN
+
+    //send_data
+    //---------
+    IF (O_SEND_STAT = 16#0000)  THEN            // no task is running
+        //add carriage return and line feed to input string
+        //-------------------------------------------------
+        send_data    := CONCAT(IN1:= I_DATA_STRING, IN2:= crlf);
+        
+        //read length of data string
+        //--------------------------
+        send_len    := LEN(S:= send_data);
+            
+    END_IF;
+    
+    //call AG_SEND
+    //------------
+    AG_SEND(    ACT     :=  IO_SEND_REQ,
+                ID      :=  I_SEND_CON_ID,
+                LADDR   :=  I_CP_ADR,
+                SEND    :=  send_data,
+                LEN     :=  send_len,
+                DONE    :=  O_SEND_DONE,
+                ERROR   :=  O_SEND_ERR,
+                STATUS  :=  O_SEND_STAT);
+                
+    //reset send request
+    //------------------
+    IO_SEND_REQ     :=  FALSE;
+            
+    //built any pointer
+    //----------------
+    Recv_DB.Any_id            := 16#10;
+    Recv_DB.Recv_DataType     := 16#2;
+    Recv_DB.Recv_Lenght       := size_of_buf;
+    Recv_DB.Recv_DB_Number    := 16#281;                //DB number as hex code
+    Recv_DB.Recv_Byte_Pointer := DW#16#84000000;
+    
+    //call AG_RECV
+    //------------
+    AG_RECV(    ID      :=  I_RECV_CON_ID,
+                LADDR   :=  I_CP_ADR,
+                RECV    :=  pAny_recv_db,
+                NDR     :=  O_RECV_NDR,
+                ERROR   :=  O_RECV_ERR,
+                STATUS  :=  O_RECV_STAT,
+                LEN     :=  O_RECV_LEN);
+    
+    //set flag data string received
+    //-----------------------------
+    IF (O_RECV_NDR AND state_cnt = 2)  THEN
+        IO_DATA_STR_RECV :=  TRUE;
+    END_IF;
+    
+    //presetting of receive buffer size
+    //---------------------------------     
+    IF O_RECV_NDR THEN 
+        IF (BM_CAM_RECV_DB.Data[0] = '!') THEN
+            state_cnt   :=  1;
+        ELSIF (BM_CAM_RECV_DB.Data[0] = BYTE_TO_CHAR(16#FF)) THEN
+            state_cnt   :=  2;
+        ELSE 
+            state_cnt   :=  0;
+        END_IF;
+    END_IF;   
+
+    CASE state_cnt OF
+        //read data bytewise
+        //------------------    
+        0:  size_of_buf :=  16#1;       //search first character "!"
+                 
+        //read two byte
+        //-------------
+        1:  size_of_buf :=  16#2;       //read length of telegram string
+        
+        //read complete data lenght
+        //-------------------------    
+        2:  size_of_buf     := CHAR_TO_BYTE(BM_CAM_RECV_DB.Data[1]);   //read telegram
+
+    END_CASE;
+
+END_FUNCTION_BLOCK

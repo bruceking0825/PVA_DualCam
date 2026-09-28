@@ -1,0 +1,1162 @@
+FUNCTION_BLOCK BM_CAM_CONTROL
+(*
+    --------------------------------------------------------------------------------
+    program     :    BM_CAM_CONTROL
+    description :    camera acqisition and ROI control 
+    name        :    G. Eibelsh鋟ser
+    date        :    08.07.2010
+
+    revision    :    melt vibration sensor in diameter measurement added
+    name        :    G. Eibelsh鋟ser
+    date        :    26.08.2011
+       
+    revision    :    GCL CGS1218 stereo camera 2. threshold
+    name        :    John Wang
+    date        :    04.08.2020
+       
+                    (c)PVA Tepla AG
+    --------------------------------------------------------------------------------
+*)
+
+VAR_OUTPUT
+    O_ACQ_ON                :   BOOL;
+    O_ACQ_OFF               :   BOOL;
+    O_THR_REL_ON            :   BOOL;
+    O_THR_ABS_ON            :   BOOL;
+    O_NEW_ROI_CRD           :   BOOL;
+    O_NEW_ROI_THR           :   BOOL;
+    O_NEW_ROI_THR_2         :   BOOL;
+    O_CF_EVAL               :   BOOL;
+    O_RAD_PT_EVAL           :   BOOL;
+    O_NEW_EXP_TME_CAM_1     :   BOOL;
+    O_NEW_EXP_TME_CAM_2     :   BOOL;
+    O_ROI_CRD_STRG          :   STRING[80];
+    O_ROI_THR_STRG          :   STRING[20];
+    O_ROI_THR_STRG_2        :   STRING[20];
+    O_EXP_TME_CAM_1_STRG    :   STRING[20];
+    O_EXP_TME_CAM_2_STRG    :   STRING[20];
+
+END_VAR
+
+VAR
+    new_roi_crd             :   BOOL;
+    new_thr_req             :   BOOL;
+    new_thr_req_2           :   BOOL;
+    enb_set_params          :   BOOL;
+    new_mlt_vib_roi_crd     :   BOOL;
+    new_mlt_vib_thr_req     :   BOOL;
+    new_exp_tme_cam_1_req   :   BOOL;
+    new_exp_tme_cam_2_req   :   BOOL;
+    s_cam_rad_rt_actv_prv   :   BOOL;
+    rcv_thr_rel_flag        :   BOOL;
+    rcv_thr_abs_flag        :   BOOL;
+    rcv_rad_pt_eval         :   BOOL;
+    rcv_cf_eval             :   BOOL;
+    rcv_roi_pos_and_thr     :   BOOL;
+    rcv_exp_tme_cam_1       :   BOOL;
+    rcv_exp_tme_cam_2       :   BOOL;
+    cam_isp_on_prv          :   BOOL;
+    
+    set_params_dly          :   INT;
+    apc_status_prv          :   INT;
+
+    set_center_x            :   REAL;
+    set_center_y            :   REAL;
+    set_outer_radius        :   REAL;
+    set_inner_radius        :   REAL;
+    set_start_angle         :   REAL;
+    set_stop_angle          :   REAL;
+    set_width               :   REAL;
+    set_height              :   REAL;
+    ac_set_sen_thr          :   REAL;
+    ac_set_sen_thr_2        :   REAL;
+    kya_set_sen_thr         :   REAL;
+    set_thr                 :   REAL;
+    set_thr_2               :   REAL;
+    center_x_old            :   REAL;
+    center_y_old            :   REAL;
+    start_angle_old         :   REAL;
+    stop_angle_old          :   REAL;
+    inner_radius_old        :   REAL;
+    outer_radius_old        :   REAL;
+    width_old               :   REAL;
+    height_old              :   REAL;
+    thr_old                 :   REAL;
+    thr_old_2               :   REAL;
+    set_mlt_vib_center_x    :   REAL;
+    set_mlt_vib_center_y    :   REAL;
+    set_mlt_vib_width       :   REAL;
+    set_mlt_vib_thr         :   REAL;
+    mlt_vib_center_x_old    :   REAL;
+    mlt_vib_center_y_old    :   REAL;
+    mlt_vib_width_old       :   REAL;
+    mlt_vib_thr_old         :   REAL;
+    ctr_x_scam_2_adj_old    :   REAL;
+    ctr_y_scam_2_adj_old    :   REAL;
+    set_exp_tme_cam_1       :   REAL;
+    set_exp_tme_cam_2       :   REAL;
+    set_exp_tme_cam_1_old   :   REAL;
+    set_exp_tme_cam_2_old   :   REAL;
+    ctr_x_scam_2_mlt_adj_old:   REAL;
+    ctr_y_scam_2_mlt_adj_old:   REAL;
+    
+    center_x                :   STRING[7];
+    center_y                :   STRING[7];
+    start_angle             :   STRING[7];
+    stop_angle              :   STRING[7];
+    inner_radius            :   STRING[7];
+    outer_radius            :   STRING[7];
+    center_x_offs           :   STRING[7];
+    center_y_offs           :   STRING[7];
+    width                   :   STRING[7];
+    height                  :   STRING[7];
+    mlt_vib_center_x        :   STRING[7];
+    mlt_vib_center_y        :   STRING[7];
+    mlt_vib_width           :   STRING[7];
+    roi_crd_strg            :   STRING[80];
+    thr_cmd                 :   STRING[8];
+    thr_cmd_2               :   STRING[8];
+    thr                     :   STRING[6];
+    thr_2                   :   STRING[6];
+    mlt_vib_thr             :   STRING[6];
+    roi_thr_strg            :   STRING[20];
+    roi_thr_strg_2          :   STRING[20];
+    exp_tme_cam_1           :   STRING[6];
+    exp_tme_cam_2           :   STRING[6];
+    exp_tme_cam_1_strg      :   STRING[20];
+    exp_tme_cam_2_strg      :   STRING[20];
+
+END_VAR
+
+CONST
+    delimiter   :=  ';';
+    default     :=  100.0;
+    
+END_CONST
+
+BEGIN
+
+    //selection of camera
+    //-------------------
+    IF APC.AUTOMATIC    THEN                                    //automatic mode
+        IF DC.CAM_SEL_1 THEN
+            LT.CAM_SEL_1 := TRUE; 
+            LT.CAM_SEL_2 := FALSE;
+        ELSIF  DC.CAM_SEL_2 AND CNF.CONF_CAM_2 THEN
+            LT.CAM_SEL_1 := FALSE;       
+            LT.CAM_SEL_2 := TRUE;
+        ELSE
+            LT.CAM_SEL_1 := TRUE;                               //set camera 1 as default
+            LT.CAM_SEL_2 := FALSE;
+        END_IF;
+    
+    ELSE                                                        //manual mode
+        IF (KYD.CAM_SEL_1 OR LT.CAM_SEL_1) AND NOT KYD.CAM_SEL_2 THEN
+            LT.CAM_SEL_1 := TRUE;
+            LT.CAM_SEL_2 := FALSE;
+        ELSIF  (KYD.CAM_SEL_2 OR LT.CAM_SEL_2) AND CNF.CONF_CAM_2 AND NOT KYD.CAM_SEL_1 THEN
+            LT.CAM_SEL_1 := FALSE;       
+            LT.CAM_SEL_2 := TRUE;
+        ELSE
+            LT.CAM_SEL_1 := TRUE;                               //set camera 1 as default
+            LT.CAM_SEL_2 := FALSE;
+        END_IF;
+    
+    END_IF;
+
+    //set camera control signals
+    //--------------------------
+    IF APC.AUTOMATIC    THEN                                        //automatic mode
+        DV.CAM_ISP_ON   :=  DC.CAM_ISP_ON;
+    ELSE                                                            //manuell mode
+        IF (KYD.CAM_ISP_ON OR LT.CAM_ISP_ON) AND NOT KYD.CAM_ISP_OFF THEN
+            DV.CAM_ISP_ON   :=  TRUE;
+        ELSE 
+            DV.CAM_ISP_ON   :=  FALSE;
+        END_IF;
+    END_IF;
+
+    //set manual init request
+    //-----------------------
+    DV.CAM_INIT :=  KYD.CAM_INIT OR DC.CAM_INIT;
+ 
+    //initialize light variable diameter measurement after PLC restart
+    //----------------------------------------------------------------
+    IF (SY.RUN_TIME < 3)    THEN
+        LT.CAM_DIA  :=  TRUE;
+        //stereo camera
+        //-------------
+        IF ((STA.ACT_DVC_CNF_BYTE_2 AND 2#0000_1000) = 2#0000_1000) THEN
+            STA.ACT_DVT_PRD_NO  :=  5.0;        //used for control frame of HMI
+        //single camera
+        //-------------
+        ELSE
+            STA.ACT_DVT_PRD_NO  :=  2.0;
+        END_IF;
+    END_IF;
+    
+    //select measurement mode after inspection is on
+    //----------------------------------------------
+    IF LT.CAM_ISP_ON AND DV.CAM_ISP_ON  THEN
+        IF APC.AUTOMATIC    THEN                //automatic mode
+            IF DC.CAM_DIA  THEN
+                LT.CAM_DIA  :=  TRUE;
+                LT.CAM_DIP  :=  FALSE;
+                LT.CAM_MLT  :=  FALSE;
+                //stereo camera
+                //-------------
+                IF ((STA.ACT_DVC_CNF_BYTE_2 AND 2#0000_1000) = 2#0000_1000) THEN
+                    STA.ACT_DVT_PRD_NO  :=  5.0;        //used for control frame of HMI
+                //single camera
+                //-------------
+                ELSE
+                    STA.ACT_DVT_PRD_NO  :=  2.0;
+                END_IF;
+                (*
+                //select ROI type phase related
+                //-----------------------------
+                IF (APC.STATUS = APC.NECK) THEN 
+                    STA.ACT_DVT_PRD_NO  :=  REAL_TO_INT(PAR_MAIN.DIA_MSR_PRD_NE);    //set product number in phase neck   
+                
+                ELSIF (APC.STATUS = APC.SHOULDER) THEN
+                    STA.ACT_DVT_PRD_NO  :=  REAL_TO_INT(PAR_MAIN.DIA_MSR_PRD_SH);    //set product number in phase shoulder    
+                
+                ELSIF (APC.STATUS = APC.BODY) THEN
+                    STA.ACT_DVT_PRD_NO  :=  REAL_TO_INT(PAR_MAIN.DIA_MSR_PRD_BY);    //set product number in phase body   
+                
+                END_IF; 
+                *)
+            ELSIF DC.CAM_DIP  THEN
+                LT.CAM_DIA  :=  FALSE;
+                LT.CAM_DIP  :=  TRUE;
+                LT.CAM_MLT  :=  FALSE;
+                STA.ACT_DVT_PRD_NO  :=  3.0;
+           
+            ELSIF DC.CAM_MLT  THEN
+                LT.CAM_DIA  :=  FALSE;
+                LT.CAM_DIP  :=  FALSE;
+                LT.CAM_MLT  :=  TRUE;
+                STA.ACT_DVT_PRD_NO  :=  4.0;
+          
+            END_IF;
+        ELSE                                    //manual mode
+            IF KYD.CAM_DIA  THEN
+                LT.CAM_DIA  :=  TRUE;
+                LT.CAM_DIP  :=  FALSE;
+                LT.CAM_MLT  :=  FALSE;
+                //stereo camera
+                //-------------
+                IF ((STA.ACT_DVC_CNF_BYTE_2 AND 2#0000_1000) = 2#0000_1000) THEN
+                    STA.ACT_DVT_PRD_NO  :=  5.0;        //used for control frame of HMI
+                //single camera
+                //-------------
+                ELSE
+                    STA.ACT_DVT_PRD_NO  :=  2.0;
+                END_IF;
+            ELSIF KYD.CAM_DIP   THEN
+                LT.CAM_DIA  :=  FALSE;
+                LT.CAM_DIP  :=  TRUE;
+                LT.CAM_MLT  :=  FALSE;
+                STA.ACT_DVT_PRD_NO  :=  3.0;
+          
+            ELSIF KYD.CAM_MLT   THEN
+                LT.CAM_DIA  :=  FALSE;
+                LT.CAM_DIP  :=  FALSE;
+                LT.CAM_MLT  :=  TRUE;
+                STA.ACT_DVT_PRD_NO  :=  4.0;
+            
+            END_IF;
+            (* 
+            //select ROI type of diameter measurement method
+            //----------------------------------------------
+            IF LT.CAM_DIA   THEN 
+                IF KYD.SEL_CAM_PRD_1 THEN           //set product 1
+                    STA.ACT_DVT_PRD_NO    :=  1.0;
+                
+                ELSIF KYD.SEL_CAM_PRD_2 THEN        //set product 2
+                    STA.ACT_DVT_PRD_NO    :=  2.0;
+                    
+                ELSE    
+                    IF LT.CAM_PRD_1_SEL THEN        
+                        STA.ACT_DVT_PRD_NO :=  1.0;
+                    
+                    ELSIF LT.CAM_PRD_2_SEL THEN
+                        STA.ACT_DVT_PRD_NO :=  2.0;
+                    
+                    END_IF;
+                END_IF;
+            END_IF;
+            *)
+        END_IF;
+    END_IF;
+  
+    //track light variables with camera measurement ROI type
+    //------------------------------------------------------   
+    IF (STA.ACT_DVT_PRD_NO = 1.0) THEN
+        LT.CAM_PRD_1_SEL    :=  TRUE;
+        LT.CAM_PRD_2_SEL    :=  FALSE;
+    ELSIF ((STA.ACT_DVT_PRD_NO = 2.0) OR (STA.ACT_DVT_PRD_NO = 5.0)) THEN
+        LT.CAM_PRD_2_SEL    :=  TRUE;
+        LT.CAM_PRD_1_SEL    :=  FALSE;
+    END_IF; 
+    
+    //copy status variable of actual DVT product number to AV value
+    //-------------------------------------------------------------
+    AV.ACT_DVT_PRD_NO   :=  STA.ACT_DVT_PRD_NO;         //historical reason
+    
+    //switch off/on image acquisition
+    //-------------------------------
+    IF LT.CAM_ISP_ON THEN
+        IF NOT DV.CAM_ISP_ON THEN
+            O_ACQ_OFF   :=  TRUE;
+        END_IF;
+    ELSE
+        IF DV.CAM_ISP_ON THEN
+            O_ACQ_ON    :=  TRUE;
+        ELSE
+            O_ACQ_ON    :=  FALSE;
+        END_IF;
+    END_IF;
+    
+    //built recover threshold method flags - need after sherlock reboot during camera operation (process)
+    //---------------------------------------------------------------------------------------------------
+    rcv_thr_rel_flag    :=  (LT.CAM_ISP_ON AND NOT cam_isp_on_prv AND (APC.STATUS <> APC.SHOULDER));    //recover threshold relative
+    rcv_thr_abs_flag    :=  (LT.CAM_ISP_ON AND NOT cam_isp_on_prv AND (APC.STATUS = APC.SHOULDER));     //recover threshold absolute
+    rcv_rad_pt_eval     :=  LT.CAM_ISP_ON AND NOT cam_isp_on_prv AND DV.S_CAM_RAD_RT_ACTV;              //recover radius point evaluation
+    rcv_cf_eval         :=  LT.CAM_ISP_ON AND NOT cam_isp_on_prv AND NOT DV.S_CAM_RAD_RT_ACTV;          //recover circle fit evaluation
+    rcv_exp_tme_cam_1   :=  LT.CAM_ISP_ON AND NOT cam_isp_on_prv AND  (KYA.SET_CAM_1_EXP_TME <> default); //recover exposure time camera 1 when input value deviates from 100% of default value
+    rcv_exp_tme_cam_2   :=  LT.CAM_ISP_ON AND NOT cam_isp_on_prv AND  (KYA.SET_CAM_2_EXP_TME <> default); //recover exposure time camera 1 when input value deviates from 100% of default value
+    
+    
+    IF LT.CAM_ISP_ON AND NOT cam_isp_on_prv THEN
+        rcv_roi_pos_and_thr :=   STA.ACT_STATE = APC.STATE_RUN;   //recover ROI position and threshold settings
+    END_IF;
+    //store status of inspection on variable
+    //--------------------------------------
+    cam_isp_on_prv      :=  LT.CAM_ISP_ON;
+    
+    //set threshold type
+    //------------------
+    IF ((APC.STATUS = APC.SHOULDER) AND (apc_status_prv <> APC.SHOULDER) OR rcv_thr_abs_flag) THEN              //phase switched to shoulder
+        O_THR_REL_ON    :=  FALSE;  
+        O_THR_ABS_ON    :=  TRUE;           //absolute threshold is active
+    
+    ELSIF   ((APC.STATUS <> APC.SHOULDER) AND (apc_status_prv = APC.SHOULDER) OR rcv_thr_rel_flag)    THEN      //phase switched from shoulder
+        O_THR_REL_ON    :=  TRUE;  
+        O_THR_ABS_ON    :=  FALSE;          //relative threshold is active
+    END_IF;
+    
+    apc_status_prv  :=  APC.STATUS; //store phase code of active phase
+    
+    //stereo camera
+    //-------------
+    IF ((STA.ACT_DVC_CNF_BYTE_2 AND 2#0000_1000) = 2#0000_1000) THEN
+        //set type of measurement evaluation
+        //----------------------------------
+        IF ((DV.S_CAM_RAD_RT_ACTV AND NOT s_cam_rad_rt_actv_prv) OR rcv_rad_pt_eval) THEN
+            O_CF_EVAL       :=  FALSE;
+            O_RAD_PT_EVAL   :=  TRUE;
+        ELSIF ((s_cam_rad_rt_actv_prv AND NOT DV.S_CAM_RAD_RT_ACTV) OR rcv_cf_eval) THEN
+            O_CF_EVAL       :=  TRUE;
+            O_RAD_PT_EVAL   :=  FALSE;
+        END_IF;
+        
+        s_cam_rad_rt_actv_prv   :=  DV.S_CAM_RAD_RT_ACTV;   //store state of measurement evaluation     
+        
+        //set exposure time of cameras
+        //----------------------------
+        IF rcv_exp_tme_cam_1 THEN
+            O_NEW_EXP_TME_CAM_1 :=  TRUE;
+        END_IF;
+        IF rcv_exp_tme_cam_2 THEN
+            O_NEW_EXP_TME_CAM_2 :=  TRUE;
+        END_IF;
+    END_IF;
+               
+    //set delayed enable flag for ROI settings
+    //----------------------------------------        
+    enb_set_params := SysOnDelay(   DIN     := LT.CAM_ISP_ON,
+                                    SetTime := 10,                              // setp. time
+                                    ActTime := set_params_dly,                  // act. time
+                                    Tick    := SysTick100ms);
+    
+    //evaluation of ROI settings
+    //--------------------------    
+    IF enb_set_params THEN
+        //melting detection
+        //-----------------
+        IF LT.CAM_MLT THEN
+            set_center_x    :=  CM_INSELECT(auto    :=    APC.AUTOMATIC,        // area in x-dimension
+                                            track   :=    TRUE,
+                                            ac      :=    ROUND(AC.SET_SEN_CTR_X),
+                                            kya     :=    KYA.SET_SEN_CTR_X_P4);
+            
+            set_center_y    :=  CM_INSELECT(auto    :=    APC.AUTOMATIC,        //area in y-dimension
+                                            track   :=    TRUE,
+                                            ac      :=    ROUND(AC.SET_SEN_CTR_Y),
+                                            kya     :=    KYA.SET_SEN_CTR_Y_P4);
+        
+            set_width       :=  CM_INSELECT(auto    :=    APC.AUTOMATIC,            //sensor width
+                                            track   :=    TRUE,
+                                            ac      :=    ROUND(AC.SET_SEN_WDH),
+                                            kya     :=    KYA.SET_SEN_WDH_P4);
+            
+            set_height       :=  CM_INSELECT(auto    :=   APC.AUTOMATIC,            //sensor height
+                                            track   :=    TRUE,
+                                            ac      :=    ROUND(AC.SET_SEN_HGT),
+                                            kya     :=    KYA.SET_SEN_HGT_P4);
+    
+            //check if ROI coordinate change is requested
+            //-------------------------------------------
+            IF NOT O_NEW_ROI_CRD  THEN
+                //melting detection
+                //-----------------
+                IF (set_center_x <> center_x_old)   OR
+                    (set_center_y <> center_y_old)  OR
+                    (set_width <> width_old)        OR
+                    (set_height <> height_old)      OR 
+                    //offset second stereo camera
+                    //---------------------------
+                    (PAR_SUB.CTR_X_SCAM_2_ADJ <> ctr_x_scam_2_mlt_adj_old) OR 
+                    (PAR_SUB.CTR_Y_SCAM_2_ADJ <> ctr_y_scam_2_mlt_adj_old) OR 
+
+                    rcv_roi_pos_and_thr             THEN 
+                    
+                    new_roi_crd         :=  true;
+                    rcv_roi_pos_and_thr :=  false;
+                
+                    //convert parameter values in string variables
+                    //-------------------------------------------- 
+                    center_x    :=  DI_STRNG (I := REAL_TO_DINT(set_center_x * 100));
+                    center_y    :=  DI_STRNG (I := REAL_TO_DINT(set_center_y * 100));    
+                    width       :=  DI_STRNG (I := REAL_TO_DINT(set_width * 100));
+                    height      :=  DI_STRNG (I := REAL_TO_DINT(set_height * 100));
+                        
+                    //ignore camera 2 offset in endcone phase - camera running in melting mode with sensor in upper left corner (prevent alarm F154)
+                    //------------------------------------------------------------------------------------------------------------------------------
+                    IF (APC.STATUS = APC.ENDCONE) THEN
+                        center_x_offs   :=  DI_STRNG(I := 0);
+                        center_y_offs   :=  DI_STRNG(I := 0);
+                    //transfer camera 2 offset to string variables
+                    //--------------------------------------------
+                    ELSE           
+                        center_x_offs   :=  DI_STRNG(I := REAL_TO_DINT(PAR_SUB.CTR_X_SCAM_2_ADJ * 100));
+                        center_y_offs   :=  DI_STRNG(I := REAL_TO_DINT(PAR_SUB.CTR_Y_SCAM_2_ADJ * 100));
+                    END_IF;
+                END_IF;
+            END_IF;
+            
+            //evaluate new ROI coordinate command string
+            //------------------------------------------
+            IF new_roi_crd THEN
+           
+                //delete ROI coordinate string
+                //----------------------------   
+                roi_crd_strg := DELETE(IN:= roi_crd_strg, L:= 80, P:= -1);
+                
+                //built new ROI coordinate string
+                //-------------------------------     
+                roi_crd_strg    := CONCAT(IN1:= 'mlt_crd=' , IN2:= center_x);
+               
+                roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                
+                roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= center_y);
+             
+                roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                
+                roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= width);
+                
+                roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                
+                roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= height);
+                
+                //add offsets of second camera in stereo mode to ROI string
+                //---------------------------------------------------------
+                IF ((STA.ACT_DVC_CNF_BYTE_2 AND 2#0000_1000) = 2#0000_1000) THEN
+                    roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                    
+                    roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= center_x_offs);
+                    
+                    roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                    
+                    roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= center_y_offs);
+                END_IF;
+                
+                O_ROI_CRD_STRG  :=  roi_crd_strg;    //write new ROI coordinate string
+                O_NEW_ROI_CRD   :=  true;
+                
+                //save last requested ROI coordinates
+                //-----------------------------------
+                center_x_old            :=  set_center_x;
+                center_y_old            :=  set_center_y;
+                width_old               :=  set_width;
+                height_old              :=  set_height;
+                ctr_x_scam_2_mlt_adj_old:=  PAR_SUB.CTR_X_SCAM_2_ADJ;
+                ctr_y_scam_2_mlt_adj_old:=  PAR_SUB.CTR_Y_SCAM_2_ADJ;
+                        
+            END_IF;
+            
+        //dipping detection
+        //-----------------    
+        ELSIF LT.CAM_DIP THEN
+            set_center_x    :=  CM_INSELECT(auto    :=    APC.AUTOMATIC,            // area in x-dimension
+                                            track   :=    TRUE,
+                                            ac      :=    ROUND(AC.SET_SEN_CTR_X),
+                                            kya     :=    KYA.SET_SEN_CTR_X_P3);
+            
+            set_center_y    :=  CM_INSELECT(auto    :=    APC.AUTOMATIC,            //area in y-dimension
+                                            track   :=    TRUE,
+                                            ac      :=    ROUND(AC.SET_SEN_CTR_Y),
+                                            kya     :=    KYA.SET_SEN_CTR_Y_P3);
+           
+            set_width       :=  CM_INSELECT(auto    :=    APC.AUTOMATIC,            //sensor width
+                                            track   :=    TRUE,
+                                            ac      :=    ROUND(AC.SET_SEN_WDH),
+                                            kya     :=    KYA.SET_SEN_WDH_P3);
+            
+            //check if ROI coordinate change is requested
+            //-------------------------------------------
+            IF NOT O_NEW_ROI_CRD  THEN
+                //dipping detection
+                //-----------------
+                IF (set_center_x <> center_x_old)           OR
+                    (set_center_y <> center_y_old)          OR
+                    (set_width <> width_old)                OR 
+                    rcv_roi_pos_and_thr                     THEN 
+                    
+                    new_roi_crd         :=  true;
+                    rcv_roi_pos_and_thr :=  false;
+                    
+                    //convert parameter values in string variables
+                    //-------------------------------------------- 
+                    center_x                :=  DI_STRNG (I := REAL_TO_DINT(set_center_x * 100));
+                    center_y                :=  DI_STRNG (I := REAL_TO_DINT(set_center_y * 100));    
+                    width                   :=  DI_STRNG (I := REAL_TO_DINT(set_width * 100));
+                    
+                END_IF;
+            END_IF;
+           
+            //evaluate new ROI coordinate command string
+            //------------------------------------------
+            IF new_roi_crd THEN
+           
+                //delete ROI coordinate string
+                //----------------------------   
+                roi_crd_strg := DELETE(IN:= roi_crd_strg, L:= 80, P:= -1);
+                
+                //built new ROI coordinate string
+                //-------------------------------     
+                roi_crd_strg    := CONCAT(IN1:= 'dip_crd=' , IN2:= center_x);
+               
+                roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                
+                roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= center_y);
+             
+                roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                
+                roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= width);
+                                
+                O_ROI_CRD_STRG  :=  roi_crd_strg;    //write new ROI coordinate string
+                O_NEW_ROI_CRD   :=  true;
+                
+                //save last requested ROI coordinates
+                //-----------------------------------
+                center_x_old    :=  set_center_x;
+                center_y_old    :=  set_center_y;
+                width_old       :=  set_width;
+            
+            END_IF;
+        
+        //diameter measurement
+        //--------------------
+        ELSIF LT.CAM_DIA THEN
+            //seqmented circle ROI is selected
+            //--------------------------------
+            IF LT.CAM_PRD_2_SEL THEN 
+                //read settings of circle sensor from recipe or manual input 
+                //----------------------------------------------------------
+                set_center_x        :=  CM_INSELECT(auto    :=    APC.AUTOMATIC,            //center of circle
+                                                    track   :=    TRUE,
+                                                    ac      :=    ROUND(AC.SET_SEN_CTR_X),
+                                                    kya     :=    KYA.SET_SEN_CTR_X_P2);
+                
+                set_center_y        :=  CM_INSELECT(auto    :=    APC.AUTOMATIC,            //center of circle
+                                                    track   :=    TRUE,
+                                                    ac      :=    ROUND(AC.SET_SEN_CTR_Y),
+                                                    kya     :=    KYA.SET_SEN_CTR_Y_P2);
+                
+                set_start_angle    :=  CM_INSELECT( auto    :=    APC.AUTOMATIC,            //seqment start angle
+                                                    track   :=    TRUE,
+                                                    ac      :=    ROUND(AC.SET_SEN_SEQ_STR_AGL),
+                                                    kya     :=    KYA.SET_SEN_SEQ_STR_AGL_P2);
+                                                    
+                set_stop_angle      :=  CM_INSELECT(auto    :=    APC.AUTOMATIC,            //seqment stop angle
+                                                    track   :=    TRUE,
+                                                    ac      :=    ROUND(AC.SET_SEN_SEQ_STP_AGL),
+                                                    kya     :=    KYA.SET_SEN_SEQ_STP_AGL_P2);
+                
+                set_inner_radius    :=  CM_INSELECT(auto    :=    APC.AUTOMATIC,            //diameter of inner circle
+                                                    track   :=    TRUE,
+                                                    ac      :=    ROUND(AC.SET_SEN_IN_RAD),
+                                                    kya     :=    KYA.SET_SEN_IN_RAD_P2);
+               
+                set_outer_radius    :=  CM_INSELECT(auto    :=    APC.AUTOMATIC,            //diameter of outer circle
+                                                    track   :=    TRUE,
+                                                    ac      :=    ROUND(AC.SET_SEN_OUT_RAD),
+                                                    kya     :=    KYA.SET_SEN_OUT_RAD_P2);
+                                                    
+                //check if ROI coordinate change is requested
+                //-------------------------------------------
+                IF NOT O_NEW_ROI_CRD  THEN
+                    //diameter measurement
+                    //--------------------
+                    IF  (set_center_x <> center_x_old)          OR
+                        (set_center_y <> center_y_old)          OR
+                        (set_start_angle <> start_angle_old)    OR
+                        (set_stop_angle <> stop_angle_old)      OR 
+                        (set_inner_radius <> inner_radius_old)  OR
+                        (set_outer_radius <> outer_radius_old)  OR
+                        rcv_roi_pos_and_thr                     OR
+                        //offset second stereo camera
+                        //---------------------------
+                        (PAR_SUB.CTR_X_SCAM_2_ADJ <> ctr_x_scam_2_adj_old) OR 
+                        (PAR_SUB.CTR_Y_SCAM_2_ADJ <> ctr_y_scam_2_adj_old)  THEN  
+                        
+                        new_roi_crd         :=  true;
+                        rcv_roi_pos_and_thr :=  false;
+                        
+                        //convert parameter values in string variables
+                        //-------------------------------------------- 
+                        center_x            :=  DI_STRNG(I := REAL_TO_DINT(set_center_x * 100));
+                        center_y            :=  DI_STRNG(I := REAL_TO_DINT(set_center_y * 100));    
+                        start_angle         :=  DI_STRNG(I := REAL_TO_DINT(set_start_angle * 100));
+                        stop_angle          :=  DI_STRNG(I := REAL_TO_DINT(set_stop_angle * 100));
+                        inner_radius        :=  DI_STRNG(I := REAL_TO_DINT(set_inner_radius * 100));    
+                        outer_radius        :=  DI_STRNG(I := REAL_TO_DINT(set_outer_radius * 100));
+                        center_x_offs       :=  DI_STRNG(I := REAL_TO_DINT(PAR_SUB.CTR_X_SCAM_2_ADJ * 100));
+                        center_y_offs       :=  DI_STRNG(I := REAL_TO_DINT(PAR_SUB.CTR_Y_SCAM_2_ADJ * 100));
+                    END_IF;
+                    
+                    //evaluate new circle sensor ROI coordinate command string
+                    //--------------------------------------------------------
+                    IF new_roi_crd THEN
+                   
+                        //delete ROI coordinate string
+                        //----------------------------   
+                        roi_crd_strg := DELETE(IN:= roi_crd_strg, L:= 80, P:= -1);
+                        
+                        //built new ROI coordinate string
+                        //-------------------------------     
+                        roi_crd_strg    := CONCAT(IN1:= 'dia_crd=' , IN2:= center_x);
+                       
+                        roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                        
+                        roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= center_y);
+                     
+                        roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                        
+                        roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= start_angle);
+                        
+                        roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                        
+                        roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= stop_angle);
+                        
+                        roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                        
+                        roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= inner_radius);
+                        
+                        roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                        
+                        roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= outer_radius);
+                        
+                        //add offsets of second camera in stereo mode to ROI string
+                        //---------------------------------------------------------
+                        IF ((STA.ACT_DVC_CNF_BYTE_2 AND 2#0000_1000) = 2#0000_1000) THEN
+                            roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                            
+                            roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= center_x_offs);
+                            
+                            roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                            
+                            roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= center_y_offs);
+                        END_IF;
+                        
+                        O_ROI_CRD_STRG      :=  roi_crd_strg;    //write new ROI coordinate string
+                        O_NEW_ROI_CRD       :=  true;
+                        
+                        //save last requested ROI coordinates
+                        //-----------------------------------
+                        center_x_old        :=  set_center_x;
+                        center_y_old        :=  set_center_y;
+                        outer_radius_old    :=  set_outer_radius;
+                        inner_radius_old    :=  set_inner_radius;
+                        start_angle_old     :=  set_start_angle;
+                        stop_angle_old      :=  set_stop_angle;
+                        
+                        ctr_x_scam_2_adj_old    :=  PAR_SUB.CTR_X_SCAM_2_ADJ;
+                        ctr_y_scam_2_adj_old    :=  PAR_SUB.CTR_Y_SCAM_2_ADJ;
+                        
+                     END_IF;
+                END_IF;
+
+            //rectangle ROI is selected
+            //-------------------------
+            ELSIF LT.CAM_PRD_1_SEL THEN
+                set_center_x    :=  CM_INSELECT(auto    :=  APC.AUTOMATIC,              // area in x-dimension
+                                                track   :=  TRUE,
+                                                ac      :=  ROUND(AC.SET_SEN_CTR_X),
+                                                kya     :=  KYA.SET_SEN_CTR_X_P1);
+                
+                set_center_y    :=  CM_INSELECT(auto    :=  APC.AUTOMATIC,              //area in y-dimension
+                                                track   :=  TRUE,
+                                                ac      :=  ROUND(AC.SET_SEN_CTR_Y),
+                                                kya     :=  KYA.SET_SEN_CTR_Y_P1);
+            
+                set_width       :=  CM_INSELECT(auto    :=  APC.AUTOMATIC,              //sensor width
+                                                track   :=  TRUE,
+                                                ac      :=  ROUND(AC.SET_SEN_WDH),
+                                                kya     :=  KYA.SET_SEN_WDH_P1);
+                
+                
+                set_height       :=  CM_INSELECT(auto   :=  APC.AUTOMATIC,              //sensor height
+                                                track   :=  TRUE,
+                                                ac      :=  ROUND(AC.SET_SEN_HGT),
+                                                kya     :=  KYA.SET_SEN_HGT_P1);
+         
+  
+                //check if ROI coordinate change is requested
+                //-------------------------------------------
+                IF NOT O_NEW_ROI_CRD  THEN
+                    //melting detection
+                    //-----------------
+                    IF  (set_center_x <> center_x_old)  OR
+                        (set_center_y <> center_y_old)  OR
+                        (set_width <> width_old)        OR
+                        (set_height <> height_old)      OR
+                        rcv_roi_pos_and_thr             THEN 
+                        
+                        new_roi_crd         :=  true;
+                        rcv_roi_pos_and_thr :=  false;
+                    
+                        //convert parameter values in string variables
+                        //-------------------------------------------- 
+                        center_x    :=  DI_STRNG (I := REAL_TO_DINT(set_center_x * 100));
+                        center_y    :=  DI_STRNG (I := REAL_TO_DINT(set_center_y * 100));    
+                        width       :=  DI_STRNG (I := REAL_TO_DINT(set_width * 100));
+                        height      :=  DI_STRNG (I := REAL_TO_DINT(set_height * 100));    
+                    
+                    END_IF;
+                END_IF;
+  
+                //evaluate new ROI coordinate command string
+                //------------------------------------------
+                IF new_roi_crd THEN
+               
+                    //delete ROI coordinate string
+                    //----------------------------   
+                    roi_crd_strg := DELETE(IN:= roi_crd_strg, L:= 80, P:= -1);
+                    
+                    //built new ROI coordinate string
+                    //-------------------------------     
+                    roi_crd_strg    := CONCAT(IN1:= 'rec_crd=' , IN2:= center_x);
+                   
+                    roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                    
+                    roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= center_y);
+                 
+                    roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                    
+                    roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= width);
+                    
+                    roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+                    
+                    roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= height);
+                    
+                    O_ROI_CRD_STRG  :=  roi_crd_strg;    //write new ROI coordinate string
+                    O_NEW_ROI_CRD   :=  true;
+                    
+                    //save last requested ROI coordinates
+                    //-----------------------------------
+                    center_x_old    :=  set_center_x;
+                    center_y_old    :=  set_center_y;
+                    width_old       :=  set_width;
+                    height_old      :=  set_height;
+                
+                END_IF;
+            END_IF; 
+        END_IF;
+           
+        //reset flag new ROI coordinates
+        //------------------------------
+        new_roi_crd :=  false;
+        
+        (* - not used any more, ge
+        //melt vibration measurement - active in all measurement methods
+        //--------------------------------------------------------------
+        //read settings of melt vibration sensor from recipe or manual input 
+        //------------------------------------------------------------------
+        set_mlt_vib_center_x    :=  KYA.SET_SEN_MLT_VIB_CTR_X;          //area in y-dimension
+        
+        set_mlt_vib_center_y    :=  KYA.SET_SEN_MLT_VIB_CTR_Y;          //area in y-dimension
+       
+        set_mlt_vib_width       :=  KYA.SET_SEN_MLT_VIB_WDH;            //senor width
+        
+        //check if ROI coordinate change is requested
+        //-------------------------------------------
+        IF NOT O_NEW_ROI_CRD  THEN
+            //melt vibration measurement
+            //--------------------------
+            IF (set_mlt_vib_center_x <> mlt_vib_center_x_old)  OR
+               (set_mlt_vib_center_y <> mlt_vib_center_y_old)  OR
+               (set_mlt_vib_width <> mlt_vib_width_old)        THEN 
+                    
+                new_mlt_vib_roi_crd :=  true;
+                    
+                //convert parameter values in string variables
+                //-------------------------------------------- 
+                mlt_vib_center_x    :=  DI_STRNG (I := REAL_TO_DINT(set_mlt_vib_center_x * 100));
+                mlt_vib_center_y    :=  DI_STRNG (I := REAL_TO_DINT(set_mlt_vib_center_y * 100));    
+                mlt_vib_width       :=  DI_STRNG (I := REAL_TO_DINT(set_mlt_vib_width * 100));
+          
+            END_IF; 
+        END_IF;       
+    
+        //evaluate new melt vibration ROI coordinate command string
+        //---------------------------------------------------------
+        IF new_mlt_vib_roi_crd THEN
+       
+            //delete ROI coordinate string
+            //----------------------------   
+            roi_crd_strg := DELETE(IN:= roi_crd_strg, L:= 80, P:= -1);
+            
+            //built new ROI coordinate string
+            //-------------------------------     
+            roi_crd_strg    := CONCAT(IN1:= 'vib_crd=' , IN2:= mlt_vib_center_x);
+           
+            roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+            
+            roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= mlt_vib_center_y);
+         
+            roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= delimiter);
+            
+            roi_crd_strg    := CONCAT(IN1:= roi_crd_strg, IN2:= mlt_vib_width);
+                            
+            O_ROI_CRD_STRG  :=  roi_crd_strg;    //write new ROI coordinate string
+            O_NEW_ROI_CRD   :=  true;
+            
+            //save last requested ROI coordinates
+            //-----------------------------------
+            mlt_vib_center_x_old    :=  set_mlt_vib_center_x;
+            mlt_vib_center_y_old    :=  set_mlt_vib_center_y;
+            mlt_vib_width_old       :=  set_mlt_vib_width;
+   
+            //reset flag new melt vibration ROI coordinates
+            //---------------------------------------------
+            new_mlt_vib_roi_crd :=  false;
+    
+        END_IF;     
+        *)
+          
+        //evaluate recipe threshold setpoint
+        //----------------------------------
+        ac_set_sen_thr  :=  ROUND(AC.SET_SEN_THR * 10.0);   //shift decimal place one digit to the right and round
+         
+        ac_set_sen_thr  :=  ac_set_sen_thr / 10.0;          //shift decimal place one digit to the left 
+
+        //evaluate recipe threshold setpoint for camera 2
+        //-----------------------------------------------
+        ac_set_sen_thr_2  :=  ROUND(AC.SET_CAM_2_THR * 10.0);   //shift decimal place one digit to the right and round
+         
+        ac_set_sen_thr_2  :=  ac_set_sen_thr_2 / 10.0;          //shift decimal place one digit to the left 
+
+        //evaluate threshold setpoint mode related
+        //----------------------------------------
+        IF LT.CAM_MLT   THEN
+            //read sensor threshold
+            //---------------------
+            set_thr :=  CM_INSELECT(auto    :=  APC.AUTOMATIC,              
+                                    track   :=  TRUE,
+                                    ac      :=  ac_set_sen_thr,             //use rounded value
+                                    kya     :=  KYA.SET_SEN_THR_P4);
+            
+            //set command identifier
+            //----------------------
+            thr_cmd         :=  'mlt_thr=';
+        
+        ELSIF LT.CAM_DIP   THEN
+            //read sensor threshold
+            //---------------------
+            set_thr :=  CM_INSELECT(auto    :=  APC.AUTOMATIC,              
+                                    track   :=  TRUE,
+                                    ac      :=  ac_set_sen_thr,             //use rounded value
+                                    kya     :=  KYA.SET_SEN_THR_P3);
+            
+            //set command identifier
+            //----------------------
+            thr_cmd         :=  'dip_thr=';
+        
+        ELSIF LT.CAM_DIA   THEN
+            //read threshold of seqmented circle ROI
+            //--------------------------------------           
+            IF LT.CAM_PRD_2_SEL THEN 
+                //threshold 1 st camera - single or stereo camera mode
+                //----------------------------------------------------
+                set_thr :=  CM_INSELECT(auto    :=  APC.AUTOMATIC,              
+                                        track   :=  TRUE,
+                                        ac      :=  ac_set_sen_thr,             //use rounded value
+                                        kya     :=  KYA.SET_SEN_THR_P2);
+                
+                //set circle sensor command identifier
+                //------------------------------------
+                thr_cmd         :=  'dia_thr=';
+                
+                //stereo camera installed
+                //-----------------------
+                IF((STA.ACT_DVC_CNF_BYTE_2 AND 2#0000_1000) = 2#0000_1000) THEN  
+                    //shoulder phase
+                    //--------------
+                    IF ((APC.STATUS = APC.SHOULDER) OR (APC.STATUS = APC.BODY)) THEN
+                        //threshold - used for a second camera in shoulder and body phase
+                        //---------------------------------------------------------------
+                        set_thr_2 :=  CM_INSELECT(auto    :=  APC.AUTOMATIC,              
+                                                  track   :=  TRUE,
+                                                  ac      :=  ac_set_sen_thr_2,             //use rounded value
+                                                  kya     :=  KYA.SET_CAM_2_THR);
+                    
+                        //set circle sensor command identifier
+                        //------------------------------------
+                        thr_cmd_2        :=  'diathr2=';
+                    //other phases
+                    //------------
+                    ELSE
+                        KYA.SET_CAM_2_THR   := set_thr; //track KYA value of second threshold with first threshold      
+                    END_IF;
+                END_IF;
+                
+            //read threshold of rectangle ROI
+            //-------------------------------
+            ELSIF LT.CAM_PRD_1_SEL  THEN 
+                set_thr :=  CM_INSELECT(auto    :=  APC.AUTOMATIC,              
+                                        track   :=  TRUE,
+                                        ac      :=  ac_set_sen_thr,             //use rounded value
+                                        kya     :=  KYA.SET_SEN_THR_P1);
+                
+                //set circle sensor command identifier
+                //------------------------------------
+                thr_cmd         :=  'rec_thr=';
+      
+            END_IF;
+        END_IF;
+        
+        //read melt vibration sensor threshold
+        //------------------------------------
+        //set_mlt_vib_thr :=  KYA.SET_SEN_MLT_VIB_THR;
+            
+        //check if ROI threshold change is requested
+        //------------------------------------------
+        IF NOT O_NEW_ROI_THR THEN
+            //melting, dipping or diameter measurement
+            //----------------------------------------
+            IF ((set_thr <> thr_old) OR rcv_roi_pos_and_thr) THEN 
+                new_thr_req         :=  true;
+                rcv_roi_pos_and_thr :=  false;
+                
+                //convert parameter values in string variables
+                //-------------------------------------------- 
+                thr :=  I_STRNG (I := REAL_TO_INT(set_thr * 100));      //circle sensor, dip line or junk detection
+            (*    
+            //melt vibration measurement
+            //--------------------------
+            ELSIF (set_mlt_vib_thr <> mlt_vib_thr_old) THEN
+                new_mlt_vib_thr_req :=  true;
+                
+                //convert melt vibration threshold parameter value in string variable
+                //------------------------------------------------------------------- 
+                mlt_vib_thr :=  I_STRNG (I := REAL_TO_INT(set_mlt_vib_thr * 100));
+            *)
+            END_IF; 
+        END_IF;
+       
+        //evaluate new ROI threshold command string
+        //-----------------------------------------
+        IF new_thr_req THEN                         //melting, dipping or diameter measurement
+            
+            //delete command string
+            //---------------------   
+            roi_thr_strg := DELETE(IN:= roi_thr_strg, L:= 20, P:= -1);
+           
+            //built new command string
+            //------------------------     
+            roi_thr_strg    := CONCAT(IN1:= thr_cmd, IN2:= thr);
+            
+            O_ROI_THR_STRG  :=  roi_thr_strg;    //write new ROI threshold string
+            O_NEW_ROI_THR   :=  true;
+    
+            //save last requested sensor threshold parameter
+            //----------------------------------------------
+            thr_old :=  set_thr;
+  
+            //reset new sensor shape flag
+            //--------------------------- 
+            new_thr_req :=  false;
+        
+        (*
+        ELSIF new_mlt_vib_thr_req THEN              //melt vibration measurement
+        
+            //delete command string
+            //---------------------   
+            roi_thr_strg := DELETE(IN:= roi_thr_strg, L:= 20, P:= -1);
+           
+            //built new command string
+            //------------------------     
+            roi_thr_strg    := CONCAT(IN1:= 'vib_thr=', IN2:= mlt_vib_thr);
+            
+            O_ROI_THR_STRG  :=  roi_thr_strg;    //write new ROI threshold string
+            O_NEW_ROI_THR   :=  true;
+    
+            //save last requested sensor threshold parameter
+            //----------------------------------------------
+            mlt_vib_thr_old :=  set_mlt_vib_thr;
+            
+            //reset new sensor shape flag
+            //--------------------------- 
+            new_mlt_vib_thr_req :=  false;
+        *)   
+        END_IF;
+        
+        //stereo camera
+        //-------------
+        IF ((STA.ACT_DVC_CNF_BYTE_2 AND 2#0000_1000) = 2#0000_1000) THEN
+
+            //check if ROI threshold change is requested for camera 2
+            //-------------------------------------------------------
+            IF NOT O_NEW_ROI_THR_2 THEN
+                //melting, dipping or diameter measurement
+                //----------------------------------------
+                IF ((set_thr_2 <> thr_old_2) OR rcv_roi_pos_and_thr) THEN 
+                    new_thr_req_2       :=  true;
+                    rcv_roi_pos_and_thr :=  false;
+                    
+                    //convert parameter values in string variables
+                    //-------------------------------------------- 
+                    thr_2 :=  I_STRNG (I := REAL_TO_INT(set_thr_2 * 100));      //circle sensor, dip line or junk detection
+    
+                END_IF;        
+            END_IF;
+            
+            //evaluate new ROI threshold command string for camnera 2
+            //-------------------------------------------------------
+            IF new_thr_req_2 THEN                         //melting, dipping or diameter measurement
+                
+                //delete command string
+                //---------------------   
+                roi_thr_strg_2 := DELETE(IN:= roi_thr_strg_2, L:= 20, P:= -1);
+               
+                //built new command string
+                //------------------------     
+                roi_thr_strg_2    := CONCAT(IN1:= thr_cmd_2, IN2:= thr_2);
+                
+                O_ROI_THR_STRG_2  :=  roi_thr_strg_2;    //write new ROI threshold string
+                O_NEW_ROI_THR_2   :=  true;
+        
+                //save last requested sensor threshold parameter
+                //----------------------------------------------
+                thr_old_2 :=  set_thr_2;
+      
+                //reset new sensor shape flag
+                //--------------------------- 
+                new_thr_req_2 :=  false;
+            END_IF;        
+        
+            //evaluate recipe exposure time set point camera 1
+            //------------------------------------------------
+            set_exp_tme_cam_1  :=  ROUND(KYA.SET_CAM_1_EXP_TME * 10.0);     //shift decimal place one digit to the right and round
+             
+            set_exp_tme_cam_1  :=  set_exp_tme_cam_1 / 10.0;                //shift decimal place one digit to the left 
+            
+            //check if exposure time camera 1 change is requested
+            //---------------------------------------------------
+            IF NOT O_NEW_EXP_TME_CAM_1 THEN
+                //melting, dipping or diameter measurement
+                //----------------------------------------
+                IF (set_exp_tme_cam_1 <> set_exp_tme_cam_1_old) THEN 
+                    new_exp_tme_cam_1_req :=  true;
+                    
+                    //convert parameter values in string variables
+                    //-------------------------------------------- 
+                    exp_tme_cam_1 :=  I_STRNG (I := REAL_TO_INT(set_exp_tme_cam_1 * 100));    //exposure time camera 1
+                END_IF;
+            END_IF;     
+            
+            //evaluate recipe exposure time set point camera 2
+            //------------------------------------------------
+            set_exp_tme_cam_2  :=  ROUND(KYA.SET_CAM_2_EXP_TME * 10.0);     //shift decimal place one digit to the right and round
+             
+            set_exp_tme_cam_2  :=  set_exp_tme_cam_2 / 10.0;                //shift decimal place one digit to the left 
+            
+            //check if exposure time camera 2 change is requested
+            //---------------------------------------------------
+            IF NOT O_NEW_EXP_TME_CAM_2 THEN
+                //melting, dipping or diameter measurement
+                //----------------------------------------
+                IF (set_exp_tme_cam_2 <> set_exp_tme_cam_2_old) THEN 
+                    new_exp_tme_cam_2_req :=  true;
+                    
+                    //convert parameter values in string variables
+                    //-------------------------------------------- 
+                    exp_tme_cam_2 :=  I_STRNG (I := REAL_TO_INT(set_exp_tme_cam_2 * 100));    //exposure time camera 2
+                END_IF;
+            END_IF;     
+        
+            //evaluate new exposure time camera 1 command string
+            //--------------------------------------------------
+            IF new_exp_tme_cam_1_req THEN 
+                
+                //delete command string
+                //---------------------   
+                exp_tme_cam_1_strg := DELETE(IN:= exp_tme_cam_1_strg, L:= 20, P:= -1);
+               
+                //built new command string
+                //------------------------     
+                exp_tme_cam_1_strg    := CONCAT(IN1:= 'exptme1=', IN2:= exp_tme_cam_1);
+                
+                O_EXP_TME_CAM_1_STRG    :=  exp_tme_cam_1_strg;    //write new exposure time camera 1 string
+                O_NEW_EXP_TME_CAM_1     :=  true;
+                
+                //save last requested exposure time camera 1
+                //------------------------------------------
+                set_exp_tme_cam_1_old :=  set_exp_tme_cam_1;
+      
+                //reset new exposure time camera 1 flag
+                //------------------------------------- 
+                new_exp_tme_cam_1_req :=  false;
+            END_IF;
+            
+            //evaluate new exposure time camera 2 command string
+            //--------------------------------------------------
+            IF new_exp_tme_cam_2_req THEN 
+                
+                //delete command string
+                //---------------------   
+                exp_tme_cam_2_strg := DELETE(IN:= exp_tme_cam_2_strg, L:= 20, P:= -1);
+               
+                //built new command string
+                //------------------------     
+                exp_tme_cam_2_strg    := CONCAT(IN1:= 'exptme2=', IN2:= exp_tme_cam_2);
+                
+                O_EXP_TME_CAM_2_STRG    :=  exp_tme_cam_2_strg;    //write new exposure time camera 2 string
+                O_NEW_EXP_TME_CAM_2     :=  true;
+                
+                //save last requested exposure time camera 2
+                //------------------------------------------
+                set_exp_tme_cam_2_old :=  set_exp_tme_cam_2;
+      
+                //reset new exposure time camera 2 flag
+                //------------------------------------- 
+                new_exp_tme_cam_2_req :=  false;
+            END_IF;
+        END_IF;
+    END_IF;
+    
+END_FUNCTION_BLOCK
+

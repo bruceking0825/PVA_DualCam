@@ -1,0 +1,74 @@
+FUNCTION_BLOCK CHAR_TO_DINT
+(*
+    --------------------------------------------------------------------------------
+    program     :    CHAR_TO_DINT
+    description :    convert characters to double integer      
+    name        :    G. Eibelsh鋟ser
+    date        :    11.05.2010
+
+    revision    :
+    name        :
+    date        :    
+                    (c)PVA Tepla AG
+    --------------------------------------------------------------------------------
+*)
+
+VAR_INPUT
+    I_AMT_OF_BYTES  :   INT;
+        
+END_VAR
+
+
+VAR_OUTPUT 
+    O_CAM_VALUE    :   ARRAY[0..19] OF DINT;        //increased for stereo camera test
+
+END_VAR
+
+VAR
+    i       :   INT;
+    k       :   INT;
+    s       :   INT;
+    digit   :   INT;
+    number  :   DINT;
+    
+END_VAR
+
+
+BEGIN
+    //init temporary function variables
+    //---------------------------------
+    digit   := 0;                                   
+    number  := 0;
+    k       := 0;
+    s       := 1;
+         
+    FOR i:= 4 TO (I_AMT_OF_BYTES) DO        //exclude first four characters in data DB                             
+        //last character detected - abort calculation and function
+        //--------------------------------------------------------
+        IF BM_CAM_EVAL_DB.Data[i] = BYTE_TO_CHAR(B#16#D) THEN        //exit conversion when carriage return appears in telegram
+            O_CAM_VALUE[k] := s * number;
+            EXIT;
+        ELSE
+            //delimter detected - abort calculation of value
+            //----------------------------------------------
+            IF (BM_CAM_EVAL_DB.Data[i] = ';')THEN             
+                O_CAM_VALUE[k]  :=  s * number;
+                k               :=  k + 1;                          //increase value counter
+                number          :=  0;
+                digit           :=  0;
+                s               :=  1;
+            //minus detected - set sign multiplier to negative value
+            //------------------------------------------------------
+            ELSIF (BM_CAM_EVAL_DB.Data[i] = '-')THEN 
+                s   :=  -1;            
+            //calculate double integer from characters byte wise
+            //--------------------------------------------------
+            ELSE
+                digit := CHAR_TO_INT(BM_CAM_EVAL_DB.Data[i])-48;   // convert ASCII character in integer value
+                number   := number * 10 + digit;                       
+            END_IF;
+        END_IF;
+    END_FOR;
+
+END_FUNCTION_BLOCK 
+

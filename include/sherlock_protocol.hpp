@@ -26,6 +26,8 @@ namespace pva
         static std::optional<SherlockCommand> parseCommand(const QByteArray &line, QString *error = nullptr);
         static qint64 toPlcNumber(double value);
         static std::optional<double> fromPlcNumber(const QString &text);
+        static std::optional<std::vector<double>> parseScaledParameters(
+            const SherlockCommand &command, qsizetype expectedCount, QString *error = nullptr);
         static QByteArray scaledPayload(const QByteArray &name, const std::vector<double> &values);
         static QByteArray framePayload(const QByteArray &payload, QString *error = nullptr);
     };

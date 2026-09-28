@@ -1,0 +1,360 @@
+FUNCTION_BLOCK BM_CAM_RSP
+(*
+    --------------------------------------------------------------------------------
+    program     :    BM_CAM_RSP
+    description :    camera response
+    name        :    G. Eibelsh鋟ser
+    date        :    13.09.2010
+
+    revision    :
+    name        :
+    date        :    
+                    (c)PVA Tepla AG
+    --------------------------------------------------------------------------------
+*)
+
+VAR_INPUT
+    I_CAM_RECV_LEN      :   INT;    
+    I_PLC_TO_CAM        :   STRING;
+
+END_VAR
+
+VAR_OUTPUT
+    O_RSP_FLT           :   BOOL;
+    O_ROI_OUTSIDE_FLT   :   BOOL;
+    O_COMMON_ERROR      :   BOOL;
+    O_ACQ_ERROR         :   BOOL;
+    O_ACQ_IS_ON         :   BOOL;
+    O_RSP_STRG          :   STRING[4];
+    O_REAL_VALUE        :   ARRAY[0..19] OF REAL;
+
+END_VAR
+
+VAR
+    CONV_DATA_CAM_1     :   CHAR_TO_DINT;
+    read_data           :   BOOL;
+    i                   :   INT;
+    n                   :   INT;
+    rsp_strg            :   STRING;
+    rsp_strg_int        :   STRING;
+
+END_VAR
+
+CONST
+    acq_on              :=  'acq_on_';
+    acq_off             :=  'acq_off';
+    thr_abs             :=  'thr_abs';
+    thr_rel             :=  'thr_rel';
+    dia_msr             :=  'dia_msr';
+    dip_msr             :=  'dip_msr';
+    mlt_msr             :=  'mlt_msr';
+    dia_thr             :=  'dia_thr';
+    dia_crd             :=  'dia_crd';
+    dip_thr             :=  'dip_thr';
+    dip_crd             :=  'dip_crd';
+    mlt_thr             :=  'mlt_thr';
+    mlt_crd             :=  'mlt_crd';
+    vib_thr             :=  'vib_thr';
+    vib_crd             :=  'vib_crd';
+    dia_rec             :=  'dia_rec';
+    rec_thr             :=  'rec_thr';
+    rec_crd             :=  'rec_crd';
+    cfit_ne             :=  'cfit_ne';
+    pfit_sb             :=  'pfit_sb';
+    pic_fac1            :=  'pic_fac1';
+    pic_fac2            :=  'pic_fac2';
+    pic_fac3            :=  'pic_fac3';
+    pic_fac4            :=  'pic_fac4';
+    exptme1             :=  'exptme1';
+    exptme2             :=  'exptme2';
+    
+END_CONST
+
+    
+BEGIN
+
+    //delete response string initially
+    //--------------------------------
+    rsp_strg        := DELETE(IN:= rsp_strg, L:= 254, P:= -1);
+    
+    //length of received string without CRLF
+    //--------------------------------------
+    n   :=  I_CAM_RECV_LEN - 2;
+
+    //built response string from datablock bytes
+    //------------------------------------------
+    FOR i := 1 TO n DO 
+        rsp_strg := CONCAT(IN1:= rsp_strg, IN2:= CHAR_TO_STRING(BM_CAM_EVAL_DB.Data[i-1]));
+    END_FOR;
+    
+    //isolate first seven bytes of PLC command
+    //----------------------------------------
+    I_PLC_TO_CAM        := LEFT (IN:= I_PLC_TO_CAM, L:= 7);
+    O_RSP_STRG          := 'init';  //initialise response output response string
+    
+    O_RSP_FLT           := false;   //reset response fault
+    O_ROI_OUTSIDE_FLT   := false;   //reset ROI outside fault
+    O_COMMON_ERROR      := false;   //reset common error fault
+    O_ACQ_ERROR         := false;   //reset acquisiton error fault
+
+    //acquisition on
+    //--------------
+    IF (I_PLC_TO_CAM = acq_on) THEN
+        IF (rsp_strg = 'acq_on_=ok') THEN
+            O_ACQ_IS_ON :=  true;
+        ELSE
+            O_RSP_FLT   :=  true;
+        END_IF;
+    
+    //acquisition off    
+    //---------------
+    ELSIF (I_PLC_TO_CAM = acq_off) THEN
+        IF (rsp_strg = 'acq_off=ok') THEN
+            O_ACQ_IS_ON :=  false;
+        ELSE
+            O_RSP_FLT   :=  true;
+        END_IF;
+    
+    //absolute threshold
+    //------------------
+    ELSIF (I_PLC_TO_CAM = thr_abs) THEN
+        IF NOT (rsp_strg = 'thr_abs=ok') THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+    
+    //relative threshold
+    //------------------
+    ELSIF (I_PLC_TO_CAM = thr_rel) THEN
+        IF NOT (rsp_strg = 'thr_rel=ok') THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+        
+    //neck measurement mode stereo cameras
+    //------------------------------------
+    ELSIF (I_PLC_TO_CAM = cfit_ne) THEN
+        IF NOT (rsp_strg = 'cfit_ne=ok') THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+    
+    //shoulder body measurement mode stereo cameras
+    //---------------------------------------------
+    ELSIF (I_PLC_TO_CAM = pfit_sb) THEN
+        IF NOT (rsp_strg = 'pfit_sb=ok') THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+        
+    //diameter threshold seqmented circle ROI
+    //---------------------------------------
+    ELSIF (I_PLC_TO_CAM = dia_thr) THEN
+        IF NOT (rsp_strg = 'dia_thr=ok') THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+        
+    //exposure time camera 1
+    //----------------------
+    ELSIF (I_PLC_TO_CAM = exptme1) THEN
+        IF NOT (rsp_strg = 'exptme1=ok') THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+        
+    //exposure time camera 2
+    //----------------------
+    ELSIF (I_PLC_TO_CAM = exptme2) THEN
+        IF NOT (rsp_strg = 'exptme2=ok') THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+ 
+    //diameter threshold rectangle ROI
+    //--------------------------------
+    ELSIF (I_PLC_TO_CAM = rec_thr) THEN
+        IF NOT (rsp_strg = 'rec_thr=ok') THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+   
+    //diameter seqmented circle ROI coordinates
+    //-----------------------------------------
+    ELSIF (I_PLC_TO_CAM = dia_crd) THEN
+        IF NOT(rsp_strg = 'dia_crd=ok') THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+ 
+    //diameter rectangle ROI coordinates
+    //----------------------------------
+    ELSIF (I_PLC_TO_CAM = rec_crd) THEN
+        IF NOT(rsp_strg = 'rec_crd=ok') THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+  
+    //melt vibration threshold
+    //------------------------
+    ELSIF (I_PLC_TO_CAM = vib_thr) THEN
+        IF NOT (rsp_strg = 'vib_thr=ok') THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+   
+    //melt vibration ROI coordinates
+    //------------------------------
+    ELSIF (I_PLC_TO_CAM = vib_crd) THEN
+        IF NOT(rsp_strg = 'vib_crd=ok') THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+    
+    //facette storage request
+    //-----------------------
+    ELSIF I_PLC_TO_CAM = pic_fac1 OR 
+        I_PLC_TO_CAM = pic_fac2 OR 
+        I_PLC_TO_CAM = pic_fac3 OR 
+        I_PLC_TO_CAM = pic_fac4 THEN
+        IF NOT ((rsp_strg = 'pic_fac1=ok')OR
+         (rsp_strg = 'pic_fac2=ok') OR
+         (rsp_strg = 'pic_fac3=ok') OR
+         (rsp_strg = 'pic_fac4=ok'))THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+    
+    //diameter measurement with seqmented circle ROI
+    //----------------------------------------------
+    ELSIF (I_PLC_TO_CAM = dia_msr) THEN
+        rsp_strg_int    := LEFT (IN:= rsp_strg, L:= 4);         //isolate first four bytes of response string
+        IF (rsp_strg_int = 'dia=') THEN
+            O_RSP_STRG  :=  rsp_strg_int;
+            read_data   :=  true;
+        ELSE
+            rsp_strg_int    := LEFT (IN:= rsp_strg, L:= 17);    //isolate first seventeen bytes of response string  
+            IF (rsp_strg_int = 'exe_err=ROIoutsde') THEN        //execution error= ROI outside 
+                O_ROI_OUTSIDE_FLT   :=  true;
+            ELSIF (rsp_strg_int = 'exe_err=Commn err') THEN     //execution error= common error
+                O_COMMON_ERROR  :=  true;
+            ELSIF (rsp_strg_int = 'exe_err=Acq fails') THEN     //execution error= image acquistion failed
+                O_ACQ_ERROR  :=  true;
+            ELSE
+                O_RSP_FLT   :=  true;
+            END_IF;
+        END_IF;
+  
+    //diameter measurement with rectangle ROI
+    //---------------------------------------
+    ELSIF (I_PLC_TO_CAM = dia_rec) THEN
+        rsp_strg_int    := LEFT (IN:= rsp_strg, L:= 4);         //isolate first four bytes of response string
+        IF (rsp_strg_int = 'dia=') THEN
+            O_RSP_STRG  :=  rsp_strg_int;
+            read_data   :=  true;
+        ELSE
+            rsp_strg_int    := LEFT (IN:= rsp_strg, L:= 17);    //isolate first seventeen bytes of response string  
+            IF (rsp_strg_int = 'exe_err=ROIoutsde') THEN        //execution error= ROI outside 
+                O_ROI_OUTSIDE_FLT   :=  true;
+            ELSIF (rsp_strg_int = 'exe_err=Commn err') THEN     //execution error= common error
+                O_COMMON_ERROR  :=  true;
+            ELSIF (rsp_strg_int = 'exe_err=Acq fails') THEN     //execution error= image acquistion failed
+                O_ACQ_ERROR  :=  true;
+            ELSE
+                O_RSP_FLT   :=  true;
+            END_IF;
+        END_IF;
+  
+  
+   //dipping threshold
+   //-----------------
+    ELSIF (I_PLC_TO_CAM = dip_thr) THEN
+        IF NOT (rsp_strg = 'dip_thr=ok') THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+  
+   //dipping ROI coordinates
+   //-----------------------
+    ELSIF (I_PLC_TO_CAM = dip_crd) THEN
+        IF NOT (rsp_strg = 'dip_crd=ok') THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+   
+   //dipping measurement
+   //-------------------
+   ELSIF (I_PLC_TO_CAM = dip_msr) THEN
+        rsp_strg_int    := LEFT (IN:= rsp_strg, L:= 4);         //isolate first four bytes of response string
+        IF (rsp_strg_int = 'dip=') THEN
+            O_RSP_STRG  :=  rsp_strg_int;
+            read_data   :=  true;
+        ELSE
+            rsp_strg_int    := LEFT (IN:= rsp_strg, L:= 17);    //isolate first seventeen bytes of response string  
+            IF (rsp_strg_int = 'exe_err=ROIoutsde') THEN        //execution error= ROI outside 
+                O_ROI_OUTSIDE_FLT   :=  true;
+            ELSIF (rsp_strg_int = 'exe_err=Commn err') THEN     //execution error= common error
+                O_COMMON_ERROR  :=  true;
+            ELSIF (rsp_strg_int = 'exe_err=Acq fails') THEN     //execution error= image acquistion failed
+                O_ACQ_ERROR  :=  true;
+            ELSE
+                O_RSP_FLT   :=  true;
+            END_IF;
+        END_IF;
+        
+    //melting threshold
+    //-----------------
+    ELSIF (I_PLC_TO_CAM = mlt_thr) THEN
+        IF NOT (rsp_strg = 'mlt_thr=ok') THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+   
+   //melting ROI coordinates
+   //-----------------------
+    ELSIF (I_PLC_TO_CAM = mlt_crd) THEN
+        IF NOT (rsp_strg = 'mlt_crd=ok') THEN
+            O_RSP_FLT   :=  true;
+        END_IF;
+    
+   //melting measurement
+   //-------------------
+    ELSIF (I_PLC_TO_CAM = mlt_msr) THEN
+        rsp_strg_int    := LEFT (IN:= rsp_strg, L:= 4);         //isolate first four bytes of response string
+        IF (rsp_strg_int = 'mlt=') THEN
+            O_RSP_STRG  :=  rsp_strg_int;
+            read_data   :=  true;
+        ELSE
+            rsp_strg_int    := LEFT (IN:= rsp_strg, L:= 17);    //isolate first seventeen bytes of response string  
+            IF (rsp_strg_int = 'exe_err=ROIoutsde') THEN        //execution error= ROI outside 
+                O_ROI_OUTSIDE_FLT   :=  true;
+            ELSIF (rsp_strg_int = 'exe_err=Commn err') THEN     //execution error= common error
+                O_COMMON_ERROR  :=  true;
+            ELSIF (rsp_strg_int = 'exe_err=Acq fails') THEN     //execution error= image acquistion failed
+                O_ACQ_ERROR  :=  true;
+            ELSE
+                O_RSP_FLT   :=  true;
+            END_IF;
+        END_IF;
+    END_IF;
+        
+    //response received, read data
+    //----------------------------
+    IF read_data    THEN 
+
+        //call conversion from character variables to double integer
+        //----------------------------------------------------------
+        CONV_DATA_CAM_1(I_AMT_OF_BYTES   := I_CAM_RECV_LEN);  
+          
+        //read output variables and scale
+        //-------------------------------
+        O_REAL_VALUE[0]  := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[0]) / 100;     
+        O_REAL_VALUE[1]  := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[1]) / 100;     
+        O_REAL_VALUE[2]  := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[2]) / 100;     
+        O_REAL_VALUE[3]  := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[3]) / 100;     
+        O_REAL_VALUE[4]  := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[4]) / 100;
+        O_REAL_VALUE[5]  := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[5]) / 100;
+        O_REAL_VALUE[6]  := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[6]) / 100;
+        O_REAL_VALUE[7]  := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[7]) / 100;
+        O_REAL_VALUE[8]  := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[8]) / 100;
+        O_REAL_VALUE[9]  := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[9]) / 100;
+        O_REAL_VALUE[10] := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[10]) / 100;
+        O_REAL_VALUE[11] := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[11]) / 100;
+        O_REAL_VALUE[12] := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[12]) / 100;
+        O_REAL_VALUE[13] := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[13]) / 100;
+        O_REAL_VALUE[14] := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[14]) / 100;
+        O_REAL_VALUE[15] := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[15]) / 100;
+        O_REAL_VALUE[16] := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[16]) / 100;
+        O_REAL_VALUE[17] := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[17]) / 100;
+        O_REAL_VALUE[18] := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[18]) / 100;
+        O_REAL_VALUE[19] := DINT_TO_REAL(CONV_DATA_CAM_1.O_CAM_VALUE[19]) / 100;
+
+        read_data   :=  false;
+    
+    END_IF;
+    
+END_FUNCTION_BLOCK

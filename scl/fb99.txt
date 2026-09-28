@@ -1,0 +1,232 @@
+FUNCTION_BLOCK BM_S_CAM_EVAL
+(*
+    --------------------------------------------------------------------------------
+    program     :    BM_S_CAM_EVAL
+    description :    stereo camera evaluation  
+    name        :    G. Eibelsh鋟ser
+    date        :    20.08.2019
+       
+    revision    :   
+    name        :   
+    date        :   
+       
+                    (c)PVA Tepla AG
+    --------------------------------------------------------------------------------
+*)
+VAR_TEMP
+    enb_scam_cal    :   BOOL;
+    term_1          :   REAL;   
+    term_2          :   REAL;   
+    term_3          :   REAL;   
+    term_4          :   REAL;   
+    delta_x1        :   REAL;
+    delta_x2        :   REAL;
+    delta_r         :   REAL;
+    delta_h         :   REAL;
+    
+END_VAR
+
+VAR
+    s_cam_dia_pix_calib_ok      :   BOOL;
+    s_cam_dia_rad_pt_tran_on    :   BOOL;
+    
+    cam_cal_dly                 :   INT;
+    dbl_sh_grw_ctl_dly          :   INT;
+    grw_ctl_off_tme             :   INT;
+    
+    s_cam_dia_rad_pt_fit        :   REAL;
+    s_cam_dia_cir_fit           :   REAL;
+    s_cam_shift_act_val_perc    :   REAL;
+    s_cam_1_init_rad_pt         :   REAL;
+    s_cam_2_init_rad_pt         :   REAL;
+    s_cam_last_cf_dia           :   REAL;
+    s_cam_act_mlt_lvl_chg       :   REAL;
+    ini_mlt_lvl_inp             :   REAL;
+    
+END_VAR
+
+CONST
+    con_rmp_act_val_perc    := 0.55;    // Sind 0.55 %, die jede Sekunde dazu kommen
+    tme_cst_1               :=  180;    // delay 1 for growth control off in [sec]   
+    tme_cst_2               :=  300;    // delay 2 for growth control off in [sec]
+
+END_CONST
+
+BEGIN
+
+    //calculate trigonometric terms (angle in radiant)
+    //------------------------------------------------
+    term_1  :=  SIN(CNF.PI * (PAR_MAIN.MCONST_ANG_OF_PLX_SCAM - CNF.S_CAM_ANG_BETA /2) /180);
+    term_2  :=  SIN(CNF.PI * (PAR_MAIN.MCONST_ANG_OF_PLX_SCAM + CNF.S_CAM_ANG_BETA /2) /180);
+    term_3  :=  COS(CNF.PI * (PAR_MAIN.MCONST_ANG_OF_PLX_SCAM - CNF.S_CAM_ANG_BETA /2) /180);
+    term_4  :=  COS(CNF.PI * (PAR_MAIN.MCONST_ANG_OF_PLX_SCAM + CNF.S_CAM_ANG_BETA /2) /180);
+    
+    //calculate radius from measured points of both cameras
+    //-----------------------------------------------------
+    delta_x1 :=  PAR_MAIN.MCONST_CAM_1_INIT_RAD_PT - AV.S_CAM_1_AVG_RAD_PT;
+    delta_x2 :=  PAR_MAIN.MCONST_CAM_2_INIT_RAD_PT - AV.S_CAM_2_AVG_RAD_PT;
+
+    //calculate radius of crystal from both camera inputs
+    //--------------------------------------------------- 
+    delta_r := (delta_x2 / term_1 - delta_x1 / term_2) / (term_3 / term_1 - term_4 / term_2);
+    
+    //calculate melt level change from both camera inputs
+    //--------------------------------------------------- 
+    delta_h := (delta_x2 / term_3 - delta_x1 / term_4) / (term_1 / term_3 - term_2 / term_4); 
+    
+    //reset diameter and melt level change when camera off or diameter measuement mode not selected
+    //---------------------------------------------------------------------------------------------
+    IF NOT (LT.CAM_ISP_ON AND LT.CAM_DIA) THEN  
+        AV.S_CAM_ACT_XT_DIA         :=  0.0;
+        s_cam_act_mlt_lvl_chg       :=  0.0;
+        AV.S_CAM_ACT_XT_DIA_RAD_PT  :=  0.0;
+        
+    //write diameter and melt level variable
+    //--------------------------------------
+    ELSE//unit of diameter calibration factor is pix/100mm
+        //Durchmesser 黚er Kreisfit
+        s_cam_dia_cir_fit := (AV.S_CAM_1_ACT_DIA_CF / PAR_MAIN.MCONST_CAL_CF_SCAM * 100.0 - AC.XT_MENISCUS)/100.0 * (100.0 - s_cam_shift_act_val_perc); 
+        //Durchmesser 黚er Radius Fit
+        s_cam_dia_rad_pt_fit := (PAR_MAIN.MCONST_SCAM_INIT_DIA + delta_r * 2.0 / PAR_MAIN.MCONST_CAL_RAD_PT_SCAM * 100.0 - AC.XT_MENISCUS)/100.0 * s_cam_shift_act_val_perc;
+        //Durchmesser Ergebnis (Mit smooth 黚ergang) 
+        AV.S_CAM_ACT_XT_DIA := s_cam_dia_rad_pt_fit + s_cam_dia_cir_fit; 
+        
+        //Durchmesser nur aus Radiuspunkten
+        //---------------------------------  
+        AV.S_CAM_ACT_XT_DIA_RAD_PT  := (PAR_MAIN.MCONST_SCAM_INIT_DIA + delta_r * 2.0 / PAR_MAIN.MCONST_CAL_RAD_PT_SCAM * 100.0 - AC.XT_MENISCUS); 
+         
+        //Jede Sec. soll der Shift von Kreis zu Radisuantastung etwas gr鲞er werden
+        //da hier erst einmal 3 min festgehalten sind 100/180 = 0.55
+        IF s_cam_dia_rad_pt_tran_on AND SysTick1s AND NOT(s_cam_shift_act_val_perc = 100.0) THEN
+            s_cam_shift_act_val_perc:=s_cam_shift_act_val_perc+con_rmp_act_val_perc;
+            IF s_cam_shift_act_val_perc > 100.0 THEN
+                s_cam_shift_act_val_perc := 100.0;                
+            END_IF;
+        END_IF;
+        
+        //melt level change
+        //-----------------
+        IF s_cam_shift_act_val_perc = 100.0 THEN
+            s_cam_act_mlt_lvl_chg   :=  delta_h / PAR_MAIN.MCONST_CAL_MLT_LVL_SCAM;   //unit of melt level calibration factor is pix/mm - neg. value >> reduced gap, pos. val. >> increased gap
+        ELSE
+            s_cam_act_mlt_lvl_chg   :=  0.0;
+        END_IF;
+    END_IF;
+    
+    //set point evaluation type - radius point detection or circle fit
+    //----------------------------------------------------------------
+    IF (APC.STATUS <= APC.NECK) THEN
+        DV.S_CAM_RAD_RT_ACTV   :=  FALSE;
+        s_cam_shift_act_val_perc := 0.0;
+        s_cam_dia_rad_pt_tran_on := FALSE;
+    ELSIF (((APC.STATUS = APC.SHOULDER) AND (AV.S_CAM_ACT_XT_DIA > PAR_MAIN.MCONST_CF_TO_RAD_PT_SCAM)) OR (APC.STATUS = APC.BODY)) THEN
+        IF s_cam_shift_act_val_perc < 100.0 THEN
+            s_cam_dia_rad_pt_tran_on := TRUE;
+        ELSE
+            DV.S_CAM_RAD_RT_ACTV := TRUE;
+            s_cam_dia_rad_pt_tran_on := FALSE;
+        END_IF;
+    END_IF;
+    
+    //manual reset of melt level value - relative melt level measurement type must be selected
+    //----------------------------------------------------------------------------------------
+    IF (KYD.RST_MLT_LVL AND NOT LT.CTL_MLT_DRIFT_ON AND NOT SY.CTL_OFFS_SPEED_ON) THEN  //melt drift control and gap offset speed control must be off
+        LT.RST_MLT_LVL := TRUE;             //reset in cm_loops
+    END_IF;
+
+    //melt level change calc in body phase
+    //------------------------------------
+    IF (APC.STATUS = APC.BODY) THEN
+        //absolute melt level selected
+        //----------------------------
+        IF (REAL_TO_INT(PAR_SUB.MLT_LVL_MSR_TYP) = 1) THEN          //melt level measurement typ selection
+            AV.S_CAM_ACT_MLT_LVL_CHG    :=  s_cam_act_mlt_lvl_chg;  //relative value from reference point - pos. value >> melt gap gets larger, neg. value >> melt gap gets smaller
+            ini_mlt_lvl_inp             :=  s_cam_act_mlt_lvl_chg;  //store value to be prepared for switching to relative value from activation point
+        ELSE
+            //minimum length grown and no reset
+            //---------------------------------
+            IF ((AV.ACT_XT_LEN >= PAR_MAIN.BY_XT_LGH_MLT_LVL_RST) AND NOT LT.RST_MLT_LVL) THEN
+                AV.S_CAM_ACT_MLT_LVL_CHG    :=  s_cam_act_mlt_lvl_chg - ini_mlt_lvl_inp;    //relative value from activation point - pos. value >> melt gap gets larger, neg. value >> melt gap gets smaller
+            //reset melt level change values
+            //------------------------------
+            ELSE
+                ini_mlt_lvl_inp             :=  s_cam_act_mlt_lvl_chg;
+                AV.S_CAM_ACT_MLT_LVL_CHG    :=  0.0;
+            END_IF;
+        END_IF;
+        
+    //reset melt level change values
+    //------------------------------
+    ELSE
+        ini_mlt_lvl_inp             :=  s_cam_act_mlt_lvl_chg;
+        AV.S_CAM_ACT_MLT_LVL_CHG    :=  0.0;        
+    END_IF;
+    
+    //enable calibration
+    //------------------
+    enb_scam_cal    :=  LT.CAM_ISP_ON AND LT.CAM_DIA AND (APC.STATUS = APC.IDLE);
+    
+    //request calibration trigger - press button at least 3 seconds
+    //-------------------------------------------------------------
+    LT.CAM_CAL  :=  SysOnDelay (DIN     := KYD.CAM_CAL AND enb_scam_cal,    // input condition
+                                SetTime := 30,                              // delay time
+                                ActTime := cam_cal_dly,                     // actual time value
+                                Tick    := SysTick100ms);  
+    
+    //TEST: Die Stereo-Kamera-Messung also der "Radius-Sensor" kann nur arbeiten, wenn ihm ein Durchmesser
+    //      sowie die Pixelwerte von Kamera 1 und 2 bei diesem Durchmesser bekannt sind. Auf diese "Basis"
+    //      kann dann 黚er das Paralaxe verfahren ein Durchmesser durch die 膎derung der Pixelwerte 
+    //      errechnet werden. Idee: Den Durchmesser und die Pixelwerte im kalten Zustand mit einer 
+    //      Zielscheibe realisieren. Dadurch kann in einem ruhigen Zustand der Durchmesser angefittet
+    //      und die Pixelwerte hierzu ermittelt werden.
+    
+    //store x- coordinates of radius point in machine constants
+    //---------------------------------------------------------
+    IF LT.CAM_CAL THEN
+        s_cam_dia_pix_calib_ok:=TRUE;
+        IF AV.S_CAM_1_AVG_RAD_PT > 100 AND AV.S_CAM_1_AVG_RAD_PT < 2000 THEN
+            PAR_MAIN.MCONST_CAM_1_INIT_RAD_PT :=  AV.S_CAM_1_AVG_RAD_PT; 
+        ELSE
+            s_cam_dia_pix_calib_ok:=FALSE;
+        END_IF;
+        IF AV.S_CAM_2_AVG_RAD_PT > 100 AND AV.S_CAM_2_AVG_RAD_PT < 2000 THEN
+            PAR_MAIN.MCONST_CAM_2_INIT_RAD_PT :=  AV.S_CAM_2_AVG_RAD_PT;
+        ELSE
+            s_cam_dia_pix_calib_ok:=FALSE;
+        END_IF;
+        IF AV.S_CAM_ACT_XT_DIA > 20 AND AV.S_CAM_ACT_XT_DIA < 320 THEN
+            PAR_MAIN.MCONST_SCAM_INIT_DIA :=  AV.S_CAM_ACT_XT_DIA;     
+        ELSE
+            s_cam_dia_pix_calib_ok:=FALSE;
+        END_IF;  
+    END_IF;
+    
+    //built growth control disable flag
+    //---------------------------------
+    IF ((STA.ACT_DVC_CNF_BYTE_2 OR 2#1101_1111) = 2#1101_1111) THEN //check device bit 21 - shoulder diameter control is disabled, means growth control enabled
+    
+        //select off time for growth control
+        //----------------------------------
+        IF  s_cam_dia_rad_pt_tran_on THEN               //sensor transition active
+            grw_ctl_off_tme :=  tme_cst_2;  //300s
+        ELSE                                            //external investigation trigger active
+            grw_ctl_off_tme :=  tme_cst_1;  //180s
+        END_IF;
+    
+        //disable flag for shoulder growth control when sensor transition is active or external investigation trigger switched on
+        //-----------------------------------------------------------------------------------------------------------------------
+        DV.DBL_SH_GRW_CTL   :=  SysOffDelay(DIN     := s_cam_dia_rad_pt_tran_on OR (KYD.EXT_ACQ_TRG AND LT.EXT_ACQ_TRG_ON),    // input condition
+                                            SetTime := grw_ctl_off_tme,             // delay time
+                                            ActTime := dbl_sh_grw_ctl_dly,          // actual time value
+                                            Tick    := SysTick1s);
+    END_IF;
+    
+    //store stereo camea reference parameter in log variables
+    //-------------------------------------------------------
+    DIS.S_CAM_1_REF_RAD_PT  :=  PAR_MAIN.MCONST_CAM_1_INIT_RAD_PT;
+    DIS.S_CAM_2_REF_RAD_PT  :=  PAR_MAIN.MCONST_CAM_2_INIT_RAD_PT;
+    DIS.S_CAM_REF_DIA       :=  PAR_MAIN.MCONST_SCAM_INIT_DIA;
+    
+    DIS.S_CAM_ACT_MLT_LVL_CHG   :=  s_cam_act_mlt_lvl_chg;  //write relative melt level from reference point to log variable
+
+END_FUNCTION_BLOCK

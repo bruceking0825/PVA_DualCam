@@ -1,0 +1,742 @@
+FUNCTION_BLOCK BM_CALL_CAM
+(*
+    --------------------------------------------------------------------------------
+    program     :    BM_CALL_CAM
+    description :    call camera modules 
+    name        :    G. Eibelsh鋟ser
+    date        :    03.05.2010
+
+    revision    :    
+    name        :    
+    date        :    
+                    (c)PVA Tepla AG
+    --------------------------------------------------------------------------------
+*)
+
+VAR_TEMP
+    rot_trg_acq_req         :   BOOL;
+    ms_btw_fct              :   REAL;
+    
+END_VAR
+
+VAR
+    CAM_1_COM               :   BM_CAM_COM;
+    CAM_1_RSP               :   BM_CAM_RSP;
+    CAM_CONTROL             :   BM_CAM_CONTROL;
+    
+    cam_1_req_msr           :   BOOL;
+    cam_1_send_req          :   BOOL;       //sherlock send request
+    cam_2_send_req          :   BOOL;       //not used
+    cam_1_send_done         :   BOOL;
+    cam_1_send_err          :   BOOL;
+    cam_1_recv_ndr          :   BOOL;
+    cam_1_recv_err          :   BOOL;
+    cam_1_eval_data         :   BOOL;
+    cam_1_data_str_recv     :   BOOL;
+    enb_dia_eval            :   BOOL;
+    no_ctr_fnd              :   BOOL;
+    wait_for_rsp            :   BOOL;
+    phase_shift             :   BOOL;
+    itl_cam_flt             :   BOOL;
+    xt_rot_cam_trg_prv      :   BOOL;
+    kyd_ext_acq_trg_busy    :   BOOL;
+    
+    do_fac_shot_with_dly    :   BOOL;
+    sta_tme_trig_fac_shot   :   BOOL;
+    send_fac_shot_msg       :   BOOL;
+
+    cam_1_recv_len          :   INT;
+    retval_blk              :   INT;
+    i                       :   INT;
+    m                       :   INT;
+    n                       :   INT;
+    no_ctr_fnd_dly          :   INT;
+    wait_for_rsp_dly        :   INT;
+    itl_cam_flt_dly         :   INT;
+    cam_no_ctr_fnd_dly      :   INT;
+    cam_rsp_flt_dly         :   INT;
+    mlt_amt_of_blobs        :   INT;
+    apc_status              :   INT;
+    dly_cnt                 :   INT;
+    acq_cnt                 :   INT;
+    auto_rst_cnt            :   INT;
+    next_fac_pic            :   INT; //0= fac1 1= fac2 2= fac3 3= fac4
+    dly_fac_shot            :   INT;
+    dly_cnt_fac_shot        :   DINT; //added for single shot of facet
+
+    cam_1_send_stat         :   WORD;
+    cam_1_recv_stat         :   WORD;
+    
+    dip_int_on_line         :   REAL;
+    dia_cir_fit             :   REAL;
+    dia_cir_fit_old         :   REAL;
+    ctr_x_crd_cir_fit       :   REAL;
+    ctr_y_crd_cir_fit       :   REAL;
+    mlt_vib_dist            :   REAL;
+    dia_line_msr            :   REAL;
+    dia_pts_incl            :   REAL;
+    dia_cal_cir_fit         :   REAL;
+
+    plc_to_sherlock         :   STRING;
+    
+END_VAR
+
+CONST
+    max_pix_intensity   :=  255;
+    amt_of_fct          :=  4;          //amount of facettes
+    min_xt_rot          :=  2;          //minimum crystal rotation for external acqisition trigger
+    time_base           :=  60000.0;    //minute in ms
+    time_trig_fac       :=  180000;     //all 3 min
+END_CONST
+
+
+BEGIN
+
+    //call camera control 
+    //-------------------
+    CAM_CONTROL();
+        
+    //stereo camera
+    //-------------
+    IF ((STA.ACT_DVC_CNF_BYTE_2 AND 2#0000_1000) = 2#0000_1000) THEN
+    
+        //switch external acquisition trigger on/off
+        //------------------------------------------
+        IF LT.XT_ROT_OFF OR (KYA.SET_XT_ROT < min_xt_rot) THEN 
+            LT.EXT_ACQ_TRG_ON   :=  FALSE;
+        ELSE
+            SM_POS_EDGE(input   :=  KYD.EXT_ACQ_TRG,         //button external acquisiton trigger on/off
+                        busy    :=  kyd_ext_acq_trg_busy,
+                        output  :=  LT.EXT_ACQ_TRG_ON);
+        END_IF;
+        
+        //calculate time between two facettes in ms
+        //-----------------------------------------
+        IF LT.EXT_ACQ_TRG_ON THEN 
+            ms_btw_fct :=  time_base / KYA.SET_XT_ROT /amt_of_fct;
+        ELSE
+            ms_btw_fct :=  0.0;
+        END_IF;
+        
+        //reset delay time with positive edge of rotation indexer
+        //-------------------------------------------------------
+        IF PDI.XT_ROT_CAM_TRG AND NOT xt_rot_cam_trg_prv OR NOT LT.EXT_ACQ_TRG_ON THEN
+            dly_cnt     :=  0;
+            acq_cnt     :=  0;
+            
+        //increase delay time with cycle time of previous cycle
+        //-----------------------------------------------------
+        ELSE
+            dly_cnt :=  dly_cnt + SY.OB1_PREV_CYCLE;
+        END_IF;
+        
+        //For the facet pic
+        IF LT.EXT_ACQ_TRG_ON AND LT.CAM_ISP_ON THEN
+            dly_cnt_fac_shot:= dly_cnt_fac_shot + SY.OB1_PREV_CYCLE;
+            IF dly_cnt_fac_shot > time_trig_fac THEN
+                next_fac_pic:= next_fac_pic + 1;
+                IF next_fac_pic > 3 THEN
+                    next_fac_pic:=0;
+                END_IF;
+                dly_cnt_fac_shot:=0;
+                do_fac_shot_with_dly:=TRUE;
+            END_IF;
+            
+        ELSE
+            dly_cnt_fac_shot:= 0;
+            next_fac_pic:=-1;
+            do_fac_shot_with_dly:=FALSE;
+            sta_tme_trig_fac_shot:=FALSE;
+            send_fac_shot_msg:=FALSE;
+        END_IF;
+        
+        //store status of rotation indexer of current cycle
+        //-------------------------------------------------
+        xt_rot_cam_trg_prv  :=  PDI.XT_ROT_CAM_TRG;
+        
+        //set rotation triggered acquisition request when delay time over
+        //---------------------------------------------------------------
+        IF (LT.EXT_ACQ_TRG_ON AND (dly_cnt >= (REAL_TO_INT(KYA.CAM_ACQ_DLY) + (acq_cnt * ms_btw_fct)))) THEN
+            //When the fac should be shot after 3 min then look for the right fac and then do the pic
+            IF do_fac_shot_with_dly AND (next_fac_pic = acq_cnt) THEN
+                do_fac_shot_with_dly:=FALSE;
+                sta_tme_trig_fac_shot:=TRUE;
+            END_IF;
+            rot_trg_acq_req :=  true;
+            acq_cnt         :=  acq_cnt + 1;
+        ELSE
+            rot_trg_acq_req := false;
+        END_IF;
+        
+        //If the fac is been triggert by the area between the facettes a time of 1/2 the 1/4 rot time
+        IF sta_tme_trig_fac_shot THEN
+            dly_fac_shot:= dly_fac_shot + SY.OB1_PREV_CYCLE;
+            IF dly_fac_shot >= ms_btw_fct/2 THEN
+                send_fac_shot_msg:=TRUE;
+                dly_fac_shot:=0;
+                sta_tme_trig_fac_shot:=FALSE;
+            END_IF;
+        END_IF;
+    END_IF;
+    
+    //set camera measurement request
+    //------------------------------
+    IF LT.CAM_ISP_ON THEN
+        IF LT.EXT_ACQ_TRG_ON  THEN                  //external acquisition trigger active
+            IF rot_trg_acq_req THEN                 //triggered from rotation indexer, one acquisiton per rotation
+                cam_1_req_msr :=  true;
+            END_IF;
+        ELSIF (CNF.IMG_AQI_TRG = 100)  THEN
+            IF SysTick100ms THEN                    //10Hz
+                cam_1_req_msr :=  true;
+            END_IF;
+        ELSIF (CNF.IMG_AQI_TRG = 200)  THEN
+            IF SysTick200ms THEN                    //5Hz
+                cam_1_req_msr :=  true;
+            END_IF;
+        ELSIF (CNF.IMG_AQI_TRG = 500)  THEN
+            IF SysTick500ms THEN                    //2Hz
+                cam_1_req_msr :=  true;
+            END_IF;
+        ELSIF (CNF.IMG_AQI_TRG = 1000)  THEN
+            IF SysTick1s THEN                       //1Hz
+                cam_1_req_msr :=  true;
+            END_IF;
+        END_IF;
+    ELSE        
+        cam_1_req_msr :=  false;    //reset measurement request
+    END_IF;
+  
+    //write send string
+    //-----------------
+    IF (CAM_1_COM.O_SEND_STAT = 16#0000) AND NOT wait_for_rsp   THEN       //no send task running and response on last request received
+        
+        //switch on image acquisition
+        //---------------------------
+        IF CAM_CONTROL.O_ACQ_ON THEN
+            plc_to_sherlock             :=  'acq_on_';                          //set data 
+            cam_1_send_req              :=  true;                               //set send request
+            wait_for_rsp                :=  true;                               //wait for response
+            CAM_CONTROL.O_ACQ_ON        :=  FALSE;
+        
+        //switch off image acquisition
+        //---------------------------
+        ELSIF CAM_CONTROL.O_ACQ_OFF THEN
+            plc_to_sherlock             :=  'acq_off';                          //set data 
+            cam_1_send_req              :=  true;                               //set send request
+            wait_for_rsp                :=  true;                               //wait for response
+            CAM_CONTROL.O_ACQ_OFF       :=  FALSE;
+        
+        //switch on relative threshold
+        //----------------------------
+        ELSIF CAM_CONTROL.O_THR_REL_ON THEN
+            plc_to_sherlock             :=  'thr_rel';                          //set data 
+            cam_1_send_req              :=  true;                               //set send request
+            wait_for_rsp                :=  true;                               //wait for response
+            CAM_CONTROL.O_THR_REL_ON    :=  FALSE;
+        
+        //switch switch on absolute threshold
+        //-----------------------------------
+        ELSIF CAM_CONTROL.O_THR_ABS_ON THEN
+            plc_to_sherlock             :=  'thr_abs';                          //set data 
+            cam_1_send_req              :=  true;                               //set send request
+            wait_for_rsp                :=  true;                               //wait for response
+            CAM_CONTROL.O_THR_ABS_ON    :=  FALSE;
+        
+        //switch on neck measurement mode for stereo cameras
+        //--------------------------------------------------
+        ELSIF CAM_CONTROL.O_CF_EVAL THEN
+            plc_to_sherlock             :=  'cfit_ne';                          //set data 
+            cam_1_send_req              :=  true;                               //set send request
+            wait_for_rsp                :=  true;                               //wait for response
+            CAM_CONTROL.O_CF_EVAL       :=  FALSE;
+        
+        //switch off neck measurement mode for stereo cameras
+        //---------------------------------------------------
+        ELSIF CAM_CONTROL.O_RAD_PT_EVAL THEN
+            plc_to_sherlock             :=  'pfit_sb';                          //set data 
+            cam_1_send_req              :=  true;                               //set send request
+            wait_for_rsp                :=  true;                               //wait for response
+            CAM_CONTROL.O_RAD_PT_EVAL   :=  FALSE;
+        
+        //ROI coordinate change is requested
+        //----------------------------------
+        ELSIF CAM_CONTROL.O_NEW_ROI_CRD    THEN
+            plc_to_sherlock             :=  CAM_CONTROL.O_ROI_CRD_STRG;         //set data 
+            cam_1_send_req              :=  true;                               //set send request
+            wait_for_rsp                :=  true;                               //wait for response
+            CAM_CONTROL.O_NEW_ROI_CRD   :=  FALSE;                              //reset flag new ROI coordinates
+        
+        //ROI threshold change is requested
+        //---------------------------------
+        ELSIF CAM_CONTROL.O_NEW_ROI_THR  THEN                                   //set data
+            plc_to_sherlock             :=  CAM_CONTROL.O_ROI_THR_STRG;
+            cam_1_send_req              :=  true;                               //set send request
+            wait_for_rsp                :=  true;                               //wait for response
+            CAM_CONTROL.O_NEW_ROI_THR   :=  FALSE;                              //reset flag new ROI coordinates
+        
+        //ROI threshold 2 change is requested
+        //---------------------------------
+        ELSIF CAM_CONTROL.O_NEW_ROI_THR_2  THEN                                 //set data from camera 2
+            plc_to_sherlock             :=  CAM_CONTROL.O_ROI_THR_STRG_2;
+            cam_1_send_req              :=  true;                               //set send request
+            wait_for_rsp                :=  true;                               //wait for response
+            CAM_CONTROL.O_NEW_ROI_THR_2 :=  FALSE;                              //reset flag new ROI coordinates
+            
+        //exposure time change camera 1 is requested
+        //------------------------------------------
+        ELSIF CAM_CONTROL.O_NEW_EXP_TME_CAM_1  THEN                                 //set data
+            plc_to_sherlock                 :=  CAM_CONTROL.O_EXP_TME_CAM_1_STRG;
+            cam_1_send_req                  :=  true;                               //set send request
+            wait_for_rsp                    :=  true;                               //wait for response
+            CAM_CONTROL.O_NEW_EXP_TME_CAM_1 :=  FALSE;                              //reset flag new ROI coordinates
+            
+        //exposure time change camera 2 is requested
+        //------------------------------------------
+        ELSIF CAM_CONTROL.O_NEW_EXP_TME_CAM_2  THEN                                 //set data
+            plc_to_sherlock                 :=  CAM_CONTROL.O_EXP_TME_CAM_2_STRG;
+            cam_1_send_req                  :=  true;                               //set send request
+            wait_for_rsp                    :=  true;                               //wait for response
+            CAM_CONTROL.O_NEW_EXP_TME_CAM_2 :=  FALSE;                              //reset flag new ROI coordinates
+
+        //do a single pic of the facet    
+        ELSIF send_fac_shot_msg THEN
+            CASE next_fac_pic OF 
+                0:plc_to_sherlock       :=  'pic_fac1';                          //set data                    
+                1:plc_to_sherlock       :=  'pic_fac2';                          //set data 
+                2:plc_to_sherlock       :=  'pic_fac3';                          //set data 
+                3:plc_to_sherlock       :=  'pic_fac4';                          //set data 
+            END_CASE;
+            cam_1_send_req              :=  true;                               //set send request
+            wait_for_rsp                :=  true;                               //wait for response
+            send_fac_shot_msg           :=  FALSE;                              //reset flag new ROI coordinates
+        
+        //cyclic measurement is requested
+        //-------------------------------
+        ELSIF cam_1_req_msr THEN     
+            //set plc command string
+            //----------------------
+            IF LT.CAM_MLT THEN
+                plc_to_sherlock    :='mlt_msr';        //melt detection measurement
+            ELSIF LT.CAM_DIP THEN
+                plc_to_sherlock    :='dip_msr';        //dipping detection
+            ELSIF LT.CAM_DIA THEN
+                IF LT.CAM_PRD_1_SEL THEN
+                    plc_to_sherlock    :='dia_rec';    //diameter measurement with rectangle ROI
+                ELSIF LT.CAM_PRD_2_SEL THEN 
+                    plc_to_sherlock    :='dia_msr';    //diameter measurement with segmented circle ROI
+                END_IF;
+            END_IF;
+            
+            cam_1_send_req  :=  true;               //set send request
+            wait_for_rsp    :=  true;               //wait for response
+
+            //reset measurement request
+            //-------------------------
+            cam_1_req_msr       :=  false;          
+        END_IF;    
+    END_IF;
+
+    //call TCP/IP communication of sherlock
+    //-------------------------------------
+    CAM_1_COM  (IO_SEND_REQ         :=  cam_1_send_req,
+                IO_DATA_STR_RECV    :=  cam_1_data_str_recv,
+                I_SEND_CON_ID       :=  CNF.CAM_1_CON_ID_SEND,
+                I_RECV_CON_ID       :=  CNF.CAM_1_CON_ID_RECV,
+                I_CP_ADR            :=  CNF.CP_LADDR,
+                I_DATA_STRING       :=  plc_to_sherlock);
+                
+                cam_1_send_done     :=  CAM_1_COM.O_SEND_DONE;
+                cam_1_send_err      :=  CAM_1_COM.O_SEND_ERR;
+                cam_1_recv_ndr      :=  CAM_1_COM.O_RECV_NDR;
+                cam_1_recv_err      :=  CAM_1_COM.O_RECV_ERR;
+                cam_1_recv_len      :=  CAM_1_COM.O_RECV_LEN;
+                
+                cam_1_send_stat     :=  CAM_1_COM.O_SEND_STAT;
+                cam_1_recv_stat     :=  CAM_1_COM.O_RECV_STAT;
+                
+    DV.NEW_MSR_TEL_RECV :=  FALSE;  //reset new measurement telegram variable            
+        
+    //move data from receive DB to data DB
+    //------------------------------------
+    IF cam_1_data_str_recv THEN
+        retval_blk          :=  BLKMOV(SRCBLK:= BM_CAM_RECV_DB, DSTBLK:= BM_CAM_EVAL_DB);
+        cam_1_data_str_recv :=  false;
+        wait_for_rsp        :=  false;
+
+        //call camera data response evaluation
+        //------------------------------------
+        CAM_1_RSP(  I_CAM_RECV_LEN  :=  cam_1_recv_len,
+                    I_PLC_TO_CAM    :=  plc_to_sherlock);
+                    
+        //status of image acquisition
+        //---------------------------            
+        LT.CAM_ISP_ON :=  CAM_1_RSP.O_ACQ_IS_ON;            
+        
+        //response is melting telegram string
+        //-----------------------------------
+        IF (CAM_1_RSP.O_RSP_STRG = 'mlt=')  THEN
+            mlt_amt_of_blobs    :=  REAL_TO_INT(CAM_1_RSP.O_REAL_VALUE[0]);
+            //stereo camera
+            //-------------
+            IF ((STA.ACT_DVC_CNF_BYTE_2 AND 2#0000_1000) = 2#0000_1000) THEN
+                DIS.S_CAM_1_AVG_BRG :=  CAM_1_RSP.O_REAL_VALUE[1];  //average brightness of rectangle sensor field camera 1 in melting mode
+                DIS.S_CAM_1_MAX_BRG :=  CAM_1_RSP.O_REAL_VALUE[2];  //max brightness of rectangle sensor field camera 1 in melting mode
+                DIS.S_CAM_1_MIN_BRG :=  CAM_1_RSP.O_REAL_VALUE[3];  //min brightness of rectangle sensor field camera 1 in melting mode
+                DIS.S_CAM_2_AVG_BRG :=  CAM_1_RSP.O_REAL_VALUE[4];  //average brightness of rectangle sensor field camera 2 in melting mode
+                DIS.S_CAM_2_MAX_BRG :=  CAM_1_RSP.O_REAL_VALUE[5];  //max brightness of rectangle sensor field camera 2 in melting mode
+                DIS.S_CAM_2_MIN_BRG :=  CAM_1_RSP.O_REAL_VALUE[6];  //min brightness of rectangle sensor field camera 2 in melting mode
+            END_IF;
+            dip_int_on_line     :=  0.0;
+            dia_cir_fit         :=  0.0;
+            dia_pts_incl        :=  0.0;
+            mlt_vib_dist        :=  0.0;
+            dia_line_msr        :=  0.0;
+            
+            DV.NEW_MSR_TEL_RECV :=  TRUE;   //set new measurement telegram variable          
+        //response is dipping telegram string
+        //-----------------------------------
+        ELSIF (CAM_1_RSP.O_RSP_STRG = 'dip=')  THEN
+            mlt_amt_of_blobs    :=  0;
+            dip_int_on_line     :=  CAM_1_RSP.O_REAL_VALUE[0] / max_pix_intensity * 100.0;
+            dia_cir_fit         :=  0.0;
+            dia_pts_incl        :=  0.0;
+            mlt_vib_dist        :=  0.0;
+            dia_line_msr        :=  0.0;
+            DIS.S_CAM_1_AVG_BRG :=  0.0;
+            DIS.S_CAM_1_MAX_BRG :=  0.0;
+            DIS.S_CAM_1_MIN_BRG :=  0.0;
+            DIS.S_CAM_2_AVG_BRG :=  0.0;
+            DIS.S_CAM_2_MAX_BRG :=  0.0;
+            DIS.S_CAM_2_MIN_BRG :=  0.0;
+            
+            DV.NEW_MSR_TEL_RECV :=  TRUE;   //set new measurement telegram variable
+        //response is diameter telegram string
+        //-----------------------------------
+        ELSIF (CAM_1_RSP.O_RSP_STRG = 'dia=')  THEN
+            mlt_amt_of_blobs    :=  0;
+            dip_int_on_line     :=  0.0;
+            auto_rst_cnt        :=  0;
+            //single or stereo mode
+            //---------------------
+            IF LT.CAM_PRD_2_SEL THEN 
+                //single camera mode
+                //------------------
+                IF ((STA.ACT_DVC_CNF_BYTE_1 AND 2#0000_0001) = 2#0000_0001) THEN
+                    dia_cir_fit             :=  CAM_1_RSP.O_REAL_VALUE[0] / PAR_MAIN.MCONST_DIA_CAL_P2 * 100;
+                    dia_pts_incl            :=  CAM_1_RSP.O_REAL_VALUE[1];
+                    mlt_vib_dist            :=  CAM_1_RSP.O_REAL_VALUE[2];
+                    dia_line_msr            :=  0.0;
+                    ctr_x_crd_cir_fit       :=  CAM_1_RSP.O_REAL_VALUE[3];
+                    ctr_y_crd_cir_fit       :=  CAM_1_RSP.O_REAL_VALUE[4];
+                //stereo camera mode
+                //------------------
+                ELSE
+                    AV.S_CAM_1_ACT_DIA_CF   :=  CAM_1_RSP.O_REAL_VALUE[0];  //measured diameter of circle fit of stereo camera 1 - neck phase - unit is pixel
+                    AV.S_CAM_2_ACT_DIA_CF   :=  CAM_1_RSP.O_REAL_VALUE[1];  //measured diameter of circle fit of stereo camera 2 - neck phase - unit is pixel
+                    AV.S_CAM_1_ACT_RAD_PT   :=  CAM_1_RSP.O_REAL_VALUE[2];  //average radius point (x- coordinate) of stereo camera 1 - shoulder and body phase - unit is pixel
+                    AV.S_CAM_2_ACT_RAD_PT   :=  CAM_1_RSP.O_REAL_VALUE[3];  //average radius point (x- coordinate) of stereo camera 2 - shoulder and body phase - unit is pixel
+                    DIS.S_CAM_1_AVG_BRG     :=  CAM_1_RSP.O_REAL_VALUE[4];  //average brightness of rake sensor field camera 1 in diameter mode
+                    DIS.S_CAM_1_MAX_BRG     :=  CAM_1_RSP.O_REAL_VALUE[5];  //max brightness of rake sensor field camera 1 in diameter mode
+                    DIS.S_CAM_1_MIN_BRG     :=  CAM_1_RSP.O_REAL_VALUE[6];  //min brightness of rake sensor field camera 1 in diameter mode
+                    DIS.S_CAM_2_AVG_BRG     :=  CAM_1_RSP.O_REAL_VALUE[7];  //average brightness of rake sensor field camera 2 in diameter mode
+                    DIS.S_CAM_2_MAX_BRG     :=  CAM_1_RSP.O_REAL_VALUE[8];  //max brightness of rake sensor field camera 2 in diameter mode
+                    DIS.S_CAM_2_MIN_BRG     :=  CAM_1_RSP.O_REAL_VALUE[9];  //min brightness of rake sensor field camera 2 in diameter mode
+                    AV.S_CAM_1_ACT_CF_CTR_X :=  CAM_1_RSP.O_REAL_VALUE[10]; //x-coordinate of center of circle fit stereo camera 1
+                    AV.S_CAM_1_ACT_CF_CTR_Y :=  CAM_1_RSP.O_REAL_VALUE[11]; //y-coordinate of center of circle fit stereo camera 1
+                    AV.S_CAM_2_ACT_CF_CTR_X :=  CAM_1_RSP.O_REAL_VALUE[12]; //x-coordinate of center of circle fit stereo camera 2
+                    AV.S_CAM_2_ACT_CF_CTR_Y :=  CAM_1_RSP.O_REAL_VALUE[13]; //y-coordinate of center of circle fit stereo camera 2                        
+                END_IF;
+            //line sensor
+            //-----------    
+            ELSIF LT.CAM_PRD_1_SEL THEN 
+                dia_cir_fit         :=  CAM_1_RSP.O_REAL_VALUE[0] / PAR_MAIN.MCONST_DIA_CAL_P2 * 100;
+                mlt_vib_dist        :=  CAM_1_RSP.O_REAL_VALUE[1];
+                dia_line_msr        :=  CAM_1_RSP.O_REAL_VALUE[2] / PAR_MAIN.MCONST_DIA_CAL_P1 * 100;          
+                ctr_x_crd_cir_fit   :=  CAM_1_RSP.O_REAL_VALUE[3];
+                ctr_y_crd_cir_fit   :=  CAM_1_RSP.O_REAL_VALUE[4];
+            END_IF;
+             
+            DV.NEW_MSR_TEL_RECV :=  TRUE;   //set new measurement telegram variable          
+        END_IF;
+    END_IF;
+    
+    //detect process phase shift
+    //--------------------------
+    IF (APC.STATUS <> apc_status) THEN
+        phase_shift :=  true;
+    ELSE
+        phase_shift :=  false;
+    END_IF;
+    
+    apc_status  := APC.STATUS;  //store phase status of current cycle
+    
+    //built camera interlock flag 
+    //---------------------------
+    itl_cam_flt :=  SysOffDelay(DIN     := phase_shift,         // input
+                                SetTime := 30,                  // delay time
+                                ActTime := itl_cam_flt_dly,     // actual time value
+                                Tick    := SysTick100ms);
+    
+    //set camera fault messages
+    //-------------------------
+    FLT.CAM_DATA_RECV   :=  SysOnDelay (DIN     := CAM_1_RSP.O_RSP_FLT,     //generell response error - not expected telegramm received
+                                        SetTime := 40,                      // delay time
+                                        ActTime := cam_rsp_flt_dly,         // actual time value
+                                        Tick    := SysTick100ms);
+    
+    FLT.CAM_ROI_OUTSIDE :=  CAM_1_RSP.O_ROI_OUTSIDE_FLT;        //ROI outside frame
+    FLT.DVT_IMG_SEN     :=  CAM_1_RSP.O_ACQ_ERROR;              //at least one camera failed with aqcuisiton - no measurement possible    
+    
+    IF APC.AUTOMATIC    THEN 
+        //no measureable contrast found
+        //-----------------------------
+        FLT.CAM_NO_CTR_FND  :=  SysOnDelay (DIN     := CAM_1_RSP.O_COMMON_ERROR AND NOT itl_cam_flt,    // fault input
+                                            SetTime := 10,                                              // delay time
+                                            ActTime := cam_no_ctr_fnd_dly,                              // actual time value
+                                            Tick    := SysTick100ms);
+    ELSE
+        FLT.CAM_NO_CTR_FND  :=  FALSE;
+        cam_no_ctr_fnd_dly  :=  0;
+    END_IF;
+    
+    //set alarm message no data from camera received
+    //----------------------------------------------
+    FLT.CAM_NDR_TOUT    :=  SysOnDelay (DIN     := wait_for_rsp,            // fault input
+                                        SetTime := 300,                      // delay time
+                                        ActTime := wait_for_rsp_dly,        // actual time value
+                                        Tick    := SysTick100ms);
+                                          
+    //automatic reset of waiting flag while diameter measurement is active - workaround - max. 5 times
+    //------------------------------------------------------------------------------------------------            
+    IF (plc_to_sherlock ='dia_msr') AND (wait_for_rsp_dly >= 10) AND (auto_rst_cnt < 5)  THEN
+        wait_for_rsp    :=  false;              //reset flag - new measurement can be triggered
+        auto_rst_cnt    :=  auto_rst_cnt + 1;   //flag is resetted when new data string is received
+    END_IF;
+    
+    //abort crystal down controlled by camera in dipping phase
+    //--------------------------------------------------------
+    IF ((APC.STATUS = APC.DIPPING) AND NOT CNF.CONF_SEED_REF_LSR) THEN
+        IF DC.XT_LFT_DN AND DC.XT_LFT_FST  THEN     //crystal down with fast speed
+            IF FLT.CAM_NDR_TOUT THEN
+                DV.ARB_XT_DN_BY_CAM     := TRUE;    //set flag abort crystal down by camera 
+                FLT.CAM_DI_XT_DN_ARB    := TRUE;    //set alarm message crystal down by camera aborted
+            END_IF;
+        END_IF;
+    ELSE   
+        DV.ARB_XT_DN_BY_CAM     := FALSE;    //reset flag abort crystal down by camera 
+        FLT.CAM_DI_XT_DN_ARB    := FALSE;    //reset alarm message crystal down by camera aborted
+    END_IF;
+        
+    //switch heater temperature or crucible rotation to semi automatic mode when camera failed
+    //----------------------------------------------------------------------------------------
+    IF DC.CTL_GRW_RTE_ON THEN                           //growth control requested from auto mode
+        IF SY.CTL_GRW_RTE_ON THEN                       //growth control is on
+            FLT.CAM_HTR_1_IN_SMI        := FALSE;       //reset alarm message heater 1 in semi automatic 
+            FLT.CAM_CRUC_ROT_IN_SMI     := FALSE;       //reset alarm message crucible rotation in semi automatic
+            
+            IF FLT.CAM_NDR_TOUT THEN
+                //shoulder growth control - crucible rotation control parameterized
+                //-----------------------------------------------------------------
+                IF (PAR_MAIN.SH_CRUC_ROT_CTL_ON = 1.0) THEN   
+                    DV.CRUC_ROT_SMI               := TRUE;    //set flag growth control off - switch crucible rotation to semi mode
+                    FLT.CAM_CRUC_ROT_IN_SMI       := TRUE;    //set alarm message growth rate control off and crucible rotation in semi mode 
+                //shoulder growth control - standard configuration
+                //------------------------------------------------
+                ELSE 
+                    DV.HTR_1_SMI                := TRUE;    //set flag growth control off - switch heater temperature to semi mode
+                    FLT.CAM_HTR_1_IN_SMI        := TRUE;    //set alarm message growth rate control off and heater temperature in semi mode 
+                END_IF;
+            END_IF;
+        ELSE                                                //growth control is off
+            DV.HTR_1_SMI    := FALSE;                       //reset flag growth control off - switch heater temperature to semi mode
+            DV.CRUC_ROT_SMI := FALSE;                       //reset flag growth control off - switch crucible rotation to semi mode
+        END_IF;
+    ELSE
+        FLT.CAM_HTR_1_IN_SMI        := FALSE;       //reset alarm message heater 1 in semi automatic 
+        FLT.CAM_CRUC_ROT_IN_SMI     := FALSE;       //reset alarm message crucible rotation in semi automatic
+        DV.HTR_1_SMI                := FALSE;       //reset flag growth control off - switch heater temperature to semi mode
+        DV.CRUC_ROT_SMI             := FALSE;       //reset flag growth control off - switch crucible rotation to semi mode
+    END_IF;
+  
+    //switch crystal lift to semi automatic mode when camera failed
+    //-------------------------------------------------------------
+    IF DC.CTL_DIA_ON THEN                           //diameter control requeseted from auto mode
+        IF SY.CTL_DIA_ON THEN                       //diameter control is on
+            FLT.CAM_DIA_CTRL_OFF    := FALSE;       //reset alarm message 
+            
+            IF FLT.CAM_NDR_TOUT THEN
+                DV.XT_LFT_SMI           := TRUE;    //set flag dia control off - switch crystal lift to semi mode 
+                FLT.CAM_DIA_CTRL_OFF    := TRUE;    //set alarm message 
+            END_IF;
+        ELSE                                        //dia control is off
+            DV.XT_LFT_SMI   := FALSE;               //reset flag dia control off
+        END_IF;
+    ELSE
+        FLT.CAM_DIA_CTRL_OFF    := FALSE;           //reset alarm message dia control off
+        DV.XT_LFT_SMI           := FALSE;           //reset flag dia control off
+    END_IF;
+    
+    //set manual init request
+    //-----------------------
+    IF FLT.CAM_NDR_TOUT THEN 
+        IF DV.CAM_INIT THEN
+            wait_for_rsp    :=  false;
+        END_IF;
+    END_IF;
+    
+    //evaluate junk detection sensor result
+    //-------------------------------------
+    IF LT.CAM_ISP_ON AND DV.CAM_MLT_CHK AND LT.CAM_MLT THEN
+        IF (mlt_amt_of_blobs = 0) THEN  //amount of blobs = 0
+            IF (SysTick1s AND (i < 70)) THEN
+                i := i + 1;
+            END_IF;
+        ELSE 
+            i := 0;
+        END_IF;
+        
+        IF (i > 60) THEN    //delay setting of complete flag
+            DV.CAM_MELT_COMPLETE    :=  TRUE;
+        ELSE                       
+            DV.CAM_MELT_COMPLETE    :=  FALSE;
+        END_IF;
+    ELSE 
+        DV.CAM_MELT_COMPLETE    :=  FALSE;
+        i                       :=  0;
+    END_IF;
+  
+    //evaluate seed detection sensor result
+    //-------------------------------------
+    IF LT.CAM_ISP_ON AND LT.CAM_DIP THEN
+        IF (dip_int_on_line < 100.0) THEN  //bright area of sensor < 100.0 %
+            DV.CAM_DIP_COMPLETE :=  TRUE;
+        ELSE                       
+            DV.CAM_DIP_COMPLETE :=  FALSE;
+        END_IF;
+    ELSE 
+        DV.CAM_DIP_COMPLETE :=  FALSE;
+    END_IF;
+    
+    //enable evaluation of diameter signal
+    //------------------------------------
+    IF (SY.CTL_DIA_ON OR (SY.CTL_GRW_RTE_ON AND NOT LT.SMI_HTR_1_ON)) AND LT.CAM_ISP_ON THEN
+        IF (n > 3)  THEN
+            enb_dia_eval    :=  true;       //enable diameter evaluation delayed
+        ELSE
+            IF SysTick1s    THEN
+                n   :=  n + 1;
+            END_IF;
+        END_IF;
+    ELSE
+        enb_dia_eval    :=  false;          //disable diameter evaluation
+        n   :=  0;
+    END_IF;
+    
+    (*
+    //do evaluation of diameter signal
+    //--------------------------------         
+    IF enb_dia_eval THEN    //check deviation of +/- 3mm        
+        IF DV.NEW_MSR_TEL_RECV THEN 
+            IF ((dia_cir_fit > (dia_cir_fit_old + 3.0)) OR (dia_cir_fit < (dia_cir_fit_old - 3.0))) THEN
+                IF (m >= 19)  THEN
+                    FLT.CAM_MSR_INSTAB  :=  TRUE;       //fault message after twenty measurements
+                    m                   :=  0;
+                ELSE
+                    dia_cir_fit :=  dia_cir_fit_old;    //overwrite diameter with last valid diameter
+                    m           :=  m + 1;
+                END_IF;
+            ELSE
+                m                   :=  0;
+                FLT.CAM_MSR_INSTAB  :=  FALSE;
+            END_IF;
+        END_IF;
+    ELSE
+        m                   :=  0;
+        FLT.CAM_MSR_INSTAB  :=  FALSE;
+    END_IF;     
+    *)
+           
+    //store last valid diameter
+    //-------------------------
+    dia_cir_fit_old     :=  dia_cir_fit;
+    
+    //set camera outputs related to measurement mode
+    //----------------------------------------------
+    IF NOT LT.CAM_ISP_ON   THEN                                             //camera off
+        AV.INP_BLOBS        :=  0.0;
+        AV.INP_BGT_AREA     :=  0.0;  
+        AV.INP_XT_DIA       :=  0.0; 
+        AV.ACT_DIA_PTS_INCL :=  0.0; 
+        AV.ACT_MLT_VIB_DIST :=  0.0;
+        AV.ACT_PRD_2_CTR_X  :=  0.0;
+        AV.ACT_PRD_2_CTR_Y  :=  0.0;
+        no_ctr_fnd          :=  false;                                      //reset fault flag no contrast found
+    
+    ELSIF LT.CAM_MLT   THEN                                                 //melting detection
+        AV.INP_BLOBS        :=  mlt_amt_of_blobs;
+        AV.INP_BGT_AREA     :=  0.0;  
+        AV.INP_XT_DIA       :=  0.0; 
+        AV.ACT_DIA_PTS_INCL :=  0.0;
+        AV.ACT_MLT_VIB_DIST :=  mlt_vib_dist;
+        AV.ACT_PRD_2_CTR_X  :=  0.0;
+        AV.ACT_PRD_2_CTR_Y  :=  0.0;
+        no_ctr_fnd          :=  false;                                      //reset fault flag no contrast found
+        
+    ELSIF LT.CAM_DIP THEN                                                   //dipping detection
+        AV.INP_BLOBS        :=  0.0;
+        AV.INP_BGT_AREA     :=  dip_int_on_line;  
+        AV.INP_XT_DIA       :=  0.0; 
+        AV.ACT_DIA_PTS_INCL :=  0.0;
+        AV.ACT_MLT_VIB_DIST :=  mlt_vib_dist;
+        AV.ACT_PRD_2_CTR_X  :=  0.0;
+        AV.ACT_PRD_2_CTR_Y  :=  0.0;
+        no_ctr_fnd          :=  false;                                      //reset fault flag no contrast found
+        
+    ELSIF LT.CAM_DIA THEN                                                   //diameter measurement
+        AV.INP_BLOBS        :=  0.0;
+        AV.INP_BGT_AREA     :=  0.0;  
+        AV.ACT_MLT_VIB_DIST :=  mlt_vib_dist;
+        
+        //two point measurement with rectangle ROI
+        //----------------------------------------        
+        IF LT.CAM_PRD_1_SEL AND (REAL_TO_INT(PAR_MAIN.MCONST_DIA_MSR_MTH) = 0) THEN                                                           //two point measurement
+            AV.INP_XT_DIA       :=  dia_line_msr - AC.XT_MENISCUS;      //write actual value diameter
+            AV.ACT_PRD_2_CTR_X  :=  0.0;
+            AV.ACT_PRD_2_CTR_Y  :=  0.0;
+        
+        //circle fit with seqmented circle or rectangle ROI
+        //-------------------------------------------------
+        ELSE
+            IF PAR_MAIN.CTL_DIA_COR_SEL = 0 THEN
+                AV.INP_XT_DIA       :=  dia_cir_fit - AC.XT_MENISCUS;
+                AV.INP_CAL_XT_DIA   :=  dia_cal_cir_fit - AC.XT_MENISCUS;
+            
+            ELSIF PAR_MAIN.CTL_DIA_COR_SEL = 1 THEN // 1 = Corr. with melt lvl so the melt lvl is been used to correct the measured diameter 
+                AV.INP_XT_DIA       :=  dia_cir_fit - AC.XT_MENISCUS + (PAR_MAIN.MCONST_DIA_COR_MLT_LVL * AV.ACT_MLT_LVL);               //write actual value diameter
+                AV.INP_CAL_XT_DIA   :=  dia_cal_cir_fit - AC.XT_MENISCUS + (PAR_MAIN.MCONST_DIA_COR_MLT_LVL * AV.ACT_MLT_LVL);               //write actual value diameter
+            ELSIF PAR_MAIN.CTL_DIA_COR_SEL = 2 THEN // 1 = Corr. with gap offset size so the measured diameter can be correct by an offset
+                AV.INP_XT_DIA       :=  dia_cir_fit - AC.XT_MENISCUS + (PAR_MAIN.MCONST_DIA_COR_GAP_DEV * ((-1.0)*DIS.ACT_MLT_GAP_OFFS));//write actual value diameter
+                AV.INP_CAL_XT_DIA   :=  dia_cal_cir_fit - AC.XT_MENISCUS + (PAR_MAIN.MCONST_DIA_COR_MLT_LVL * ((-1.0)*DIS.ACT_MLT_GAP_OFFS)); //write actual value diameter
+            ELSE
+                PAR_MAIN.CTL_DIA_COR_SEL := 0;
+                AV.INP_XT_DIA       :=  dia_cir_fit - AC.XT_MENISCUS;
+                AV.INP_CAL_XT_DIA   :=  dia_cal_cir_fit - AC.XT_MENISCUS;
+            END_IF; 
+            
+            AV.ACT_DIA_PTS_INCL :=  dia_pts_incl;
+            AV.ACT_PRD_2_CTR_X  :=  ctr_x_crd_cir_fit;
+            AV.ACT_PRD_2_CTR_Y  :=  ctr_y_crd_cir_fit;
+        END_IF;
+    END_IF;
+    
+    //set display values
+    //------------------
+    DIS.ACT_AMT_BLOBS           :=  AV.INP_BLOBS;   
+    DIS.ACT_PER_BGT_AREA        :=  AV.INP_BGT_AREA;  
+    DIS.ACT_PRD_2_CTR_X         :=  AV.ACT_PRD_2_CTR_X;
+    DIS.ACT_PRD_2_CTR_Y         :=  AV.ACT_PRD_2_CTR_Y;
+    DIS.ACT_DIA_PTS_INCL        :=  AV.ACT_DIA_PTS_INCL;
+    
+END_FUNCTION_BLOCK
+    

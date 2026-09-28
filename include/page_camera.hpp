@@ -44,6 +44,7 @@ namespace pva
         void startOnlineCameras();
         void stopOnlineCameras();
         void triggerOnlineCameras();
+        void applyPlcExposure(const QString &userId, double exposureUs);
         void onFrame(const QString &userId, const cv::Mat &frame, qint64 timestampNs);
         void onCaptureFailed(const QString &userId, const QString &message);
         void runPreviewPipeline();
@@ -66,6 +67,7 @@ namespace pva
         QString graphPath_;
         QHash<QString, qint64> lastExposureAdjustNs_;
         QHash<QString, qint64> lastExposurePublishNs_;
+        QHash<QString, double> plcExposureOverrides_;
         QElapsedTimer clock_;
         qint64 lastManualPreviewNs_{};
         bool cameraDiscoveryRunning_{false};

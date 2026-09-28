@@ -31,6 +31,21 @@ int main()
     check(SherlockProtocol::toPlcNumber(20000.0) == SherlockProtocol::MaximumPlcNumber,
           "large output clamps to protocol maximum");
 
+    const auto roiCommand = SherlockProtocol::parseCommand(
+        "dia_crd=100;200;300;400;500;600;700;800\r\n", &error);
+    check(roiCommand.has_value(), "ROI command parses");
+    const auto roi = roiCommand
+                         ? SherlockProtocol::parseScaledParameters(*roiCommand, 8, &error)
+                         : std::optional<std::vector<double>>{};
+    check(roi.has_value(), "scaled ROI parameters parse");
+    check(roi && roi->front() == 1.0 && roi->back() == 8.0, "scaled ROI values");
+    check(roiCommand && !SherlockProtocol::parseScaledParameters(*roiCommand, 7, &error),
+          "wrong parameter count rejected");
+
+    const auto invalidCommand = SherlockProtocol::parseCommand("dia_thr=not-a-number\r\n", &error);
+    check(invalidCommand && !SherlockProtocol::parseScaledParameters(*invalidCommand, 1, &error),
+          "invalid scaled parameter rejected");
+
     const QByteArray payload = "dip=1234";
     const QByteArray packet = SherlockProtocol::framePayload(payload, &error);
     check(packet.size() == payload.size() + 5, "ordinary frame size");

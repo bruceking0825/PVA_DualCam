@@ -7,6 +7,7 @@
 #include <array>
 #include <memory>
 #include <optional>
+#include <vector>
 
 class QTimer;
 class QLabel;
@@ -67,8 +68,11 @@ namespace pva
         bool running_{false};
         bool activeOnline_{false};
         bool acquisitionEnabled_{true};
+        bool plcRelativeThreshold_{false};
         QString pendingPlcCommand_;
         double plcRefreshRate_{1.0};
+        // 保存旧Sherlock运行时参数；未映射到新算法的ROI仍用于协议兼容和诊断。
+        QHash<QString, std::vector<double>> plcParameters_;
         struct OnlineFrame { qint64 timestampNs{}; cv::Mat image; };
         QHash<QString, OnlineFrame> onlineFrames_;
         struct ViewInfo
@@ -97,6 +101,7 @@ namespace pva
         void startPlc();
         void stopPlc();
         void sendPlcPayload(const QByteArray &payload);
+        bool handleSherlockSettingCommand(const pva::SherlockCommand &command);
         void applyStageToUi();
     };
 }

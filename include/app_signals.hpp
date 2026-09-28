@@ -17,6 +17,7 @@ namespace pva
         void onlineCameraStartRequested();
         void onlineCameraStopRequested();
         void onlineCameraTriggerRequested();
+        void plcCameraExposureRequested(const QString &userId, double exposureUs);
         void onlineStageChanged(int stage);
         void onlineCameraStarted();
         void onlineCameraStopped();

@@ -192,6 +192,7 @@ namespace pva
         connect(&appSignals, &AppSignals::onlineCameraStartRequested, this, &PageCamera::startOnlineCameras);
         connect(&appSignals, &AppSignals::onlineCameraStopRequested, this, &PageCamera::stopOnlineCameras);
         connect(&appSignals, &AppSignals::onlineCameraTriggerRequested, this, &PageCamera::triggerOnlineCameras);
+        connect(&appSignals, &AppSignals::plcCameraExposureRequested, this, &PageCamera::applyPlcExposure);
         connect(&appSignals, &AppSignals::onlineStageChanged, this, [this](int stage)
                 { onlineStage_ = MeasurementStage(stage); });
         connect(&appSignals, &AppSignals::appClose, this, &PageCamera::closeAll);
@@ -480,6 +481,7 @@ namespace pva
         if (streamOwner_ != "online")
             return;
         saveRememberedExposures();
+        plcExposureOverrides_.clear();
         closeAll();
         emit AppSignals::instance().onlineCameraStopped();
     }
@@ -499,6 +501,29 @@ namespace pva
                 return;
             }
         }
+    }
+
+    void PageCamera::applyPlcExposure(const QString &userId, double exposureUs)
+    {
+        auto *value = camera(userId);
+        if (!value || !value->isOpen())
+        {
+            setStatus(false, "PLC exposure target is not open: " + userId);
+            return;
+        }
+
+        QString error;
+        if (!value->setExposure(exposureUs, &error))
+        {
+            setStatus(false, QString("Apply PLC exposure to %1 failed: %2").arg(userId, error));
+            return;
+        }
+
+        // PLC的exptme命令具有最高优先级；收到后停止该相机本轮在线自动曝光覆盖。
+        plcExposureOverrides_.insert(userId, exposureUs);
+        emit AppSignals::instance().cameraExposureChanged(userId, exposureUs);
+        saveRememberedExposures();
+        refreshUi();
     }
 
     void PageCamera::onFrame(const QString &userId, const cv::Mat &frame, qint64 timestampNs)
@@ -536,6 +561,8 @@ namespace pva
 
     void PageCamera::adjustAutoExposure(DalsaCamera &value, const cv::Mat &frame, qint64 timestampNs)
     {
+        if (plcExposureOverrides_.contains(value.userId()))
+            return;
         if (streamOwner_ != "online" || !config_.camera.autoExposureEnabled ||
             (onlineStage_ != MeasurementStage::Idle && onlineStage_ != MeasurementStage::Neck))
             return;

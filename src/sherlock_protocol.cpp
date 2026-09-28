@@ -56,6 +56,38 @@ namespace pva
         return double(value) / Scale;
     }
 
+    std::optional<std::vector<double>> SherlockProtocol::parseScaledParameters(
+        const SherlockCommand &command, qsizetype expectedCount, QString *error)
+    {
+        if (command.parameters.size() != expectedCount)
+        {
+            if (error)
+                *error = QString("%1 requires %2 parameters, got %3")
+                             .arg(command.name)
+                             .arg(expectedCount)
+                             .arg(command.parameters.size());
+            return {};
+        }
+
+        std::vector<double> values;
+        values.reserve(size_t(expectedCount));
+        for (qsizetype index = 0; index < command.parameters.size(); ++index)
+        {
+            const auto value = fromPlcNumber(command.parameters.at(index));
+            if (!value)
+            {
+                if (error)
+                    *error = QString("%1 parameter %2 is not a valid PLC number: %3")
+                                 .arg(command.name)
+                                 .arg(index + 1)
+                                 .arg(command.parameters.at(index));
+                return {};
+            }
+            values.push_back(*value);
+        }
+        return values;
+    }
+
     QByteArray SherlockProtocol::scaledPayload(const QByteArray &name, const std::vector<double> &values)
     {
         QByteArray payload = name;

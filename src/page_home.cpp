@@ -19,6 +19,7 @@
 #include <QTreeWidgetItem>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+#include <algorithm>
 #include <cmath>
 #include <QDebug>
 
@@ -150,7 +151,7 @@ namespace pva
                 {
                     if (pendingPlcCommand_.isEmpty())
                         return;
-                    sendPlcPayload("exe_err=measurement timeout");
+                    sendPlcPayload("exe_err=Commn err");
                     log("PLC measurement timed out after 5000 ms");
                     pendingPlcCommand_.clear();
                     onlineFrames_.clear();
@@ -279,7 +280,7 @@ namespace pva
                         if (!pendingPlcCommand_.isEmpty())
                         {
                             plcMeasurementTimeout_->stop();
-                            sendPlcPayload("exe_err=" + m.toLatin1());
+                            sendPlcPayload("exe_err=Commn err");
                             pendingPlcCommand_.clear();
                         } });
             worker_->start();
@@ -452,7 +453,7 @@ namespace pva
             if (r.valid)
                 sendPlcPayload(legacyMeasurementPayload(pendingPlcCommand_, r));
             else
-                sendPlcPayload("exe_err=" + QByteArray::fromStdString(r.message));
+                sendPlcPayload("exe_err=Commn err");
             pendingPlcCommand_.clear();
         }
         viewInfo_[0].light = r.diagnostics.contains("light_camera1") ? r.diagnostics.at("light_camera1").toDouble() : 0.0;
@@ -506,7 +507,7 @@ namespace pva
             if (!pendingPlcCommand_.isEmpty())
             {
                 plcMeasurementTimeout_->stop();
-                sendPlcPayload("exe_err=stereo frame timestamp mismatch");
+                sendPlcPayload("exe_err=Acq fails");
                 pendingPlcCommand_.clear();
             }
             return;
@@ -543,7 +544,7 @@ namespace pva
         if (!pendingPlcCommand_.isEmpty())
         {
             plcMeasurementTimeout_->stop();
-            sendPlcPayload("exe_err=" + message.toLatin1());
+            sendPlcPayload("exe_err=Acq fails");
             pendingPlcCommand_.clear();
         }
         stopRuntime();
@@ -648,6 +649,89 @@ namespace pva
             log(error);
     }
 
+    bool PageHome::handleSherlockSettingCommand(const SherlockCommand &command)
+    {
+        const QString &name = command.name;
+        const bool isModeCommand = name == "thr_rel" || name == "thr_abs";
+        const bool isActionCommand = name == "cfit_ne" || name == "pfit_sb" ||
+                                     name == "pic_fac1" || name == "pic_fac2" ||
+                                     name == "pic_fac3" || name == "pic_fac4";
+        if (isModeCommand || isActionCommand)
+        {
+            if (!command.parameters.isEmpty())
+            {
+                sendPlcPayload("err_prm=" + name.toLatin1() + " requires no parameters");
+                return true;
+            }
+            if (isModeCommand)
+            {
+                plcRelativeThreshold_ = name == "thr_rel";
+                log(QString("PLC diameter threshold mode: %1")
+                        .arg(plcRelativeThreshold_ ? "relative" : "absolute"));
+            }
+            sendPlcPayload(name.toLatin1() + "=ok");
+            return true;
+        }
+
+        int expectedCount = -1;
+        if (name == "mlt_crd")
+            expectedCount = 6;
+        else if (name == "dia_crd")
+            expectedCount = 8;
+        else if (name == "rec_crd")
+            expectedCount = 4;
+        else if (name == "dip_crd" || name == "vib_crd")
+            expectedCount = 3;
+        else if (name == "mlt_thr" || name == "dip_thr" || name == "dia_thr" ||
+                 name == "diathr2" || name == "rec_thr" || name == "vib_thr" ||
+                 name == "exptme1" || name == "exptme2")
+            expectedCount = 1;
+        if (expectedCount < 0)
+            return false;
+
+        QString error;
+        const auto values = SherlockProtocol::parseScaledParameters(command, expectedCount, &error);
+        if (!values)
+        {
+            sendPlcPayload("err_prm=" + error.toLatin1());
+            return true;
+        }
+        plcParameters_.insert(name, *values);
+
+        if (name == "dia_thr" || name == "diathr2")
+        {
+            // PLC给出0..100%的灰度阈值；旧Sherlock将其换算到0..255。
+            const double intensity = std::clamp(values->front() * 255.0 / 100.0, 0.0, 255.0);
+            if (name == "dia_thr")
+                config_.neck.gradientThresholdCamera1 = intensity;
+            else
+                config_.neck.gradientThresholdCamera2 = intensity;
+            if (worker_)
+                worker_->updateConfig(config_);
+        }
+        else if (name == "exptme1" || name == "exptme2")
+        {
+            // 与Sherlock 4.14一致：PLC值为3000 us基准曝光的百分比。
+            const double exposureUs = 3000.0 * values->front() / 100.0;
+            if (exposureUs <= 0.0)
+            {
+                sendPlcPayload("err_prm=exposure must be positive");
+                return true;
+            }
+            const bool first = name == "exptme1";
+            if (first)
+                config_.camera.initialExposureCamera1 = exposureUs;
+            else
+                config_.camera.initialExposureCamera2 = exposureUs;
+            emit AppSignals::instance().plcCameraExposureRequested(
+                first ? CameraRole::Cam1 : CameraRole::Cam2, exposureUs);
+        }
+
+        log(QString("PLC setting %1 accepted (%2 parameter(s))").arg(name).arg(expectedCount));
+        sendPlcPayload(name.toLatin1() + "=ok");
+        return true;
+    }
+
     void PageHome::onSherlockCommand(const SherlockCommand &command)
     {
         const QString name = command.name;
@@ -703,18 +787,15 @@ namespace pva
             sendPlcPayload("rfr_set=ok");
             return;
         }
-        if (name == "cfit_ne" || name == "pfit_sb")
-        {
-            sendPlcPayload(name.toLatin1() + "=ok");
+        if (handleSherlockSettingCommand(command))
             return;
-        }
 
         if (name != "dia_msr" && name != "dia_rec" && name != "dip_msr" && name != "mlt_msr")
         {
             sendPlcPayload("err_unk=" + name.toLatin1());
             return;
         }
-        if (!acquisitionEnabled_ || !running_ || !activeOnline_ || !worker_)
+        if (!acquisitionEnabled_ || !running_ /*|| !activeOnline_*/ || !worker_)
         {
             sendPlcPayload("err_lck=Measurement are disabled");
             return;
