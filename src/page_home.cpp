@@ -737,9 +737,9 @@ namespace pva
         const QString name = command.name;
         qDebug().noquote()
             << "PLC raw size =" << command.raw.size()
-            << "raw hex =" << command.raw.toHex(' ')
-            << "name size =" << name.size()
-            << "name hex =" << name.toLatin1().toHex(' ');
+            << "raw ASCII =" << QString::fromLatin1(command.raw);
+            // << "name size =" << name.size()
+            // << "name ASCII =" << name;
 
         log("PLC -> " + QString::fromLatin1(command.raw));
 
@@ -802,16 +802,18 @@ namespace pva
         }
         if (!pendingPlcCommand_.isEmpty())
         {
-            sendPlcPayload("err_exc=measurement busy");
+            sendPlcPayload("exe_err=measurement busy");
             return;
         }
 
         if (name == "dia_msr")
             stage_ = MeasurementStage::Neck;
         else if (name == "dia_rec")
-            stage_ = MeasurementStage::Endcone;
+            stage_ = MeasurementStage::Neck;
         else if (name == "dip_msr")
-            stage_ = MeasurementStage::Crown;
+            stage_ = MeasurementStage::Neck;
+        else if (name == "mlt_msr")
+            stage_ = MeasurementStage::Neck;
         else
             stage_ = MeasurementStage::Body;
         pendingPlcCommand_ = name;

@@ -83,8 +83,8 @@ namespace pva
                 *error = "PLC result connection on TCP 5001 is not connected; response queued";
             return false;
         }
-        // 打印最终写入 TCP 5001 的完整协议帧，便于与 PLC 抓包逐字节比对。
-        qDebug().noquote() << "PLC TX hex:" << packet.toHex(' ');
+        // 打印协议有效内容；二进制帧头和CR/LF不作为ASCII文本输出。
+        qDebug().noquote() << "PLC TX ASCII:" << QString::fromLatin1(payload);
         if (resultSocket_->write(packet) != packet.size())
         {
             if (error)
@@ -174,7 +174,10 @@ namespace pva
             const QByteArray line = commandBuffer_.left(end);
             commandBuffer_.remove(0, end + terminator);
             if (line.isEmpty())
+            {
+                qDebug() << "PLC empty line ignored";
                 continue;
+            }
             QString parseError;
             const auto command = SherlockProtocol::parseCommand(line, &parseError);
             if (command)

@@ -15,10 +15,12 @@ namespace pva
     enum class MeasurementStage : int
     {
         Idle = 0,
-        Neck = 1,
-        Crown = 2,
-        Endcone = 3,
-        Body = 4
+        Melt = 1,
+        Dip = 2,
+        Neck = 3,
+        Crown = 4,
+        Body = 5,
+        Endcone = 6
     };
 
     struct MeasurementValues
