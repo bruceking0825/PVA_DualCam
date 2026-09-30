@@ -3,7 +3,7 @@
 ################################################################################
 ## Form generated from reading UI file 'PageHome.ui'
 ##
-## Created by: Qt User Interface Compiler version 6.10.2
+## Created by: Qt User Interface Compiler version 6.9.1
 ##
 ## WARNING! All changes made in this file will be lost when recompiling UI file!
 ################################################################################
@@ -35,12 +35,12 @@ class Ui_PageHome(object):
 "#frameCam1 {\n"
 "    border-top: 2px solid rgb(70, 80, 110);\n"
 "    border-left: 2px solid rgb(70, 80, 110);\n"
-"    border-bottom: 2px solid rgb(70, 80, 110);\n"
+"    border-bottom: 0px;\n"
 "    border-right: 0px solid rgb(70, 80, 110);\n"
 "}\n"
 "#frameCam2 {\n"
-"    border-top: 2px solid rgb(70, 80, 110);\n"
-"    border-left: 0px solid rgb(70, 80, 110);\n"
+"    border-top: 0px;\n"
+"    border-left: 2px solid rgb(70, 80, 110);\n"
 "    border-bottom: 2px solid rgb(70, 80, 110);\n"
 "    border-right: 0px solid rgb(70, 80, 110);\n"
 "}\n"
@@ -64,7 +64,7 @@ class Ui_PageHome(object):
         self.mainSplitter.setHandleWidth(1)
         self.viewSplitter = QSplitter(self.mainSplitter)
         self.viewSplitter.setObjectName(u"viewSplitter")
-        self.viewSplitter.setOrientation(Qt.Orientation.Horizontal)
+        self.viewSplitter.setOrientation(Qt.Orientation.Vertical)
         self.viewSplitter.setHandleWidth(1)
         self.frameCam1 = QFrame(self.viewSplitter)
         self.frameCam1.setObjectName(u"frameCam1")

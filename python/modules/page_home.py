@@ -68,7 +68,7 @@ class PageHome(BasePage):
         }
 
     def _setup_ui(self) -> None:
-        self.ui.viewSplitter.setSizes([520, 520])
+        self.ui.viewSplitter.setSizes([300, 300])
         self.ui.mainSplitter.setSizes([960, 320])
         self.ui.runtimeButtonLayout.setStretch(0, 3)
         self.ui.runtimeButtonLayout.setStretch(1, 1)

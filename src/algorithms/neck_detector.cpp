@@ -171,18 +171,19 @@ namespace pva::algorithms
     DetectionResult<EllipseHit> findNeckEllipse(const cv::Mat &gray, const cv::Rect &configuredRoi,
                                                 double threshold, double minArea,
                                                 double startRatio, double stopRatio,
-                                                std::optional<double> expectedX)
+                                                std::optional<double> expectedY)
     {
         if (gray.empty())
             return DetectionResult<EllipseHit>::failure("input image is empty");
         if (gray.channels() != 1)
             return DetectionResult<EllipseHit>::failure("input image is not single-channel grayscale");
 
-        int y0 = std::clamp(int(std::lround(gray.rows * startRatio)), 0, std::max(gray.rows - 1, 0));
-        int y1 = std::clamp(int(std::lround(gray.rows * stopRatio)), y0 + 1, gray.rows);
+        // 旧图像从上向下的搜索方向，在原始相机图像中是从右向左。
+        int x0 = std::clamp(gray.cols - int(std::lround(gray.cols * stopRatio)), 0, gray.cols - 1);
+        int x1 = std::clamp(gray.cols - int(std::lround(gray.cols * startRatio)), x0 + 1, gray.cols);
         const cv::Rect imageBounds(0, 0, gray.cols, gray.rows);
-        const cv::Rect verticalBounds(0, y0, gray.cols, y1 - y0);
-        const cv::Rect roi = configuredRoi & imageBounds & verticalBounds;
+        const cv::Rect horizontalBounds(x0, 0, x1 - x0, gray.rows);
+        const cv::Rect roi = configuredRoi & imageBounds & horizontalBounds;
         if (roi.width < 3 || roi.height < 3)
             return DetectionResult<EllipseHit>::failure(
                 "effective ROI is too small after clipping (width=" + std::to_string(roi.width) +
@@ -242,9 +243,9 @@ namespace pva::algorithms
                 p.y += roi.y;
             }
             const double perimeter = std::max(cv::arcLength(contour, true), 1e-6);
-            const double xPenalty = expectedX ? std::abs(ellipse.center.x - *expectedX) : 0.0;
+            const double yPenalty = expectedY ? std::abs(ellipse.center.y - *expectedY) : 0.0;
             // 月牙状颈部轮廓面积小且圆度低，因此直接按面积和周长奖励有效的大轮廓。
-            const double score = area + perimeter - xPenalty * 0.1;
+            const double score = area + perimeter - yPenalty * 0.1;
             if (score > bestScore)
             {
                 bestScore = score;

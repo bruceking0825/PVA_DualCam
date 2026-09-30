@@ -34,7 +34,7 @@ namespace pva
         MeasurementValues values;
         cv::Vec2d filteredLight{0.0, 0.0};
         std::optional<std::array<cv::Point2d, 2>> neckCentersPx;
-        std::optional<std::array<cv::Vec2i, 2>> neckXSpans;
+        std::optional<std::array<cv::Vec2i, 2>> neckYSpans;
         std::optional<std::array<cv::Point2d, 2>> crownBoundaryPointsPx;
         std::optional<std::array<cv::Point2d, 2>> bodyCentersPx;
         std::optional<std::array<cv::Point2d, 2>> bodyBoundaryPointsPx;

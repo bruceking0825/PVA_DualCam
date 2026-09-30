@@ -9,7 +9,8 @@
 
 namespace
 {
-    constexpr int schemaVersion = 4;
+    // 旧版本保存的是旋转后图像坐标，不能当作原始相机坐标恢复。
+    constexpr int schemaVersion = 5;
 
     QJsonArray point(cv::Point2d value) 
     { 
@@ -65,12 +66,12 @@ namespace pva
             state.filteredLight = {light[0].toDouble(), light[1].toDouble()};
         if (object.contains("neck_centers_px"))
             state.neckCentersPx = points(object.value("neck_centers_px"));
-        if (object.contains("neck_x_spans"))
+        if (object.contains("neck_y_spans"))
         {
-            const auto spans = object.value("neck_x_spans").toArray();
+            const auto spans = object.value("neck_y_spans").toArray();
             const auto a = spans.size() > 0 ? spans.at(0).toArray() : QJsonArray{};
             const auto b = spans.size() > 1 ? spans.at(1).toArray() : QJsonArray{};
-            state.neckXSpans = std::array<cv::Vec2i, 2>{cv::Vec2i(a.size() > 0 ? a.at(0).toInt() : 0, a.size() > 1 ? a.at(1).toInt() : 0), cv::Vec2i(b.size() > 0 ? b.at(0).toInt() : 0, b.size() > 1 ? b.at(1).toInt() : 0)};
+            state.neckYSpans = std::array<cv::Vec2i, 2>{cv::Vec2i(a.size() > 0 ? a.at(0).toInt() : 0, a.size() > 1 ? a.at(1).toInt() : 0), cv::Vec2i(b.size() > 0 ? b.at(0).toInt() : 0, b.size() > 1 ? b.at(1).toInt() : 0)};
         }
         if (object.contains("crown_boundary_points_px"))
             state.crownBoundaryPointsPx = points(object.value("crown_boundary_points_px"));
@@ -98,8 +99,8 @@ namespace pva
         object["filtered_light"] = QJsonArray{state.filteredLight[0], state.filteredLight[1]};
         if (state.neckCentersPx)
             object["neck_centers_px"] = points(*state.neckCentersPx);
-        if (state.neckXSpans)
-            object["neck_x_spans"] = QJsonArray{QJsonArray{(*state.neckXSpans)[0][0], (*state.neckXSpans)[0][1]}, QJsonArray{(*state.neckXSpans)[1][0], (*state.neckXSpans)[1][1]}};
+        if (state.neckYSpans)
+            object["neck_y_spans"] = QJsonArray{QJsonArray{(*state.neckYSpans)[0][0], (*state.neckYSpans)[0][1]}, QJsonArray{(*state.neckYSpans)[1][0], (*state.neckYSpans)[1][1]}};
         if (state.crownBoundaryPointsPx)
             object["crown_boundary_points_px"] = points(*state.crownBoundaryPointsPx);
         if (state.bodyCentersPx)

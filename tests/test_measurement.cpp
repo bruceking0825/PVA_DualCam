@@ -65,7 +65,7 @@ int main(int argc, char **argv)
                   configError.contains("Camera.auto_exposure_target"),
               "Invalid registered edits are rejected without changing runtime config");
 
-        // 用现场目录验证：读取合成图、左右拆分、提交测量引擎。
+        // 用现场目录验证：上下拆分后直接提交原始方向的相机图像。
         QDir offlineDirectory(parsed.runtime.offlineImageDir);
         const QFileInfoList images = offlineDirectory.entryInfoList(
             {"*.bmp", "*.png", "*.jpg", "*.jpeg", "*.tif", "*.tiff"}, QDir::Files, QDir::Name);
@@ -77,15 +77,18 @@ int main(int argc, char **argv)
             const cv::Mat buffer(1, encoded.size(), CV_8U, const_cast<char *>(encoded.constData()));
             const cv::Mat composite = cv::imdecode(buffer, cv::IMREAD_UNCHANGED);
             check(!composite.empty(), "Offline image decoded");
-            check(!composite.empty() && composite.cols % 2 == 0, "Offline composite width is even");
-            if (!composite.empty() && composite.cols % 2 == 0)
+            check(!composite.empty() && composite.rows % 2 == 0, "Offline composite height is even");
+            if (!composite.empty() && composite.rows % 2 == 0)
             {
-                const int middle = composite.cols / 2;
+                const int middle = composite.rows / 2;
+                const cv::Mat camera1 = composite.rowRange(0, middle);
+                const cv::Mat camera2 = composite.rowRange(middle, composite.rows);
                 pva::MeasurementEngine offlineEngine(parsed);
                 const auto result = offlineEngine.process(
-                    composite.colRange(0, middle), composite.colRange(middle, composite.cols),
+                    camera1, camera2,
                     pva::MeasurementStage::Neck);
-                check(result.preview1.cols == middle && result.preview2.cols == middle,
+                check(result.preview1.cols == composite.cols && result.preview2.cols == composite.cols &&
+                          result.preview1.rows == middle && result.preview2.rows == middle,
                       "Offline stereo pair submitted to measurement engine");
                 check(result.diagnostics.contains("cycle_ms"),
                       "Real offline frame produces Cycle diagnostics");
@@ -192,21 +195,21 @@ int main(int argc, char **argv)
               transitionResult.diagnostics.contains("neck_major_axis_camera2_px"),
           "Crown transition stores the fitted Camera 2 Neck reference");
 
-    cv::Mat meniscus(260, 300, CV_8U, cv::Scalar(20));
-    for (int x = 20; x < 280; ++x)
+    cv::Mat meniscus(300, 260, CV_8U, cv::Scalar(20));
+    for (int y = 20; y < 280; ++y)
     {
-        const int boundary = static_cast<int>(140 - .002 * (x - 150) * (x - 150));
-        meniscus(cv::Rect(x, 0, 1, std::max(boundary, 1))).setTo(220);
+        const int boundary = static_cast<int>(140 - .002 * (y - 150) * (y - 150));
+        meniscus(cv::Rect(260 - boundary, y, std::max(boundary, 1), 1)).setTo(220);
     }
     config.crown.horizontalMarginPx = 10;
     config.crown.bottomMarginPx = 10;
     config.crown.minEdgePoints = 20;
     config.crown.columnMaxFactor = .2;
-    config.measurement.reflectorRoiCamera1 = config.measurement.reflectorRoiCamera2 = cv::Rect(20, 0, 261, 231);
+    config.measurement.reflectorRoiCamera1 = config.measurement.reflectorRoiCamera2 = cv::Rect(29, 20, 231, 261);
     pva::MeasurementState crownState;
     crownState.validNeck = true;
     crownState.values.diameterMm = 100.0;
-    crownState.neckCentersPx = std::array<cv::Point2d, 2>{cv::Point2d(140, 20), cv::Point2d(160, 20)};
+    crownState.neckCentersPx = std::array<cv::Point2d, 2>{cv::Point2d(239, 140), cv::Point2d(239, 160)};
     pva::MeasurementEngine crownEngine(config, crownState);
     auto crownResult = crownEngine.process(meniscus, meniscus, pva::MeasurementStage::Crown);
     check(crownResult.valid, "Crown manual-ROI lower vertex valid");
@@ -221,17 +224,19 @@ int main(int argc, char **argv)
                                            cv::norm(element.points.front() - expectedCenter) < 0.01 &&
                                            element.colorBgr == cv::Scalar(0, 255, 0); });
     };
-    check(hasStoredNeckCenter(crownResult.overlay1, {140, 20}) &&
-              hasStoredNeckCenter(crownResult.overlay2, {160, 20}),
+    check(hasStoredNeckCenter(crownResult.overlay1, {239, 140}) &&
+              hasStoredNeckCenter(crownResult.overlay2, {239, 160}),
           "Crown overlays retain both stored Neck centers");
     check(std::ranges::any_of(crownResult.overlay1, [](const pva::OverlayElement &element)
                              { return element.type == pva::OverlayType::Polyline && element.closed &&
                                       element.colorBgr == cv::Scalar(0, 255, 0); }),
           "Crown draws the manual reflector ROI as a green rectangle");
     check(crownEngine.state().crownBoundaryPointsPx &&
-              std::abs((*crownEngine.state().crownBoundaryPointsPx)[0].x - 140.0) < 0.01 &&
-              std::abs((*crownEngine.state().crownBoundaryPointsPx)[1].x - 160.0) < 0.01,
-          "Crown lower vertices use the stored Neck center x coordinates");
+              std::abs((*crownEngine.state().crownBoundaryPointsPx)[0].y - 140.0) < 0.01 &&
+              std::abs((*crownEngine.state().crownBoundaryPointsPx)[1].y - 160.0) < 0.01 &&
+              (*crownEngine.state().crownBoundaryPointsPx)[0].x > 90 &&
+              (*crownEngine.state().crownBoundaryPointsPx)[0].x < 150,
+          "Crown lower vertices use the stored Neck center y coordinates");
     check(crownResult.diagnostics.size() >= 40 &&
               crownResult.diagnostics.contains("crown_boundary_camera1_px") &&
               crownResult.diagnostics.contains("crown_column_strengths_maximum_camera2") &&
@@ -255,13 +260,15 @@ int main(int argc, char **argv)
     pva::MeasurementEngine bodyEngine(config, crownState);
     auto bodyResult = bodyEngine.process(meniscus, meniscus, pva::MeasurementStage::Body);
     check(bodyResult.valid, "Body manual-ROI lower vertex valid");
-    check(hasStoredNeckCenter(bodyResult.overlay1, {140, 20}) &&
-              hasStoredNeckCenter(bodyResult.overlay2, {160, 20}),
+    check(hasStoredNeckCenter(bodyResult.overlay1, {239, 140}) &&
+              hasStoredNeckCenter(bodyResult.overlay2, {239, 160}),
           "Body overlays retain both stored Neck centers");
     check(bodyEngine.state().bodyBoundaryPointsPx &&
-              std::abs((*bodyEngine.state().bodyBoundaryPointsPx)[0].x - 140.0) < 0.01 &&
-              std::abs((*bodyEngine.state().bodyBoundaryPointsPx)[1].x - 160.0) < 0.01,
-          "Body lower vertices use the stored Neck center x coordinates");
+              std::abs((*bodyEngine.state().bodyBoundaryPointsPx)[0].y - 140.0) < 0.01 &&
+              std::abs((*bodyEngine.state().bodyBoundaryPointsPx)[1].y - 160.0) < 0.01 &&
+              (*bodyEngine.state().bodyBoundaryPointsPx)[0].x > 90 &&
+              (*bodyEngine.state().bodyBoundaryPointsPx)[0].x < 150,
+          "Body lower vertices use the stored Neck center y coordinates");
     check(bodyResult.diagnostics.size() >= 40 &&
               bodyResult.diagnostics.contains("body_boundary_camera1_px") &&
               bodyResult.diagnostics.contains("body_column_maximum_p90_camera2") &&
@@ -279,21 +286,24 @@ int main(int argc, char **argv)
     pva::MeasurementState state;
     state.validNeck = true;
     state.mmPerPixel = .1;
-    state.neckXSpans = std::array<cv::Vec2i, 2>{cv::Vec2i(50, 150), cv::Vec2i(50, 150)};
-    state.bodyCentersPx = std::array<cv::Point2d, 2>{cv::Point2d(100, 100), cv::Point2d(100, 100)};
-    cv::Mat endcone(250, 200, CV_8U, cv::Scalar(200));
-    endcone.rowRange(150, 250).setTo(20);
+    state.neckYSpans = std::array<cv::Vec2i, 2>{cv::Vec2i(50, 150), cv::Vec2i(50, 150)};
+    state.bodyCentersPx = std::array<cv::Point2d, 2>{cv::Point2d(149, 100), cv::Point2d(149, 100)};
+    cv::Mat endcone(200, 250, CV_8U, cv::Scalar(200));
+    endcone.colRange(0, 100).setTo(20);
     pva::MeasurementEngine endconeEngine(config, state);
     auto endconeResult = endconeEngine.process(endcone, endcone, pva::MeasurementStage::Endcone);
     check(endconeResult.valid, "Endcone state-based measurement valid");
     check(endconeResult.values.diameterMm && std::abs(*endconeResult.values.diameterMm - 4.9) < .3, "Endcone diameter unchanged");
+    check(endconeResult.diagnostics.contains("boundary_x_px") &&
+              std::abs(endconeResult.diagnostics.at("boundary_x_px").toDouble() - 99.0) < 1.0,
+          "Endcone boundary is expressed in the native x coordinate");
     auto invalidEndconeState = state;
-    invalidEndconeState.neckXSpans = std::array<cv::Vec2i, 2>{cv::Vec2i(50, 150), cv::Vec2i(100, 100)};
+    invalidEndconeState.neckYSpans = std::array<cv::Vec2i, 2>{cv::Vec2i(50, 150), cv::Vec2i(100, 100)};
     const auto invalidEndconeResult = pva::MeasurementEngine(config, invalidEndconeState).process(
         endcone, endcone, pva::MeasurementStage::Endcone);
     check(!invalidEndconeResult.valid &&
               invalidEndconeResult.message.find("Camera 2") != std::string::npos &&
-              invalidEndconeResult.message.find("x-span") != std::string::npos,
+              invalidEndconeResult.message.find("y-span") != std::string::npos,
           "Endcone detector failure reason reaches MeasurementResult message");
 
     QTemporaryDir stateDirectory;

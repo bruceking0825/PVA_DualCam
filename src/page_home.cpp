@@ -135,7 +135,7 @@ namespace pva
         ui_->cam2GraphicsView->setViewId(2);
         ui_->cam1GraphicsView->setText("Camera 1");
         ui_->cam2GraphicsView->setText("Camera 2");
-        ui_->viewSplitter->setSizes({520, 520});
+        ui_->viewSplitter->setSizes({300, 300});
         ui_->mainSplitter->setSizes({960, 320});
         auto *group = new QButtonGroup(this);
         group->setExclusive(true);
@@ -413,14 +413,17 @@ namespace pva
             setStatus(QString("Cannot read offline image: %1").arg(imagePaths_[imageIndex_]), false);
             return;
         }
-        if (composite.cols % 2)
+        if (composite.rows % 2)
         {
-            setStatus(QString("Offline composite image width must be even: %1").arg(composite.cols), false);
+            setStatus(QString("Offline composite image height must be even: %1").arg(composite.rows), false);
             return;
         }
-        int middle = composite.cols / 2;
+        const int middle = composite.rows / 2;
+        // 两台相机均使用原始方向；worker 提交时会复制图像数据。
+        const cv::Mat camera1 = composite.rowRange(0, middle);
+        const cv::Mat camera2 = composite.rowRange(middle, composite.rows);
         setStatus(QString("Calculating: %1").arg(QFileInfo(imagePaths_[imageIndex_]).fileName()), true);
-        worker_->submit(composite.colRange(0, middle), composite.colRange(middle, composite.cols), stage_);
+        worker_->submit(camera1, camera2, stage_);
     }
     void PageHome::showResult(const MeasurementResult &r)
     {

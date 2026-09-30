@@ -20,29 +20,32 @@ namespace pva::algorithms
         if (!std::isfinite(scale) || scale <= 0.0)
             return DetectionResult<EndconeHit>::failure("millimetres-per-pixel must be positive and finite");
 
-        int x0 = std::max(0, span[0]), x1 = std::min(gray.cols, span[1] + 1), y0 = std::clamp(int(center.y), 1, gray.rows - 2);
-        if (x1 - x0 < 3)
+        const int y0 = std::max(0, span[0]);
+        const int y1 = std::min(gray.rows, span[1] + 1);
+        const int x1 = std::clamp(int(center.x), 2, gray.cols - 1);
+        if (y1 - y0 < 3)
             return DetectionResult<EndconeHit>::failure(
-                "neck x-span is too narrow after clipping (width=" +
-                std::to_string(x1 - x0) + ")");
-        if (y0 >= gray.rows - 2)
+                "neck y-span is too narrow after clipping (height=" +
+                std::to_string(y1 - y0) + ")");
+        if (x1 < 3)
             return DetectionResult<EndconeHit>::failure(
-                "body center leaves fewer than two rows for the endcone search");
+                "body center leaves fewer than two columns for the endcone search");
         cv::Mat profile;
-        cv::reduce(gray(cv::Rect(x0, y0, x1 - x0, gray.rows - y0)), profile, 1, cv::REDUCE_AVG, CV_64F);
+        cv::reduce(gray(cv::Rect(0, y0, x1, y1 - y0)), profile, 0, cv::REDUCE_AVG, CV_64F);
         double best = -1;
         int index = 0;
-        for (int y = 0; y + 1 < profile.rows; ++y)
+        // 从中心向图像左侧搜索，保持旧图像中“向下”的物理方向。
+        for (int x = x1 - 2; x >= 0; --x)
         {
-            double d = std::abs(profile.at<double>(y + 1) - profile.at<double>(y));
+            double d = std::abs(profile.at<double>(0, x + 1) - profile.at<double>(0, x));
             if (d > best)
             {
                 best = d;
-                index = y;
+                index = x;
             }
         }
-        double boundary = y0 + index + s.boundaryOffsetPx;
+        const double boundary = index - s.boundaryOffsetPx;
         return DetectionResult<EndconeHit>::success(
-            EndconeHit{boundary, std::abs(boundary - center.y) * scale, x0, x1});
+            EndconeHit{boundary, std::abs(boundary - center.x) * scale, y0, y1});
     }
 }

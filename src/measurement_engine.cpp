@@ -21,7 +21,7 @@ namespace
     }
     void addNeckOverlay(const pva::algorithms::EllipseHit &hit, std::vector<pva::OverlayElement> &out)
     {
-        // 与 Python 版本一致：边界轮廓、轴对齐拟合椭圆、中心和下顶点分层显示。
+        // 边界轮廓、轴对齐拟合椭圆、中心和原始方向的左顶点分层显示。
         std::vector<cv::Point2d> points;
         for (auto p : hit.contour)
             points.emplace_back(p);
@@ -41,17 +41,17 @@ namespace
         out.push_back({pva::OverlayType::Polyline, ellipsePoints, {0, 255, 0}, 2, true});
         out.push_back({pva::OverlayType::Cross, {hit.ellipse.center}, {0, 255, 0}, 2, false});
         out.push_back({pva::OverlayType::Cross,
-                       {cv::Point2d(hit.ellipse.center.x, hit.ellipse.center.y + radiusY)},
+                       {cv::Point2d(hit.ellipse.center.x - radiusX, hit.ellipse.center.y)},
                        {0, 0, 255},
                        2,
                        false});
     }
-    cv::Vec2i ellipseXSpan(const pva::algorithms::EllipseHit &hit, int imageWidth)
+    cv::Vec2i ellipseYSpan(const pva::algorithms::EllipseHit &hit, int imageHeight)
     {
-        const double halfWidth = std::max(hit.ellipse.size.width, hit.ellipse.size.height) * 0.5;
-        const int left = std::clamp(cvRound(hit.ellipse.center.x - halfWidth), 0, imageWidth - 1);
-        const int right = std::clamp(cvRound(hit.ellipse.center.x + halfWidth), left, imageWidth - 1);
-        return {left, right};
+        const double halfHeight = std::max(hit.ellipse.size.width, hit.ellipse.size.height) * 0.5;
+        const int top = std::clamp(cvRound(hit.ellipse.center.y - halfHeight), 0, imageHeight - 1);
+        const int bottom = std::clamp(cvRound(hit.ellipse.center.y + halfHeight), top, imageHeight - 1);
+        return {top, bottom};
     }
 
     cv::Rect clippedRoi(const cv::Rect &configuredRoi, const cv::Size &imageSize)
@@ -59,16 +59,16 @@ namespace
         return configuredRoi & cv::Rect(0, 0, imageSize.width, imageSize.height);
     }
 
-    cv::Point2d roiTopCenter(const cv::Rect &configuredRoi, const cv::Size &imageSize)
+    cv::Point2d roiRightCenter(const cv::Rect &configuredRoi, const cv::Size &imageSize)
     {
         const cv::Rect roi = clippedRoi(configuredRoi, imageSize);
-        return {roi.x + (roi.width - 1) * 0.5, double(roi.y)};
+        return {double(roi.x + roi.width - 1), roi.y + (roi.height - 1) * 0.5};
     }
 
-    cv::Vec2i roiXSpan(const cv::Rect &configuredRoi, const cv::Size &imageSize)
+    cv::Vec2i roiYSpan(const cv::Rect &configuredRoi, const cv::Size &imageSize)
     {
         const cv::Rect roi = clippedRoi(configuredRoi, imageSize);
-        return {roi.x, std::max(roi.x, roi.x + roi.width - 1)};
+        return {roi.y, std::max(roi.y, roi.y + roi.height - 1)};
     }
 
     std::pair<bool, std::string> applyCamera1Neck(
@@ -95,8 +95,8 @@ namespace
         result.diagnostics["neck_edge_points_camera1"] = static_cast<double>(hit.contour.size());
         result.diagnostics["neck_center_x_camera1_px"] = hit.ellipse.center.x;
         result.diagnostics["neck_center_y_camera1_px"] = hit.ellipse.center.y;
-        result.diagnostics["neck_ellipse_vertex_y_camera1_px"] =
-            hit.ellipse.center.y + hit.ellipse.size.height * 0.5;
+        result.diagnostics["neck_ellipse_vertex_x_camera1_px"] =
+            hit.ellipse.center.x - hit.ellipse.size.width * 0.5;
         result.diagnostics["neck_major_axis_camera1_px"] = majorAxis;
         result.diagnostics["neck_pixels_per_mm"] = config.neck.pixelsPerMm;
         result.diagnostics["raw_diameter_mm"] = rawDiameter;
@@ -106,10 +106,10 @@ namespace
                                config.measurement.mmPerPixelAlpha);
         state.neckCentersPx = std::array<cv::Point2d, 2>{
             hit.ellipse.center,
-            roiTopCenter(config.measurement.reflectorRoiCamera2, camera2Size)};
-        state.neckXSpans = std::array<cv::Vec2i, 2>{
-            ellipseXSpan(hit, camera1Size.width),
-            roiXSpan(config.measurement.reflectorRoiCamera2, camera2Size)};
+            roiRightCenter(config.measurement.reflectorRoiCamera2, camera2Size)};
+        state.neckYSpans = std::array<cv::Vec2i, 2>{
+            ellipseYSpan(hit, camera1Size.height),
+            roiYSpan(config.measurement.reflectorRoiCamera2, camera2Size)};
         state.validNeck = true;
         if (resetFollowingStages)
         {
@@ -130,7 +130,7 @@ namespace
     {
         if (hit.contour.size() < size_t(config.neck.minEdgePoints))
             return {false, "Not enough Camera 2 neck edge points"};
-        if (!state.neckCentersPx || !state.neckXSpans)
+        if (!state.neckCentersPx || !state.neckYSpans)
             return {false, "Camera 2 neck reference requires a valid Camera 1 result"};
 
         const double majorAxis = std::max(hit.ellipse.size.width, hit.ellipse.size.height);
@@ -138,13 +138,13 @@ namespace
         result.diagnostics["neck_edge_points_camera2"] = static_cast<double>(hit.contour.size());
         result.diagnostics["neck_center_x_camera2_px"] = hit.ellipse.center.x;
         result.diagnostics["neck_center_y_camera2_px"] = hit.ellipse.center.y;
-        result.diagnostics["neck_ellipse_vertex_y_camera2_px"] =
-            hit.ellipse.center.y + hit.ellipse.size.height * 0.5;
+        result.diagnostics["neck_ellipse_vertex_x_camera2_px"] =
+            hit.ellipse.center.x - hit.ellipse.size.width * 0.5;
         result.diagnostics["neck_major_axis_camera2_px"] = majorAxis;
 
         // Camera 2 只提供过渡阶段的空间参考；直径和毫米比例始终由 Camera 1 更新。
         (*state.neckCentersPx)[1] = hit.ellipse.center;
-        (*state.neckXSpans)[1] = ellipseXSpan(hit, camera2Size.width);
+        (*state.neckYSpans)[1] = ellipseYSpan(hit, camera2Size.height);
         addNeckOverlay(hit, result.overlay2);
         return {true, {}};
     }
@@ -181,10 +181,10 @@ namespace
             "crown_bottom_margin_camera%1_px", "crown_tracking_half_height_camera%1_px",
             "crown_column_strengths_mean_camera%1", "crown_column_strengths_maximum_camera%1",
             "crown_minimum_strength_camera%1", "crown_kept_column_count_camera%1",
-            "crown_seed_y_camera%1_px", "crown_edge_point_count_camera%1",
+            "crown_seed_x_camera%1_px", "crown_edge_point_count_camera%1",
             "crown_residual_limit_camera%1_px", "crown_robust_inlier_count_camera%1",
             "crown_sagitta_camera%1_px", "crown_center_camera%1_px",
-            "crown_boundary_camera%1_px", "crown_edge_seed_y_camera%1_px",
+            "crown_boundary_camera%1_px", "crown_edge_seed_x_camera%1_px",
             "crown_edge_coverage_camera%1", "crown_edge_fit_error_camera%1_px",
             "crown_fit_strengths_mean_camera%1"};
         for (int camera = 1; camera <= 2; ++camera)
@@ -198,14 +198,14 @@ namespace
     void initializeBodyDiagnostics(pva::MeasurementResult &result)
     {
         static const std::array<const char *, 17> cameraKeys{
-            "body_search_start_y_camera%1_px", "body_search_stop_y_camera%1_px",
+            "body_search_start_x_camera%1_px", "body_search_stop_x_camera%1_px",
             "body_bottom_margin_camera%1_px", "body_tracking_half_height_camera%1_px",
             "body_brightness_offset_camera%1", "body_threshold_crossing_count_camera%1",
             "body_column_maximum_p90_camera%1", "body_column_maximum_maximum_camera%1",
             "body_residual_limit_camera%1_px", "body_robust_inlier_count_camera%1",
             "body_coverage_ratio_camera%1", "body_sagitta_camera%1_px",
             "body_center_camera%1_px", "body_boundary_camera%1_px",
-            "body_edge_seed_y_camera%1_px", "body_edge_coverage_camera%1",
+            "body_edge_seed_x_camera%1_px", "body_edge_coverage_camera%1",
             "body_fit_strength_mean_camera%1"};
         for (int camera = 1; camera <= 2; ++camera)
             for (const char *pattern : cameraKeys)
@@ -394,8 +394,8 @@ namespace pva
         std::optional<double> p1, p2;
         if (config_.crown.usePreviousBoundaryY && state_.crownBoundaryPointsPx)
         {
-            p1 = (*state_.crownBoundaryPointsPx)[0].y;
-            p2 = (*state_.crownBoundaryPointsPx)[1].y;
+            p1 = (*state_.crownBoundaryPointsPx)[0].x;
+            p2 = (*state_.crownBoundaryPointsPx)[1].x;
         }
         r.diagnostics["crown_edge_previous_tracking_active"] = p1.has_value() && p2.has_value();
         r.diagnostics["crown_edge_model"] = "maximum_negative_gradient_quadratic";
@@ -414,14 +414,14 @@ namespace pva
             r.diagnostics["crown_column_strengths_maximum" + suffix] = hit.columnStrengthsMaximum;
             r.diagnostics["crown_minimum_strength" + suffix] = hit.minimumStrength;
             r.diagnostics["crown_kept_column_count" + suffix] = hit.keptColumnCount;
-            r.diagnostics["crown_seed_y" + suffix + "_px"] = hit.seedY;
+            r.diagnostics["crown_seed_x" + suffix + "_px"] = hit.seedX;
             r.diagnostics["crown_edge_point_count" + suffix] = hit.edgePointCount;
             r.diagnostics["crown_residual_limit" + suffix + "_px"] = hit.residualLimitPx;
             r.diagnostics["crown_robust_inlier_count" + suffix] = hit.robustInlierCount;
             r.diagnostics["crown_sagitta" + suffix + "_px"] = hit.sagittaPx;
             r.diagnostics["crown_center" + suffix + "_px"] = pointValue(hit.center);
             r.diagnostics["crown_boundary" + suffix + "_px"] = pointValue(hit.boundary);
-            r.diagnostics["crown_edge_seed_y" + suffix + "_px"] = hit.seedY;
+            r.diagnostics["crown_edge_seed_x" + suffix + "_px"] = hit.seedX;
             r.diagnostics["crown_edge_coverage" + suffix] = hit.coverage;
             r.diagnostics["crown_edge_fit_error" + suffix + "_px"] = hit.fitErrorPx;
             r.diagnostics["crown_fit_strengths_mean" + suffix] = hit.fitStrengthMean;
@@ -441,8 +441,8 @@ namespace pva
         std::optional<double> p1, p2;
         if (config_.body.usePreviousBoundaryY && state_.bodyBoundaryPointsPx)
         {
-            p1 = (*state_.bodyBoundaryPointsPx)[0].y;
-            p2 = (*state_.bodyBoundaryPointsPx)[1].y;
+            p1 = (*state_.bodyBoundaryPointsPx)[0].x;
+            p2 = (*state_.bodyBoundaryPointsPx)[1].x;
         }
         r.diagnostics["body_edge_previous_tracking_active"] = p1.has_value() && p2.has_value();
         r.diagnostics["body_edge_model"] = "maximum_brightness_quadratic";
@@ -455,8 +455,8 @@ namespace pva
         const auto addDiagnostics = [&r](const algorithms::CurveHit &hit, int camera)
         {
             const std::string suffix = "_camera" + std::to_string(camera);
-            r.diagnostics["body_search_start_y" + suffix + "_px"] = hit.searchStartY;
-            r.diagnostics["body_search_stop_y" + suffix + "_px"] = hit.searchStopY;
+            r.diagnostics["body_search_start_x" + suffix + "_px"] = hit.searchStartX;
+            r.diagnostics["body_search_stop_x" + suffix + "_px"] = hit.searchStopX;
             r.diagnostics["body_bottom_margin" + suffix + "_px"] = hit.bottomMarginPx;
             r.diagnostics["body_tracking_half_height" + suffix + "_px"] = hit.trackingHalfHeightPx;
             r.diagnostics["body_brightness_offset" + suffix] = hit.brightnessOffset;
@@ -469,7 +469,7 @@ namespace pva
             r.diagnostics["body_sagitta" + suffix + "_px"] = hit.sagittaPx;
             r.diagnostics["body_center" + suffix + "_px"] = pointValue(hit.center);
             r.diagnostics["body_boundary" + suffix + "_px"] = pointValue(hit.boundary);
-            r.diagnostics["body_edge_seed_y" + suffix + "_px"] = hit.seedY;
+            r.diagnostics["body_edge_seed_x" + suffix + "_px"] = hit.seedX;
             r.diagnostics["body_edge_coverage" + suffix] = hit.coverage;
             r.diagnostics["body_fit_strength_mean" + suffix] = hit.fitStrengthMean;
         };
@@ -486,16 +486,16 @@ namespace pva
     {
         if (!state_.validNeck || !state_.bodyCentersPx || !state_.mmPerPixel)
             return {false, "Endcone requires valid neck and body state"};
-        cv::Vec2i span = state_.neckXSpans ? (*state_.neckXSpans)[1] : cv::Vec2i(0, b.cols - 1);
+        cv::Vec2i span = state_.neckYSpans ? (*state_.neckYSpans)[1] : cv::Vec2i(0, b.rows - 1);
         auto hit = algorithms::findEndcone(b, (*state_.bodyCentersPx)[1], span, *state_.mmPerPixel, config_.endcone);
         if (!hit)
             return {false, detectionFailure("Camera 2 endcone detection failed", hit.error)};
         if (!(hit->diameterMm > config_.measurement.diameterMinMm && hit->diameterMm < config_.measurement.diameterMaxMm))
             return {false, "Endcone diameter is outside physical limits"};
         state_.values.diameterMm = ema(state_.values.diameterMm, hit->diameterMm, config_.endcone.diameterAlpha);
-        r.overlay2.push_back({OverlayType::Line, {{double(hit->x0), hit->boundaryY}, {double(hit->x1 - 1), hit->boundaryY}}, {0, 0, 255}, 4, false});
+        r.overlay2.push_back({OverlayType::Line, {{hit->boundaryX, double(hit->y0)}, {hit->boundaryX, double(hit->y1 - 1)}}, {0, 0, 255}, 4, false});
         r.overlay2.push_back({OverlayType::Cross, {(*state_.bodyCentersPx)[1]}, {255, 0, 255}, 2, false});
-        r.diagnostics["boundary_y_px"] = hit->boundaryY;
+        r.diagnostics["boundary_x_px"] = hit->boundaryX;
         r.diagnostics["raw_diameter_mm"] = hit->diameterMm;
         return {true, "Endcone measurement updated"};
     }
