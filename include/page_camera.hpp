@@ -44,6 +44,7 @@ namespace pva
         void startOnlineCameras();
         void stopOnlineCameras();
         void triggerOnlineCameras();
+        void triggerOnlineFacet(int requestId);
         void applyPlcExposure(const QString &userId, double exposureUs);
         void onFrame(const QString &userId, const cv::Mat &frame, qint64 timestampNs);
         void onCaptureFailed(const QString &userId, const QString &message);

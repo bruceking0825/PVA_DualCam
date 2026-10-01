@@ -22,6 +22,11 @@ namespace pva
         QMutexLocker lock(&mutex_);
         pendingConfig_ = std::move(config);
     }
+    void MeasurementWorker::updatePlcRois(PlcRois rois)
+    {
+        QMutexLocker lock(&mutex_);
+        pendingRois_ = std::move(rois);
+    }
     void MeasurementWorker::stop()
     {
         QMutexLocker lock(&mutex_);
@@ -34,6 +39,7 @@ namespace pva
         {
             std::optional<Pending> job;
             std::optional<MeasurementConfig> updatedConfig;
+            std::optional<PlcRois> updatedRois;
             {
                 QMutexLocker lock(&mutex_);
                 while (!stopping_ && !pending_)
@@ -44,11 +50,15 @@ namespace pva
                 pending_.reset();
                 updatedConfig = std::move(pendingConfig_);
                 pendingConfig_.reset();
+                updatedRois = std::move(pendingRois_);
+                pendingRois_.reset();
             }
             try
             {
                 if (updatedConfig)
                     engine_.setConfig(std::move(*updatedConfig));
+                if (updatedRois)
+                    engine_.setPlcRois(std::move(*updatedRois));
                 auto result = engine_.process(job->camera1, job->camera2, job->stage);
                 if (result.valid && !statePath_.isEmpty())
                 {

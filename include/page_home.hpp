@@ -3,7 +3,10 @@
 #include "camera_manager.hpp"
 #include "config.hpp"
 #include "measurement_worker.hpp"
+#include "plc_runtime.hpp"
+#include "daily_log.hpp"
 #include <QHash>
+#include <QQueue>
 #include <array>
 #include <memory>
 #include <optional>
@@ -48,6 +51,9 @@ namespace pva
         void onOnlineCameraStarted();
         void onOnlineCameraStopped();
         void onOnlineCameraFailed(const QString &message);
+        void onOnlineCaptureFailed(const QString &userId, const QString &message);
+        void onFacetTriggerFailed(int requestId, const QString &message);
+        void expireFacetRequests();
         void onSherlockCommand(const pva::SherlockCommand &command);
 
     private:
@@ -62,6 +68,7 @@ namespace pva
         std::unique_ptr<SherlockTcpServer> plcServer_;
         QTimer *offlineTimer_{};
         QTimer *plcMeasurementTimeout_{};
+        QTimer *facetTimeoutTimer_{};
         QStringList imagePaths_;
         int imageIndex_{-1};
         MeasurementStage stage_{MeasurementStage::Idle};
@@ -69,12 +76,21 @@ namespace pva
         bool activeOnline_{false};
         bool acquisitionEnabled_{true};
         bool plcRelativeThreshold_{false};
+        bool pointFitSelected_{false};
         QString pendingPlcCommand_;
         double plcRefreshRate_{1.0};
         // 保存旧Sherlock运行时参数；未映射到新算法的ROI仍用于协议兼容和诊断。
         QHash<QString, std::vector<double>> plcParameters_;
+        PlcRois plcRois_;
+        std::vector<OverlayElement> lastAlgorithmOverlay1_;
+        std::vector<OverlayElement> lastAlgorithmOverlay2_;
+        DailyLog dailyLog_;
         struct OnlineFrame { qint64 timestampNs{}; cv::Mat image; };
         QHash<QString, OnlineFrame> onlineFrames_;
+        struct Camera2Request { int id{}; int facetIndex{}; qint64 deadlineMs{}; };
+        QQueue<Camera2Request> camera2Requests_;
+        int nextFacetRequestId_{1};
+        bool awaitingMeasurementCam1_{false};
         struct ViewInfo
         {
             int x{};
@@ -89,8 +105,16 @@ namespace pva
         void setImageIndex(int index);
         void refreshControls();
         void log(const QString &message);
+        QString plcStatePath() const;
+        bool persistPlcState(QString *error = nullptr) const;
+        void restorePlcState();
+        void applyPlcConfigOverrides();
+        void updatePlcOverlayViews();
         void setStatus(const QString &message, bool ok);
         static cv::Mat readImage(const QString &path);
+        void loadFacette(int index);
+        void saveFacette(int index, const cv::Mat &image);
+        void captureOfflineFacette(int index);
         void updateProcessDiagnostics(const MeasurementResult &result);
         void startRuntime(bool online);
         void stopRuntime();

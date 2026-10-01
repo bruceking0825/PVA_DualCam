@@ -265,9 +265,9 @@ namespace pva
         }
         addRoiOverlay(config_.measurement.reflectorRoiCamera1, result.preview1.size(), result.overlay1);
         addRoiOverlay(config_.measurement.reflectorRoiCamera2, result.preview2.size(), result.overlay2);
-        double light1 = 0, light2 = 0;
-        cv::minMaxLoc(result.preview1, nullptr, &light1);
-        cv::minMaxLoc(result.preview2, nullptr, &light2);
+        double minimum1 = 0, light1 = 0, minimum2 = 0, light2 = 0;
+        cv::minMaxLoc(result.preview1, &minimum1, &light1);
+        cv::minMaxLoc(result.preview2, &minimum2, &light2);
         state_.filteredLight[0] = ema(state_.filteredLight[0], light1, config_.measurement.lightAlpha);
         state_.filteredLight[1] = ema(state_.filteredLight[1], light2, config_.measurement.lightAlpha);
         result.diagnostics["light_camera1"] = state_.filteredLight[0];
@@ -281,8 +281,24 @@ namespace pva
                                                  .count();
             return result;
         }
+        if (effective == MeasurementStage::Neck || effective == MeasurementStage::Crown ||
+            effective == MeasurementStage::Body)
+        {
+            // 直径报文的 14 项在测量线程内就位，页面不再解析 diagnostics 或图像。
+            const double previousDiameter = state_.values.diameterMm.value_or(0.0);
+            result.plcValues = {
+                previousDiameter, previousDiameter, 0.0, 0.0,
+                cv::mean(result.preview1)[0], light1, minimum1,
+                cv::mean(result.preview2)[0], light2, minimum2,
+                result.preview1.cols * 0.5, result.preview1.rows * 0.5,
+                result.preview2.cols * 0.5, result.preview2.rows * 0.5};
+        }
         std::pair<bool, std::string> outcome;
-        if (effective == MeasurementStage::Neck)
+        if (effective == MeasurementStage::Melt)
+            outcome = processMelt(result.preview1, result.preview2, result);
+        else if (effective == MeasurementStage::Dip)
+            outcome = processDip(result.preview1, result);
+        else if (effective == MeasurementStage::Neck)
             outcome = processNeck(result.preview1, result.preview2, result);
         else if (effective == MeasurementStage::Crown)
             outcome = processCrown(result.preview1, result.preview2, result);
@@ -294,11 +310,46 @@ namespace pva
             outcome = {false, "Unsupported stage"};
         result.valid = outcome.first;
         result.message = outcome.second;
+        if (!result.valid)
+            result.plcValues.clear();
         result.values = state_.values;
         result.diagnostics["cycle_ms"] = std::chrono::duration<double, std::milli>(
                                              std::chrono::steady_clock::now() - started)
                                              .count();
         return result;
+    }
+
+    std::pair<bool, std::string> MeasurementEngine::processMelt(
+        const cv::Mat &a, const cv::Mat &b, MeasurementResult &r)
+    {
+        if (!plcRois_.melt)
+            return {false, "Melt requires mlt_crd from PLC"};
+        const auto first = meltRoiStats(a, *plcRois_.melt, 1);
+        const auto second = meltRoiStats(b, *plcRois_.melt, 2);
+        if (!first || !second)
+            return {false, "Melt ROI is outside camera image"};
+        r.diagnostics["melt_average_camera1"] = first->average;
+        r.diagnostics["melt_maximum_camera1"] = first->maximum;
+        r.diagnostics["melt_minimum_camera1"] = first->minimum;
+        r.diagnostics["melt_average_camera2"] = second->average;
+        r.diagnostics["melt_maximum_camera2"] = second->maximum;
+        r.diagnostics["melt_minimum_camera2"] = second->minimum;
+        r.plcValues = {0.0, first->average, first->maximum, first->minimum,
+                       second->average, second->maximum, second->minimum};
+        return {true, "Melt ROI statistics updated"};
+    }
+
+    std::pair<bool, std::string> MeasurementEngine::processDip(
+        const cv::Mat &a, MeasurementResult &r)
+    {
+        if (!plcRois_.dip)
+            return {false, "Dip requires dip_crd from PLC"};
+        const auto average = dipLineMean(a, *plcRois_.dip);
+        if (!average)
+            return {false, "Dip line is outside Camera 1 image"};
+        r.diagnostics["dip_line_average_camera1"] = *average;
+        r.plcValues = {*average};
+        return {true, "Dip line statistics updated"};
     }
 
     std::pair<bool, std::string> MeasurementEngine::processNeck(const cv::Mat &a, const cv::Mat &b, MeasurementResult &r)
@@ -309,85 +360,30 @@ namespace pva
         const auto updated = applyCamera1Neck(*first, a.size(), b.size(), config_, state_, r, true);
         if (!updated.first)
             return updated;
+        const double majorAxis1 = std::max(first->ellipse.size.width, first->ellipse.size.height);
+        r.plcValues[0] = majorAxis1;
+        r.plcValues[1] = majorAxis1;
+        r.plcValues[2] = first->ellipse.center.x - first->ellipse.size.width * 0.5;
+        r.plcValues[10] = first->ellipse.center.x;
+        r.plcValues[11] = first->ellipse.center.y;
+        // 相机 2 仅补充空间参考和 PLC 顶点；未检出不影响相机 1 的 Neck 测量。
+        const auto second = algorithms::findNeckEllipse(
+            b, config_.measurement.reflectorRoiCamera2,
+            config_.neck.gradientThresholdCamera2, config_.neck.minContourAreaPx,
+            config_.neck.startSearchRatio, config_.neck.stopSearchRatio, {});
+        if (second && applyCamera2NeckReference(*second, b.size(), config_, state_, r).first)
+        {
+            r.plcValues[1] = std::max(second->ellipse.size.width, second->ellipse.size.height);
+            r.plcValues[3] = second->ellipse.center.x - second->ellipse.size.width * 0.5;
+            r.plcValues[12] = second->ellipse.center.x;
+            r.plcValues[13] = second->ellipse.center.y;
+        }
         return {true, "Neck measurement updated"};
     }
 
     std::pair<bool, std::string> MeasurementEngine::processCrown(const cv::Mat &a, const cv::Mat &b, MeasurementResult &r)
     {
-        if (!(config_.crown.diameterThreshold2Mm > config_.crown.diameterThreshold1Mm))
-            return {false, "Crown diameter threshold 2 must be greater than threshold 1"};
-
-        r.diagnostics["crown_diameter_threshold1_mm"] = config_.crown.diameterThreshold1Mm;
-        r.diagnostics["crown_diameter_threshold2_mm"] = config_.crown.diameterThreshold2Mm;
-        const bool neckTrackingActive = !state_.values.diameterMm ||
-                                        *state_.values.diameterMm <= config_.crown.diameterThreshold2Mm;
-        bool neckTrackingValid = false;
-        std::string neckTrackingError;
-        if (neckTrackingActive)
-        {
-            const auto neck = algorithms::findNeckEllipse(
-                a, config_.measurement.reflectorRoiCamera1,
-                config_.neck.gradientThresholdCamera1, config_.neck.minContourAreaPx,
-                config_.neck.startSearchRatio, config_.neck.stopSearchRatio, {});
-            if (neck)
-            {
-                const auto updated = applyCamera1Neck(*neck, a.size(), b.size(), config_, state_, r, false);
-                neckTrackingValid = updated.first;
-                neckTrackingError = updated.second;
-            }
-            else
-            {
-                neckTrackingError = detectionFailure(
-                    "Camera 1 neck meniscus detection failed during Crown transition",
-                    neck.error);
-            }
-        }
-
-        bool camera2NeckTrackingActive = false;
-        bool camera2NeckTrackingValid = false;
-        std::string camera2NeckTrackingError;
-        if (neckTrackingValid && state_.values.diameterMm)
-        {
-            camera2NeckTrackingActive =
-                *state_.values.diameterMm > config_.crown.diameterThreshold1Mm &&
-                *state_.values.diameterMm <= config_.crown.diameterThreshold2Mm;
-            if (camera2NeckTrackingActive)
-            {
-                const auto neck = algorithms::findNeckEllipse(
-                    b, config_.measurement.reflectorRoiCamera2,
-                    config_.neck.gradientThresholdCamera2, config_.neck.minContourAreaPx,
-                    config_.neck.startSearchRatio, config_.neck.stopSearchRatio, {});
-                if (neck)
-                {
-                    const auto updated = applyCamera2NeckReference(
-                        *neck, b.size(), config_, state_, r);
-                    camera2NeckTrackingValid = updated.first;
-                    camera2NeckTrackingError = updated.second;
-                }
-                else
-                {
-                    camera2NeckTrackingError = detectionFailure(
-                        "Camera 2 neck meniscus detection failed during Crown transition",
-                        neck.error);
-                }
-            }
-        }
-        r.diagnostics["crown_neck_tracking_active"] = neckTrackingActive;
-        r.diagnostics["crown_neck_tracking_valid"] = neckTrackingValid;
-        r.diagnostics["crown_camera2_neck_tracking_active"] = camera2NeckTrackingActive;
-        r.diagnostics["crown_camera2_neck_tracking_valid"] = camera2NeckTrackingValid;
-        r.diagnostics["neck_diameter_source_camera"] = 1;
-
-        if (!state_.values.diameterMm)
-            return {false, neckTrackingError.empty() ? "Crown transition requires a Camera 1 neck diameter" : neckTrackingError};
-        if (*state_.values.diameterMm <= config_.crown.diameterThreshold1Mm)
-        {
-            if (!neckTrackingValid)
-                return {false, neckTrackingError};
-            return {true, "Crown diameter updated from Camera 1 neck ellipse"};
-        }
-        if (camera2NeckTrackingActive && !camera2NeckTrackingValid)
-            return {false, camera2NeckTrackingError};
+        // Crown 始终拟合双相机曲线，不在此阶段重新检测 Neck 椭圆。
         if (!state_.validNeck || !state_.neckCentersPx)
             return {false, "Crown meniscus requires a valid Camera 1 neck reference"};
 
@@ -429,6 +425,8 @@ namespace pva
         addDiagnostics(*first, 1);
         addDiagnostics(*second, 2);
         state_.crownBoundaryPointsPx = std::array<cv::Point2d, 2>{first->boundary, second->boundary};
+        r.plcValues[2] = first->boundary.x;
+        r.plcValues[3] = second->boundary.x;
         addCurveOverlay(*first, r.overlay1);
         addCurveOverlay(*second, r.overlay2);
         return {true, "Crown meniscus lower vertices updated"};
@@ -477,6 +475,8 @@ namespace pva
         addDiagnostics(*second, 2);
         state_.bodyCentersPx = state_.neckCentersPx;
         state_.bodyBoundaryPointsPx = std::array<cv::Point2d, 2>{first->boundary, second->boundary};
+        r.plcValues[2] = first->boundary.x;
+        r.plcValues[3] = second->boundary.x;
         addCurveOverlay(*first, r.overlay1);
         addCurveOverlay(*second, r.overlay2);
         return {true, "Body meniscus lower vertices updated"};

@@ -12,6 +12,8 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFile>
+#include <QSaveFile>
+#include <QTextCursor>
 #include <QTimer>
 #include <QMessageBox>
 #include <QPixmap>
@@ -28,75 +30,6 @@ namespace pva
     namespace
     {
         constexpr int PlcMeasurementTimeoutMs = 5000;
-
-        struct GrayStatistics
-        {
-            double average{};
-            double maximum{};
-            double minimum{};
-        };
-
-        GrayStatistics grayStatistics(const cv::Mat &image)
-        {
-            if (image.empty())
-                return {};
-            cv::Mat gray;
-            if (image.channels() == 1)
-                gray = image;
-            else
-                cv::cvtColor(image, gray, image.channels() == 4 ? cv::COLOR_BGRA2GRAY : cv::COLOR_BGR2GRAY);
-            double minimum = 0.0;
-            double maximum = 0.0;
-            cv::minMaxLoc(gray, &minimum, &maximum);
-            return {cv::mean(gray)[0], maximum, minimum};
-        }
-
-        std::optional<double> diagnosticNumber(const MeasurementResult &result, const char *key)
-        {
-            const auto found = result.diagnostics.find(key);
-            if (found == result.diagnostics.end() || !found->second.isValid())
-                return {};
-            bool ok = false;
-            const double value = found->second.toDouble(&ok);
-            return ok && std::isfinite(value) ? std::optional<double>(value) : std::nullopt;
-        }
-
-        cv::Point2d diagnosticCenter(const MeasurementResult &result, int camera)
-        {
-            const std::string xKey = "neck_center_x_camera" + std::to_string(camera) + "_px";
-            const std::string yKey = "neck_center_y_camera" + std::to_string(camera) + "_px";
-            const auto x = diagnosticNumber(result, xKey.c_str());
-            const auto y = diagnosticNumber(result, yKey.c_str());
-            const cv::Mat &image = camera == 1 ? result.preview1 : result.preview2;
-            return {x.value_or(image.cols * 0.5), y.value_or(image.rows * 0.5)};
-        }
-
-        QByteArray legacyMeasurementPayload(const QString &command, const MeasurementResult &result)
-        {
-            const auto firstStats = grayStatistics(result.preview1);
-            const auto secondStats = grayStatistics(result.preview2);
-            if (command == "dip_msr")
-                return SherlockProtocol::scaledPayload("dip", {firstStats.average});
-            if (command == "mlt_msr")
-            {
-                // 当前算法没有旧版Blob计数，协议字段暂以0表示未检出。
-                return SherlockProtocol::scaledPayload(
-                    "mlt", {0.0, firstStats.average, firstStats.maximum, firstStats.minimum,
-                            secondStats.average, secondStats.maximum, secondStats.minimum});
-            }
-
-            const double diameter1 = diagnosticNumber(result, "neck_major_axis_camera1_px")
-                                         .value_or(result.values.diameterMm.value_or(0.0));
-            const double diameter2 = diagnosticNumber(result, "neck_major_axis_camera2_px")
-                                         .value_or(diameter1);
-            const cv::Point2d center1 = diagnosticCenter(result, 1);
-            const cv::Point2d center2 = diagnosticCenter(result, 2);
-            return SherlockProtocol::scaledPayload(
-                "dia", {diameter1, diameter2, diameter1 * 0.5, diameter2 * 0.5,
-                        firstStats.average, firstStats.maximum, firstStats.minimum,
-                        secondStats.average, secondStats.maximum, secondStats.minimum,
-                        center1.x, center1.y, center2.x, center2.y});
-        }
 
         bool runtimeSettingsEqual(const RuntimeSettings &left, const RuntimeSettings &right)
         {
@@ -126,6 +59,8 @@ namespace pva
         offlineTimer_ = new QTimer(this);
         plcMeasurementTimeout_ = new QTimer(this);
         plcMeasurementTimeout_->setSingleShot(true);
+        facetTimeoutTimer_ = new QTimer(this);
+        facetTimeoutTimer_->setInterval(250);
         stage_ = MeasurementStage::Neck;
     }
 
@@ -136,12 +71,12 @@ namespace pva
         ui_->cam1GraphicsView->setText("Camera 1");
         ui_->cam2GraphicsView->setText("Camera 2");
         ui_->viewSplitter->setSizes({300, 300});
-        ui_->mainSplitter->setSizes({960, 320});
+        ui_->mainSplitter->setSizes({680, 170, 300});
         auto *group = new QButtonGroup(this);
         group->setExclusive(true);
-        for (auto *b : {ui_->btnStageIdle, ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody, ui_->btnStageEndcone})
+        for (auto *b : {ui_->btnStageIdle, ui_->btnStageMelt, ui_->btnStageDip, ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody, ui_->btnStageEndcone})
             group->addButton(b);
-        ui_->btnStageIdle->setChecked(true);
+        applyStageToUi();
     }
 
     void PageHome::bindEvents()
@@ -155,10 +90,15 @@ namespace pva
                     log("PLC measurement timed out after 5000 ms");
                     pendingPlcCommand_.clear();
                     onlineFrames_.clear();
+                    awaitingMeasurementCam1_ = false;
+                    for (int index = camera2Requests_.size() - 1; index >= 0; --index)
+                        if (camera2Requests_.at(index).facetIndex == 0)
+                            camera2Requests_.removeAt(index);
                 });
+        connect(facetTimeoutTimer_, &QTimer::timeout, this, &PageHome::expireFacetRequests);
         connect(ui_->btnStart, &QPushButton::clicked, this, &PageHome::toggleRuntime);
         connect(ui_->btnOnline, &QPushButton::toggled, this, &PageHome::toggleOnline);
-        for (auto *b : {ui_->btnStageIdle, ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody, ui_->btnStageEndcone})
+        for (auto *b : {ui_->btnStageIdle, ui_->btnStageMelt, ui_->btnStageDip, ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody, ui_->btnStageEndcone})
             connect(b, &QPushButton::clicked, this, &PageHome::selectStage);
         connect(ui_->btnFirstImage, &QPushButton::clicked, this, &PageHome::firstImage);
         connect(ui_->btnPreviousImage, &QPushButton::clicked, this, &PageHome::previousImage);
@@ -190,6 +130,8 @@ namespace pva
         connect(&appSignals, &AppSignals::onlineCameraStarted, this, &PageHome::onOnlineCameraStarted);
         connect(&appSignals, &AppSignals::onlineCameraStopped, this, &PageHome::onOnlineCameraStopped);
         connect(&appSignals, &AppSignals::onlineCameraFailed, this, &PageHome::onOnlineCameraFailed);
+        connect(&appSignals, &AppSignals::onlineCaptureFailed, this, &PageHome::onOnlineCaptureFailed);
+        connect(&appSignals, &AppSignals::onlineFacetTriggerFailed, this, &PageHome::onFacetTriggerFailed);
         connect(&appSignals, &AppSignals::appClose, this, &PageHome::stopRuntime);
         connect(&ConfigManager::instance(), &ConfigManager::batchChanged, this, [this]
                 { reloadConfig(ConfigManager::instance().config()); });
@@ -202,8 +144,10 @@ namespace pva
     {
         updateViewInfo(1);
         updateViewInfo(2);
-        // Python 离线启动时由 offline_mode="neck" 进入 Neck，而不是停留在 Idle。
-        stage_ = MeasurementStage::Neck;
+        restorePlcState();
+        for (int index = 1; index <= 4; ++index)
+            loadFacette(index);
+        applyStageToUi();
         reloadImages();
         setConnectionLed(ui_->lblCamera1Status, false);
         setConnectionLed(ui_->lblCamera2Status, false);
@@ -227,11 +171,32 @@ namespace pva
                               (activeOnline_ && config_.camera.onlineCropRoi != config.camera.onlineCropRoi));
         const bool online = activeOnline_;
         const bool offlineDirectoryChanged = config_.runtime.offlineImageDir != config.runtime.offlineImageDir;
+        const bool facetDirectoryChanged = config_.runtime.facetteImageDir != config.runtime.facetteImageDir;
         if (restart)
             stopRuntime();
         config_ = config;
+        if (facetDirectoryChanged)
+            for (int index = 1; index <= 4; ++index)
+                loadFacette(index);
+        applyPlcConfigOverrides();
+        if (pointFitSelected_ &&
+            (stage_ == MeasurementStage::Crown || stage_ == MeasurementStage::Body))
+        {
+            const auto next = diameterStage(true, plcRois_,
+                                            config_.measurement.crownBodyInnerRadiusPx);
+            if (next != stage_)
+            {
+                stage_ = next;
+                QString error;
+                if (!persistPlcState(&error))
+                    log("PLC state save failed: " + error);
+                applyStageToUi();
+                emit AppSignals::instance().onlineStageChanged(int(stage_));
+            }
+        }
         if (worker_)
             worker_->updateConfig(config_);
+        updatePlcOverlayViews();
         if (offlineDirectoryChanged)
             reloadImages(true);
         else
@@ -272,6 +237,7 @@ namespace pva
             if (!stateWarning.isEmpty())
                 log("State snapshot ignored: " + stateWarning);
             worker_ = std::make_unique<MeasurementWorker>(MeasurementEngine(config_, state), config_.runtime.stateFile);
+            worker_->updatePlcRois(plcRois_);
             connect(worker_.get(), &MeasurementWorker::resultReady, this, &PageHome::showResult);
             connect(worker_.get(), &MeasurementWorker::failed, this, [this](const QString &m)
                     {
@@ -293,8 +259,8 @@ namespace pva
             startPlc();
         if (online)
         {
-            stage_ = MeasurementStage::Idle;
             emit AppSignals::instance().onlineStageChanged(int(stage_));
+            applyStageToUi();
             if (!plcOnly)
                 emit AppSignals::instance().onlineCameraStartRequested();
             log(plcOnly ? "Runtime started: PLC test (cameras disabled)" : "Runtime started: online");
@@ -315,7 +281,10 @@ namespace pva
         running_ = false;
         offlineTimer_->stop();
         plcMeasurementTimeout_->stop();
+        facetTimeoutTimer_->stop();
         onlineFrames_.clear();
+        camera2Requests_.clear();
+        awaitingMeasurementCam1_ = false;
         pendingPlcCommand_.clear();
         stopPlc();
         if (wasOnline)
@@ -358,7 +327,12 @@ namespace pva
     void PageHome::selectStage()
     {
         auto *b = qobject_cast<QPushButton *>(sender());
-        if (b == ui_->btnStageNeck)
+        const auto oldStage = stage_;
+        if (b == ui_->btnStageMelt)
+            stage_ = MeasurementStage::Melt;
+        else if (b == ui_->btnStageDip)
+            stage_ = MeasurementStage::Dip;
+        else if (b == ui_->btnStageNeck)
             stage_ = MeasurementStage::Neck;
         else if (b == ui_->btnStageCrown)
             stage_ = MeasurementStage::Crown;
@@ -368,6 +342,15 @@ namespace pva
             stage_ = MeasurementStage::Endcone;
         else
             stage_ = MeasurementStage::Idle;
+        QString stateError;
+        if (!persistPlcState(&stateError))
+        {
+            stage_ = oldStage;
+            applyStageToUi();
+            log("PLC state save failed: " + stateError);
+            return;
+        }
+        updatePlcOverlayViews();
         if (activeOnline_)
         {
             emit AppSignals::instance().onlineStageChanged(int(stage_));
@@ -436,6 +419,10 @@ namespace pva
             viewInfo_[0].roiMean = roiMean(r.preview1, config_.measurement.autoExposureRoiCamera1);
             viewInfo_[1].roiMean = roiMean(r.preview2, config_.measurement.autoExposureRoiCamera2);
         }
+        lastAlgorithmOverlay1_ = overlay1;
+        lastAlgorithmOverlay2_ = overlay2;
+        appendPlcRoiOverlays(plcRois_, stage_, config_.measurement.diaRectHeightPx,
+                             overlay1, overlay2);
         ui_->cam1GraphicsView->showImage(r.preview1, true);
         ui_->cam2GraphicsView->showImage(r.preview2, true);
         ui_->cam1GraphicsView->updateOverlays(overlay1);
@@ -450,11 +437,15 @@ namespace pva
         if (!r.valid)
             log(QString::fromStdString(r.message));
         ui_->lblLastFrame->setText("Last frame: " + QDateTime::currentDateTime().toString("HH:mm:ss"));
-        if (!pendingPlcCommand_.isEmpty())
+        if (!pendingPlcCommand_.isEmpty() && r.stage == stage_)
         {
             plcMeasurementTimeout_->stop();
             if (r.valid)
-                sendPlcPayload(legacyMeasurementPayload(pendingPlcCommand_, r));
+            {
+                const QByteArray replyName = pendingPlcCommand_ == "dip_msr" ? "dip" :
+                                             pendingPlcCommand_ == "mlt_msr" ? "mlt" : "dia";
+                sendPlcPayload(SherlockProtocol::scaledPayload(replyName, r.plcValues));
+            }
             else
                 sendPlcPayload("exe_err=Commn err");
             pendingPlcCommand_.clear();
@@ -472,7 +463,7 @@ namespace pva
         ui_->btnStart->style()->unpolish(ui_->btnStart);
         ui_->btnStart->style()->polish(ui_->btnStart);
         ui_->btnStart->setEnabled(offline);
-        for (auto *b : {ui_->btnStageIdle, ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody, ui_->btnStageEndcone})
+        for (auto *b : {ui_->btnStageIdle, ui_->btnStageMelt, ui_->btnStageDip, ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody, ui_->btnStageEndcone})
             b->setEnabled(offline);
         ui_->lblOfflineImage->setText(imageIndex_ >= 0 ? QFileInfo(imagePaths_[imageIndex_]).fileName() : "No image");
         ui_->lblOfflineImage->setToolTip(imageIndex_ >= 0 ? imagePaths_[imageIndex_] : config_.runtime.offlineImageDir);
@@ -485,14 +476,33 @@ namespace pva
 
     void PageHome::triggerOnlineCapture()
     {
-        if (!running_ || !activeOnline_)
+        if (!running_ || !activeOnline_ || pendingPlcCommand_.isEmpty())
             return;
         onlineFrames_.clear();
+        awaitingMeasurementCam1_ = true;
+        camera2Requests_.enqueue({0, 0, QDateTime::currentMSecsSinceEpoch() + PlcMeasurementTimeoutMs});
         emit AppSignals::instance().onlineCameraTriggerRequested();
     }
     void PageHome::onCameraFrame(const QString &userId, const cv::Mat &image, qint64 timestampNs)
     {
-        if (!running_ || !activeOnline_ || !worker_ || !CameraRole::Stereo.contains(userId))
+        if (!running_ || !activeOnline_ || !CameraRole::Stereo.contains(userId))
+            return;
+        if (userId == CameraRole::Cam2)
+        {
+            if (camera2Requests_.isEmpty())
+                return;
+            const auto request = camera2Requests_.dequeue();
+            if (camera2Requests_.isEmpty())
+                facetTimeoutTimer_->stop();
+            if (request.facetIndex > 0)
+            {
+                saveFacette(request.facetIndex, image);
+                return;
+            }
+        }
+        else if (!awaitingMeasurementCam1_)
+            return;
+        if (pendingPlcCommand_.isEmpty() || !worker_)
             return;
         onlineFrames_[userId] = {timestampNs, image.clone()};
         if (!onlineFrames_.contains(CameraRole::Cam1) || !onlineFrames_.contains(CameraRole::Cam2))
@@ -516,8 +526,60 @@ namespace pva
             return;
         }
         onlineFrames_.clear();
+        awaitingMeasurementCam1_ = false;
         const auto effective = stage_ == MeasurementStage::Idle ? MeasurementStage::Neck : stage_;
         worker_->submit(first.image, second.image, effective);
+    }
+    void PageHome::onOnlineCaptureFailed(const QString &userId, const QString &message)
+    {
+        if (userId == CameraRole::Cam2 && !camera2Requests_.isEmpty())
+        {
+            const auto request = camera2Requests_.dequeue();
+            if (request.facetIndex > 0)
+            {
+                const QString detail = QString("Facette%1 capture failed: %2")
+                                           .arg(request.facetIndex).arg(message);
+                log(detail);
+                setStatus(detail, false);
+                return;
+            }
+        }
+        if (!pendingPlcCommand_.isEmpty())
+            onOnlineCameraFailed("Camera " + userId + ": " + message);
+        else
+            log("Camera " + userId + ": " + message);
+    }
+    void PageHome::onFacetTriggerFailed(int requestId, const QString &message)
+    {
+        for (int index = 0; index < camera2Requests_.size(); ++index)
+            if (camera2Requests_.at(index).id == requestId)
+            {
+                const int facetIndex = camera2Requests_.at(index).facetIndex;
+                camera2Requests_.removeAt(index);
+                const QString detail = QString("Facette%1 trigger failed: %2")
+                                           .arg(facetIndex).arg(message);
+                log(detail);
+                setStatus(detail, false);
+                break;
+            }
+        if (camera2Requests_.isEmpty())
+            facetTimeoutTimer_->stop();
+    }
+    void PageHome::expireFacetRequests()
+    {
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        for (int index = camera2Requests_.size() - 1; index >= 0; --index)
+        {
+            const auto request = camera2Requests_.at(index);
+            if (request.facetIndex == 0 || request.deadlineMs > now)
+                continue;
+            camera2Requests_.removeAt(index);
+            const QString detail = QString("Facette%1 capture timed out").arg(request.facetIndex);
+            log(detail);
+            setStatus(detail, false);
+        }
+        if (camera2Requests_.isEmpty())
+            facetTimeoutTimer_->stop();
     }
     void PageHome::onCameraExposure(const QString &userId, double exposureUs)
     {
@@ -533,6 +595,16 @@ namespace pva
             return;
         setConnectionLed(ui_->lblCamera1Status, true);
         setConnectionLed(ui_->lblCamera2Status, true);
+        // 连接后重放已持久化的 PLC 曝光命令。
+        for (const auto &name : {"exptme1", "exptme2"})
+        {
+            const auto it = plcParameters_.constFind(name);
+            if (it == plcParameters_.cend() || it.value().size() != 1)
+                continue;
+            emit AppSignals::instance().plcCameraExposureRequested(
+                QString::fromLatin1(name) == "exptme1" ? CameraRole::Cam1 : CameraRole::Cam2,
+                3000.0 * it.value().front() / 100.0);
+        }
         log("Online cameras started; waiting for Sherlock TCP command");
     }
     void PageHome::onOnlineCameraStopped()
@@ -648,7 +720,9 @@ namespace pva
         if (!plcServer_)
             return;
         QString error;
-        if (!plcServer_->sendPayload(payload, &error) && !error.isEmpty())
+        if (plcServer_->sendPayload(payload, &error))
+            log("PLC <- " + QString::fromLatin1(payload));
+        else if (!error.isEmpty())
             log(error);
     }
 
@@ -656,9 +730,7 @@ namespace pva
     {
         const QString &name = command.name;
         const bool isModeCommand = name == "thr_rel" || name == "thr_abs";
-        const bool isActionCommand = name == "cfit_ne" || name == "pfit_sb" ||
-                                     name == "pic_fac1" || name == "pic_fac2" ||
-                                     name == "pic_fac3" || name == "pic_fac4";
+        const bool isActionCommand = name == "cfit_ne" || name == "pfit_sb";
         if (isModeCommand || isActionCommand)
         {
             if (!command.parameters.isEmpty())
@@ -666,12 +738,36 @@ namespace pva
                 sendPlcPayload("err_prm=" + name.toLatin1() + " requires no parameters");
                 return true;
             }
+            const bool oldRelative = plcRelativeThreshold_;
+            const bool oldPointFit = pointFitSelected_;
+            const auto oldStage = stage_;
             if (isModeCommand)
-            {
                 plcRelativeThreshold_ = name == "thr_rel";
+            else if (name == "cfit_ne" || name == "pfit_sb")
+            {
+                pointFitSelected_ = name == "pfit_sb";
+                stage_ = stageForPlcCommand(name, stage_, pointFitSelected_, plcRois_,
+                                            config_.measurement.crownBodyInnerRadiusPx);
+            }
+            QString stateError;
+            if (!persistPlcState(&stateError))
+            {
+                plcRelativeThreshold_ = oldRelative;
+                pointFitSelected_ = oldPointFit;
+                stage_ = oldStage;
+                sendPlcPayload("err_exc=state save failed");
+                log("PLC state save failed: " + stateError);
+                return true;
+            }
+            if (stage_ != oldStage)
+            {
+                applyStageToUi();
+                updatePlcOverlayViews();
+                emit AppSignals::instance().onlineStageChanged(int(stage_));
+            }
+            if (isModeCommand)
                 log(QString("PLC diameter threshold mode: %1")
                         .arg(plcRelativeThreshold_ ? "relative" : "absolute"));
-            }
             sendPlcPayload(name.toLatin1() + "=ok");
             return true;
         }
@@ -699,16 +795,40 @@ namespace pva
             sendPlcPayload("err_prm=" + error.toLatin1());
             return true;
         }
+        if ((name == "exptme1" || name == "exptme2") && values->front() <= 0.0)
+        {
+            sendPlcPayload("err_prm=exposure must be positive");
+            return true;
+        }
+        const auto oldParameters = plcParameters_;
+        const auto oldRois = plcRois_;
+        const auto oldStage = stage_;
+        if (name == "dia_crd" || name == "mlt_crd" || name == "dip_crd")
+        {
+            if (!setPlcRoi(plcRois_, name, *values, &error))
+            {
+                sendPlcPayload("err_prm=" + error.toLatin1());
+                return true;
+            }
+        }
         plcParameters_.insert(name, *values);
+        if (name == "dia_crd" || name == "mlt_crd" || name == "dip_crd")
+            stage_ = stageForPlcCommand(name, stage_, pointFitSelected_, plcRois_,
+                                        config_.measurement.crownBodyInnerRadiusPx);
+        if (!persistPlcState(&error))
+        {
+            plcParameters_ = oldParameters;
+            plcRois_ = oldRois;
+            stage_ = oldStage;
+            sendPlcPayload("err_exc=state save failed");
+            log("PLC state save failed: " + error);
+            return true;
+        }
 
         if (name == "dia_thr" || name == "diathr2")
         {
-            // PLC给出0..100%的灰度阈值；旧Sherlock将其换算到0..255。
-            const double intensity = std::clamp(values->front() * 255.0 / 100.0, 0.0, 255.0);
-            if (name == "dia_thr")
-                config_.neck.gradientThresholdCamera1 = intensity;
-            else
-                config_.neck.gradientThresholdCamera2 = intensity;
+            // PLC 百分比恢复到旧 Sherlock 的 0..255 灰度阈值。
+            applyPlcConfigOverrides();
             if (worker_)
                 worker_->updateConfig(config_);
         }
@@ -716,11 +836,6 @@ namespace pva
         {
             // 与Sherlock 4.14一致：PLC值为3000 us基准曝光的百分比。
             const double exposureUs = 3000.0 * values->front() / 100.0;
-            if (exposureUs <= 0.0)
-            {
-                sendPlcPayload("err_prm=exposure must be positive");
-                return true;
-            }
             const bool first = name == "exptme1";
             if (first)
                 config_.camera.initialExposureCamera1 = exposureUs;
@@ -728,6 +843,15 @@ namespace pva
                 config_.camera.initialExposureCamera2 = exposureUs;
             emit AppSignals::instance().plcCameraExposureRequested(
                 first ? CameraRole::Cam1 : CameraRole::Cam2, exposureUs);
+        }
+        if (name == "dia_crd" || name == "mlt_crd" || name == "dip_crd")
+        {
+            if (worker_)
+                worker_->updatePlcRois(plcRois_);
+            applyStageToUi();
+            updatePlcOverlayViews();
+            if (stage_ != oldStage)
+                emit AppSignals::instance().onlineStageChanged(int(stage_));
         }
 
         log(QString("PLC setting %1 accepted (%2 parameter(s))").arg(name).arg(expectedCount));
@@ -746,15 +870,60 @@ namespace pva
 
         log("PLC -> " + QString::fromLatin1(command.raw));
 
+        if (name == "pic_fac1" || name == "pic_fac2" ||
+            name == "pic_fac3" || name == "pic_fac4")
+        {
+            if (!command.parameters.isEmpty())
+            {
+                sendPlcPayload("err_prm=" + name.toLatin1() + " requires no parameters");
+                return;
+            }
+            const int facetIndex = name.back().digitValue();
+            // 旧 PLC 协议立即确认命令；拍照或写盘失败仅在本机报警。
+            sendPlcPayload(name.toLatin1() + "=ok");
+            if (activeOnline_ && running_)
+            {
+                const int requestId = nextFacetRequestId_++;
+                camera2Requests_.enqueue(
+                    {requestId, facetIndex,
+                     QDateTime::currentMSecsSinceEpoch() + PlcMeasurementTimeoutMs});
+                facetTimeoutTimer_->start();
+                emit AppSignals::instance().onlineFacetTriggerRequested(requestId);
+            }
+            else if (!ui_->btnOnline->isChecked())
+                captureOfflineFacette(facetIndex);
+            else
+                log(QString("Facette%1 capture failed: Camera 2 is not online").arg(facetIndex));
+            return;
+        }
+
         if (name == "acq_on_")
         {
+            const bool previous = acquisitionEnabled_;
             acquisitionEnabled_ = true;
+            QString error;
+            if (!persistPlcState(&error))
+            {
+                acquisitionEnabled_ = previous;
+                sendPlcPayload("err_exc=state save failed");
+                log("PLC state save failed: " + error);
+                return;
+            }
             sendPlcPayload("acq_on_=ok");
             return;
         }
         if (name == "acq_off")
         {
+            const bool previous = acquisitionEnabled_;
             acquisitionEnabled_ = false;
+            QString error;
+            if (!persistPlcState(&error))
+            {
+                acquisitionEnabled_ = previous;
+                sendPlcPayload("err_exc=state save failed");
+                log("PLC state save failed: " + error);
+                return;
+            }
             sendPlcPayload("acq_off=ok");
             return;
         }
@@ -781,12 +950,21 @@ namespace pva
                 return;
             }
             const auto value = SherlockProtocol::fromPlcNumber(command.parameters.front());
-            if (!value)
+            if (!value || *value <= 0.0)
             {
                 sendPlcPayload("err_prm=invalid refresh rate");
                 return;
             }
+            const double previous = plcRefreshRate_;
             plcRefreshRate_ = *value;
+            QString error;
+            if (!persistPlcState(&error))
+            {
+                plcRefreshRate_ = previous;
+                sendPlcPayload("err_exc=state save failed");
+                log("PLC state save failed: " + error);
+                return;
+            }
             sendPlcPayload("rfr_set=ok");
             return;
         }
@@ -798,7 +976,7 @@ namespace pva
             sendPlcPayload("err_unk=" + name.toLatin1());
             return;
         }
-        if (!acquisitionEnabled_ || !running_ /*|| !activeOnline_*/ || !worker_)
+        if (!acquisitionEnabled_ || !running_ || !activeOnline_ || !worker_)
         {
             sendPlcPayload("err_lck=Measurement are disabled");
             return;
@@ -809,19 +987,21 @@ namespace pva
             return;
         }
 
-        if (name == "dia_msr")
-            stage_ = MeasurementStage::Neck;
-        else if (name == "dia_rec")
-            stage_ = MeasurementStage::Neck;
-        else if (name == "dip_msr")
-            stage_ = MeasurementStage::Neck;
-        else if (name == "mlt_msr")
-            stage_ = MeasurementStage::Neck;
-        else
-            stage_ = MeasurementStage::Body;
+        const auto oldStage = stage_;
+        stage_ = stageForPlcCommand(name, stage_, pointFitSelected_, plcRois_,
+                                    config_.measurement.crownBodyInnerRadiusPx);
+        QString stateError;
+        if (!persistPlcState(&stateError))
+        {
+            stage_ = oldStage;
+            sendPlcPayload("err_exc=state save failed");
+            log("PLC state save failed: " + stateError);
+            return;
+        }
         pendingPlcCommand_ = name;
         plcMeasurementTimeout_->start(PlcMeasurementTimeoutMs);
         applyStageToUi();
+        updatePlcOverlayViews();
         emit AppSignals::instance().onlineStageChanged(int(stage_));
         triggerOnlineCapture();
     }
@@ -830,6 +1010,12 @@ namespace pva
         QPushButton *selected = ui_->btnStageIdle;
         switch (stage_)
         {
+        case MeasurementStage::Melt:
+            selected = ui_->btnStageMelt;
+            break;
+        case MeasurementStage::Dip:
+            selected = ui_->btnStageDip;
+            break;
         case MeasurementStage::Neck:
             selected = ui_->btnStageNeck;
             break;
@@ -848,7 +1034,99 @@ namespace pva
         QSignalBlocker blocker(selected);
         selected->setChecked(true);
     }
-    void PageHome::log(const QString &m) { ui_->txtLog->appendPlainText(QDateTime::currentDateTime().toString("HH:mm:ss ") + m); }
+
+    QString PageHome::plcStatePath() const
+    {
+        return QFileInfo(config_.runtime.stateFile).absoluteDir().filePath("plc_runtime_state.json");
+    }
+
+    bool PageHome::persistPlcState(QString *error) const
+    {
+        PlcRuntimeState snapshot;
+        snapshot.stage = stage_;
+        snapshot.pointFitSelected = pointFitSelected_;
+        snapshot.acquisitionEnabled = acquisitionEnabled_;
+        snapshot.relativeThreshold = plcRelativeThreshold_;
+        snapshot.refreshRate = plcRefreshRate_;
+        snapshot.parameters = plcParameters_;
+        return PlcRuntimeStore(plcStatePath()).save(snapshot, error);
+    }
+
+    void PageHome::applyPlcConfigOverrides()
+    {
+        const auto threshold = [this](const QString &name) -> std::optional<double>
+        {
+            const auto it = plcParameters_.constFind(name);
+            if (it == plcParameters_.cend() || it.value().size() != 1)
+                return {};
+            return it.value().front();
+        };
+        if (const auto value = threshold("dia_thr"))
+            config_.neck.gradientThresholdCamera1 = std::clamp(*value * 255.0 / 100.0, 0.0, 255.0);
+        if (const auto value = threshold("diathr2"))
+            config_.neck.gradientThresholdCamera2 = std::clamp(*value * 255.0 / 100.0, 0.0, 255.0);
+        if (const auto value = threshold("exptme1"); value && *value > 0.0)
+            config_.camera.initialExposureCamera1 = 3000.0 * *value / 100.0;
+        if (const auto value = threshold("exptme2"); value && *value > 0.0)
+            config_.camera.initialExposureCamera2 = 3000.0 * *value / 100.0;
+    }
+
+    void PageHome::restorePlcState()
+    {
+        PlcRuntimeState saved;
+        QString error;
+        if (!PlcRuntimeStore(plcStatePath()).load(&saved, &error))
+        {
+            log("PLC state ignored: " + error);
+            return;
+        }
+        stage_ = saved.stage;
+        pointFitSelected_ = saved.pointFitSelected;
+        acquisitionEnabled_ = saved.acquisitionEnabled;
+        plcRelativeThreshold_ = saved.relativeThreshold;
+        plcRefreshRate_ = saved.refreshRate;
+        plcParameters_ = std::move(saved.parameters);
+        for (const QString name : {"dia_crd", "mlt_crd", "dip_crd"})
+        {
+            const auto it = plcParameters_.constFind(name);
+            if (it == plcParameters_.cend())
+                continue;
+            if (!setPlcRoi(plcRois_, name, it.value(), &error))
+            {
+                plcParameters_.remove(name);
+                log("Saved PLC ROI ignored: " + error);
+            }
+        }
+        applyPlcConfigOverrides();
+    }
+
+    void PageHome::updatePlcOverlayViews()
+    {
+        auto first = lastAlgorithmOverlay1_;
+        auto second = lastAlgorithmOverlay2_;
+        appendPlcRoiOverlays(plcRois_, stage_, config_.measurement.diaRectHeightPx,
+                             first, second);
+        ui_->cam1GraphicsView->updateOverlays(first);
+        ui_->cam2GraphicsView->updateOverlays(second);
+    }
+
+    void PageHome::log(const QString &message)
+    {
+        dailyLog_.setDirectory(QFileInfo(config_.runtime.stateFile)
+                                   .absoluteDir().filePath("Log"));
+        const auto result = dailyLog_.append(QDateTime::currentDateTime(), message);
+        if (!result.written)
+            qWarning() << "Failed to write measurement log:" << result.error;
+        if (result.merged)
+        {
+            QTextCursor cursor = ui_->txtLog->textCursor();
+            cursor.movePosition(QTextCursor::End);
+            cursor.select(QTextCursor::LineUnderCursor);
+            cursor.insertText(result.line);
+        }
+        else
+            ui_->txtLog->appendPlainText(result.line);
+    }
     void PageHome::setStatus(const QString &message, bool ok)
     {
         emit AppSignals::instance().status(
@@ -864,6 +1142,90 @@ namespace pva
             return {};
         const cv::Mat buffer(1, encoded.size(), CV_8U, const_cast<char *>(encoded.constData()));
         return cv::imdecode(buffer, cv::IMREAD_UNCHANGED);
+    }
+    void PageHome::loadFacette(int index)
+    {
+        auto *views[] = {ui_->facetView1, ui_->facetView2, ui_->facetView3, ui_->facetView4};
+        if (index < 1 || index > 4)
+            return;
+        const QString filename = QString("Facette%1.bmp").arg(index);
+        const cv::Mat image = readImage(QDir(config_.runtime.facetteImageDir).filePath(filename));
+        if (image.empty())
+            views[index - 1]->setText(filename);
+        else
+            views[index - 1]->showImage(image);
+    }
+    void PageHome::saveFacette(int index, const cv::Mat &image)
+    {
+        const QString filename = QString("Facette%1.bmp").arg(index);
+        const QString path = QDir(config_.runtime.facetteImageDir).filePath(filename);
+        QString error;
+        if (image.empty())
+            error = "Camera 2 image is empty";
+        cv::Mat gray;
+        if (error.isEmpty())
+        {
+            if (image.channels() == 1)
+                gray = image;
+            else if (image.channels() == 3 || image.channels() == 4)
+                cv::cvtColor(image, gray, image.channels() == 3 ? cv::COLOR_BGR2GRAY
+                                                                  : cv::COLOR_BGRA2GRAY);
+            else
+                error = "Unsupported Camera 2 image format";
+        }
+        if (error.isEmpty() && gray.depth() != CV_8U)
+        {
+            cv::Mat converted;
+            gray.convertTo(converted, CV_8U, gray.depth() == CV_16U ? 1.0 / 256.0 : 1.0);
+            gray = converted;
+        }
+        std::vector<uchar> encoded;
+        if (error.isEmpty())
+        {
+            try
+            {
+                cv::imencode(".bmp", gray, encoded);
+            }
+            catch (const cv::Exception &exception)
+            {
+                error = QString::fromLocal8Bit(exception.what());
+            }
+        }
+        if (error.isEmpty() && !QDir().mkpath(config_.runtime.facetteImageDir))
+            error = "Cannot create Facette directory";
+        if (error.isEmpty())
+        {
+            QSaveFile file(path);
+            if (!file.open(QIODevice::WriteOnly) ||
+                file.write(reinterpret_cast<const char *>(encoded.data()),
+                           qint64(encoded.size())) != qint64(encoded.size()) ||
+                !file.commit())
+                error = file.errorString();
+        }
+        if (!error.isEmpty())
+        {
+            const QString detail = filename + " save failed: " + error;
+            log(detail);
+            setStatus(detail, false);
+            return;
+        }
+        loadFacette(index);
+        log(filename + " saved to " + path);
+    }
+    void PageHome::captureOfflineFacette(int index)
+    {
+        if (imageIndex_ < 0 || imageIndex_ >= imagePaths_.size())
+        {
+            log(QString("Facette%1 offline capture failed: no selected image").arg(index));
+            return;
+        }
+        const cv::Mat composite = readImage(imagePaths_[imageIndex_]);
+        if (composite.empty() || composite.rows % 2 != 0)
+        {
+            log(QString("Facette%1 offline capture failed: invalid stereo image").arg(index));
+            return;
+        }
+        saveFacette(index, composite.rowRange(composite.rows / 2, composite.rows));
     }
     void PageHome::updateProcessDiagnostics(const MeasurementResult &result)
     {

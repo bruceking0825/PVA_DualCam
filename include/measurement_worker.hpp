@@ -14,6 +14,7 @@ namespace pva
         ~MeasurementWorker() override;
         void submit(cv::Mat camera1, cv::Mat camera2, MeasurementStage stage);
         void updateConfig(MeasurementConfig config);
+        void updatePlcRois(PlcRois rois);
         void stop();
     signals:
         void resultReady(const pva::MeasurementResult &result);
@@ -34,6 +35,7 @@ namespace pva
         QWaitCondition condition_;
         std::optional<Pending> pending_;
         std::optional<MeasurementConfig> pendingConfig_;
+        std::optional<PlcRois> pendingRois_;
         bool stopping_{false};
     };
 }

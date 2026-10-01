@@ -192,6 +192,7 @@ namespace pva
         connect(&appSignals, &AppSignals::onlineCameraStartRequested, this, &PageCamera::startOnlineCameras);
         connect(&appSignals, &AppSignals::onlineCameraStopRequested, this, &PageCamera::stopOnlineCameras);
         connect(&appSignals, &AppSignals::onlineCameraTriggerRequested, this, &PageCamera::triggerOnlineCameras);
+        connect(&appSignals, &AppSignals::onlineFacetTriggerRequested, this, &PageCamera::triggerOnlineFacet);
         connect(&appSignals, &AppSignals::plcCameraExposureRequested, this, &PageCamera::applyPlcExposure);
         connect(&appSignals, &AppSignals::onlineStageChanged, this, [this](int stage)
                 { onlineStage_ = MeasurementStage(stage); });
@@ -503,6 +504,15 @@ namespace pva
         }
     }
 
+    void PageCamera::triggerOnlineFacet(int requestId)
+    {
+        QString error;
+        auto *value = streamOwner_ == "online" ? camera(CameraRole::Cam2) : nullptr;
+        if (!value || !value->softwareTrigger(&error))
+            emit AppSignals::instance().onlineFacetTriggerFailed(
+                requestId, error.isEmpty() ? "Camera 2 is not online" : error);
+    }
+
     void PageCamera::applyPlcExposure(const QString &userId, double exposureUs)
     {
         auto *value = camera(userId);
@@ -556,7 +566,7 @@ namespace pva
     {
         setStatus(false, "Camera " + userId + ": " + message);
         if (streamOwner_ == "online" && CameraRole::Stereo.contains(userId))
-            emit AppSignals::instance().onlineCameraFailed("Camera " + userId + ": " + message);
+            emit AppSignals::instance().onlineCaptureFailed(userId, message);
     }
 
     void PageCamera::adjustAutoExposure(DalsaCamera &value, const cv::Mat &frame, qint64 timestampNs)

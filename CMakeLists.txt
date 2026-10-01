@@ -102,6 +102,8 @@ target_link_libraries(pva_sherlock_protocol PUBLIC ${PVA_QT_PACKAGE}::Core)
 
 add_library(pva_measurement
     src/config.cpp
+    src/daily_log.cpp
+    src/plc_runtime.cpp
     src/state_store.cpp
     src/measurement_engine.cpp
     src/algorithms/image_utils.cpp
@@ -134,6 +136,8 @@ add_executable(pva_dualcam_cpp WIN32
     include/custom_graphics_view.hpp
     include/measurement_worker.hpp
     include/page_home.hpp
+    include/daily_log.hpp
+    include/plc_runtime.hpp
     include/page_camera.hpp
     include/camera_manager.hpp
     include/camera_state_store.hpp

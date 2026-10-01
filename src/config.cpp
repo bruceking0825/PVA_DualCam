@@ -197,6 +197,7 @@ namespace
             setting("Runtime", "body_sample_interval_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::bodySampleIntervalMs, minimum(50)),
             setting("Runtime", "endcone_sample_interval_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::endconeSampleIntervalMs, minimum(50)),
             setting("Runtime", "offline_image_dir", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::offlineImageDir, path()),
+            setting("Runtime", "facette_image_dir", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::facetteImageDir, path()),
             setting("Runtime", "loop_interval_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::loopIntervalMs, minimum(50)),
             setting("Runtime", "state_file", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::stateFile, path()),
             setting("Runtime", "stereo_pair_max_delta_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::stereoPairMaxDeltaMs, minimum(1)),
@@ -215,6 +216,8 @@ namespace
             setting("Camera", "auto_exposure_deadband", &pva::MeasurementConfig::camera, &pva::CameraSettings::autoExposureDeadband, minimum(0)),
             setting("Camera", "auto_exposure_interval_ms", &pva::MeasurementConfig::camera, &pva::CameraSettings::autoExposureIntervalMs, minimum(50)),
 
+            setting("Measurement", "dia_rect_height_px", &pva::MeasurementConfig::measurement, &pva::MeasurementSettings::diaRectHeightPx, minimum(1)),
+            setting("Measurement", "crown_body_inner_radius_px", &pva::MeasurementConfig::measurement, &pva::MeasurementSettings::crownBodyInnerRadiusPx, minimum(0)),
             setting("Measurement", "brightness_min", &pva::MeasurementConfig::measurement, &pva::MeasurementSettings::brightnessMin),
             setting("Measurement", "brightness_max", &pva::MeasurementConfig::measurement, &pva::MeasurementSettings::brightnessMax),
             setting("Measurement", "diameter_min_mm", &pva::MeasurementConfig::measurement, &pva::MeasurementSettings::diameterMinMm),

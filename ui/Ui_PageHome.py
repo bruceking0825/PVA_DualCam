@@ -3,7 +3,7 @@
 ################################################################################
 ## Form generated from reading UI file 'PageHome.ui'
 ##
-## Created by: Qt User Interface Compiler version 6.9.1
+## Created by: Qt User Interface Compiler version 6.10.2
 ##
 ## WARNING! All changes made in this file will be lost when recompiling UI file!
 ################################################################################
@@ -145,6 +145,35 @@ class Ui_PageHome(object):
 
         self.viewSplitter.addWidget(self.frameCam2)
         self.mainSplitter.addWidget(self.viewSplitter)
+        self.facetPanel = QFrame(self.mainSplitter)
+        self.facetPanel.setObjectName(u"facetPanel")
+        self.facetPanel.setMinimumSize(QSize(160, 0))
+        self.facetPanel.setFrameShape(QFrame.Shape.StyledPanel)
+        self.facetLayout = QVBoxLayout(self.facetPanel)
+        self.facetLayout.setSpacing(4)
+        self.facetLayout.setObjectName(u"facetLayout")
+        self.facetLayout.setContentsMargins(4, 4, 4, 4)
+        self.facetView1 = CustomGraphicsView(self.facetPanel)
+        self.facetView1.setObjectName(u"facetView1")
+
+        self.facetLayout.addWidget(self.facetView1)
+
+        self.facetView2 = CustomGraphicsView(self.facetPanel)
+        self.facetView2.setObjectName(u"facetView2")
+
+        self.facetLayout.addWidget(self.facetView2)
+
+        self.facetView3 = CustomGraphicsView(self.facetPanel)
+        self.facetView3.setObjectName(u"facetView3")
+
+        self.facetLayout.addWidget(self.facetView3)
+
+        self.facetView4 = CustomGraphicsView(self.facetPanel)
+        self.facetView4.setObjectName(u"facetView4")
+
+        self.facetLayout.addWidget(self.facetView4)
+
+        self.mainSplitter.addWidget(self.facetPanel)
         self.rightPanel = QFrame(self.mainSplitter)
         self.rightPanel.setObjectName(u"rightPanel")
         self.rightPanel.setMinimumSize(QSize(300, 0))
@@ -222,6 +251,18 @@ class Ui_PageHome(object):
         self.btnStageNeck.setCheckable(True)
 
         self.stageModeLayout.addWidget(self.btnStageNeck)
+
+        self.btnStageMelt = QPushButton(self.rightPanel)
+        self.btnStageMelt.setObjectName(u"btnStageMelt")
+        self.btnStageMelt.setCheckable(True)
+
+        self.stageModeLayout.addWidget(self.btnStageMelt)
+
+        self.btnStageDip = QPushButton(self.rightPanel)
+        self.btnStageDip.setObjectName(u"btnStageDip")
+        self.btnStageDip.setCheckable(True)
+
+        self.stageModeLayout.addWidget(self.btnStageDip)
 
         self.btnStageCrown = QPushButton(self.rightPanel)
         self.btnStageCrown.setObjectName(u"btnStageCrown")
@@ -406,6 +447,8 @@ class Ui_PageHome(object):
         self.labelOfflineMode.setText(QCoreApplication.translate("PageHome", u"Mode", None))
         self.btnStageIdle.setText(QCoreApplication.translate("PageHome", u"Idle", None))
         self.btnStageNeck.setText(QCoreApplication.translate("PageHome", u"Neck", None))
+        self.btnStageMelt.setText(QCoreApplication.translate("PageHome", u"Melt", None))
+        self.btnStageDip.setText(QCoreApplication.translate("PageHome", u"Dip", None))
         self.btnStageCrown.setText(QCoreApplication.translate("PageHome", u"Crown", None))
         self.btnStageBody.setText(QCoreApplication.translate("PageHome", u"Body", None))
         self.btnStageEndcone.setText(QCoreApplication.translate("PageHome", u"Endcone", None))

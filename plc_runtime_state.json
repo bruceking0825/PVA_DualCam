@@ -1,0 +1,42 @@
+{
+    "acquisition_enabled": true,
+    "parameters": {
+        "dia_crd": [
+            1298,
+            740,
+            35,
+            145,
+            0,
+            110,
+            -11,
+            -4
+        ],
+        "dia_thr": [
+            55
+        ],
+        "diathr2": [
+            55
+        ],
+        "dip_crd": [
+            1216,
+            754,
+            100
+        ],
+        "mlt_crd": [
+            116,
+            750,
+            100,
+            100,
+            -11,
+            -4
+        ],
+        "mlt_thr": [
+            0
+        ]
+    },
+    "point_fit_selected": true,
+    "refresh_rate": 1,
+    "relative_threshold": false,
+    "schema_version": 1,
+    "stage": 4
+}

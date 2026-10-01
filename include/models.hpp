@@ -63,6 +63,8 @@ namespace pva
         bool valid{false};
         MeasurementStage stage{MeasurementStage::Idle};
         MeasurementValues values;
+        // 未乘 100、按 PLC 报文字段顺序排列；仅有效测量用于回复。
+        std::vector<double> plcValues;
         std::unordered_map<std::string, QVariant> diagnostics;
         cv::Mat preview1;
         cv::Mat preview2;

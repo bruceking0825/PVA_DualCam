@@ -30,6 +30,9 @@ int main()
     check(SherlockProtocol::toPlcNumber(-1.0) == 0, "negative output clamps to zero");
     check(SherlockProtocol::toPlcNumber(20000.0) == SherlockProtocol::MaximumPlcNumber,
           "large output clamps to protocol maximum");
+    check(SherlockProtocol::scaledPayload("dia", {1.25, 2.5, 3.75}) ==
+              QByteArray("dia=125;250;375"),
+          "Ordered measurement values receive PLC x100 scaling");
 
     const auto roiCommand = SherlockProtocol::parseCommand(
         "dia_crd=100;200;300;400;500;600;700;800\r\n", &error);

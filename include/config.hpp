@@ -16,6 +16,7 @@ namespace pva
         int bodySampleIntervalMs{1000};
         int endconeSampleIntervalMs{1000};
         QString offlineImageDir{"../live_img"};
+        QString facetteImageDir{"D:/data/EKZData/FACETTES"};
         int loopIntervalMs{500};
         QString stateFile{"measurement_state.json"};
         int stereoPairMaxDeltaMs{1000};
@@ -40,6 +41,8 @@ namespace pva
 
     struct MeasurementSettings
     {
+        double diaRectHeightPx{80.0};
+        double crownBodyInnerRadiusPx{400.0};
         double brightnessMin{100.0};
         double brightnessMax{255.0};
         double diameterMinMm{0.0};

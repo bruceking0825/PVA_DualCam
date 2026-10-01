@@ -1,6 +1,8 @@
 #include "config.hpp"
 #include "measurement_engine.hpp"
 #include "state_store.hpp"
+#include "plc_runtime.hpp"
+#include "daily_log.hpp"
 #include "algorithms/detectors.hpp"
 #include <QCoreApplication>
 #include <QDir>
@@ -33,6 +35,161 @@ int main(int argc, char **argv)
     try
     {
         auto parsed = pva::MeasurementConfig::loadIni(cnf);
+        check(parsed.measurement.diaRectHeightPx == 80.0 &&
+                  parsed.measurement.crownBodyInnerRadiusPx == 400.0,
+              "PLC diameter ROI dimensions parsed");
+
+        pva::PlcRois plcRois;
+        QString plcError;
+        check(pva::setPlcRoi(plcRois, "dia_crd",
+                             {100, 100, 0, 90, 400, 500, 8, -6}, &plcError),
+              "Diameter PLC ROI accepted");
+        check(pva::diameterStage(true, plcRois, 400) == pva::MeasurementStage::Crown,
+              "Inner radius equal to threshold stays Crown");
+        check(pva::setPlcRoi(plcRois, "dia_crd",
+                             {100, 100, 0, 90, 401, 500, 8, -6}, &plcError) &&
+                  pva::diameterStage(true, plcRois, 400) == pva::MeasurementStage::Body,
+              "Inner radius above threshold selects Body");
+        check(pva::diameterStage(false, plcRois, 400) == pva::MeasurementStage::Neck,
+              "Circle fit selects Neck");
+        check(pva::stageForPlcCommand("cfit_ne", pva::MeasurementStage::Body,
+                                      false, plcRois, 400) == pva::MeasurementStage::Neck &&
+                  pva::stageForPlcCommand("pfit_sb", pva::MeasurementStage::Neck,
+                                           true, plcRois, 400) == pva::MeasurementStage::Body &&
+                  pva::stageForPlcCommand("dia_msr", pva::MeasurementStage::Body,
+                                           true, plcRois, 400) == pva::MeasurementStage::Body &&
+                  pva::stageForPlcCommand("mlt_msr", pva::MeasurementStage::Body,
+                                           true, plcRois, 400) == pva::MeasurementStage::Melt &&
+                  pva::stageForPlcCommand("dip_msr", pva::MeasurementStage::Melt,
+                                           true, plcRois, 400) == pva::MeasurementStage::Dip,
+              "PLC fit and measurement commands select and preserve stages");
+        check(!pva::setPlcRoi(plcRois, "dia_crd",
+                              {100, 100, 0, 90, 500, 400, 8, -6}, &plcError),
+              "Invalid diameter radii rejected");
+        check(pva::setPlcRoi(plcRois, "dia_crd",
+                             {100, 100, 0, 90, 400, 500, 8, -6}, &plcError),
+              "Diameter ROI at threshold accepted");
+        check(pva::stageForPlcCommand("pfit_sb", pva::MeasurementStage::Neck,
+                                      true, plcRois, 400) == pva::MeasurementStage::Crown,
+              "Point fit remains Crown at threshold");
+        check(pva::setPlcRoi(plcRois, "dia_crd",
+                             {100, 100, 0, 90, 401, 500, 8, -6}, &plcError) &&
+                  pva::stageForPlcCommand("dia_crd", pva::MeasurementStage::Crown,
+                                           true, plcRois, 400) == pva::MeasurementStage::Body,
+              "Later diameter coordinates switch Crown to Body");
+        check(pva::setPlcRoi(plcRois, "dia_crd",
+                             {100, 100, 0, 90, 10, 20, 8, -6}, &plcError),
+              "Diameter ROI restored for geometry checks");
+        std::vector<pva::OverlayElement> roiOverlay1, roiOverlay2;
+        pva::appendPlcRoiOverlays(plcRois, pva::MeasurementStage::Crown, 80,
+                                  roiOverlay1, roiOverlay2);
+        check(roiOverlay1.size() == 2 && roiOverlay2.size() == 2 &&
+                  std::abs(roiOverlay1[0].points.front().x - 100.0) < 1e-8 &&
+                  std::abs(roiOverlay1[0].points.front().y - 120.0) < 1e-8 &&
+                  std::abs(roiOverlay1[0].points[roiOverlay1[0].points.size() / 2 - 1].x - 80.0) < 1e-8 &&
+                  std::abs(roiOverlay2[0].points.front().x - 108.0) < 1e-8 &&
+                  roiOverlay1[1].points[0] == cv::Point2d(80, 60) &&
+                  roiOverlay1[1].points[2] == cv::Point2d(90, 140),
+              "Diameter sector angles, offsets and rectangle geometry");
+        check(pva::setPlcRoi(plcRois, "dia_crd",
+                             {100, 100, 350, 10, 10, 20, 0, 0}, &plcError),
+              "Sector crossing zero degrees accepted");
+        roiOverlay1.clear();
+        roiOverlay2.clear();
+        pva::appendPlcRoiOverlays(plcRois, pva::MeasurementStage::Crown, 80,
+                                  roiOverlay1, roiOverlay2);
+        check(roiOverlay1.size() == 2 &&
+                  roiOverlay1[0].points.front().x > 100 &&
+                  roiOverlay1[0].points[roiOverlay1[0].points.size() / 2 - 1].x < 100,
+              "Sector angle sweep crosses zero in clockwise direction");
+
+        check(pva::setPlcRoi(plcRois, "mlt_crd", {5, 5, 4, 4, 2, 1}, &plcError) &&
+                  pva::setPlcRoi(plcRois, "dip_crd", {5, 5, 5}, &plcError),
+              "Melt and Dip PLC coordinates accepted");
+        check(pva::stageForPlcCommand("mlt_crd", pva::MeasurementStage::Neck,
+                                      false, plcRois, 400) == pva::MeasurementStage::Melt &&
+                  pva::stageForPlcCommand("dip_crd", pva::MeasurementStage::Melt,
+                                           false, plcRois, 400) == pva::MeasurementStage::Dip &&
+                  pva::stageForPlcCommand("dia_crd", pva::MeasurementStage::Dip,
+                                           true, plcRois, 400) == pva::MeasurementStage::Crown,
+              "PLC coordinates immediately select their display stage");
+        cv::Mat sample1(12, 12, CV_8UC1, cv::Scalar(10));
+        cv::Mat sample2(12, 12, CV_8UC1, cv::Scalar(20));
+        sample1.at<uchar>(5, 5) = 30;
+        const auto melt1 = pva::meltRoiStats(sample1, *plcRois.melt, 1);
+        const auto melt2 = pva::meltRoiStats(sample2, *plcRois.melt, 2);
+        const auto dip = pva::dipLineMean(sample1, *plcRois.dip);
+        check(melt1 && melt2 && melt1->maximum == 30 && melt2->average == 20 &&
+                  dip && *dip > 10 && *dip < 30,
+              "Melt rectangles and Dip vertical line measure image pixels");
+        pva::MeasurementConfig statsConfig = parsed;
+        statsConfig.measurement.brightnessMin = 0;
+        statsConfig.measurement.brightnessMax = 255;
+        pva::MeasurementEngine statsEngine(statsConfig);
+        statsEngine.setPlcRois(plcRois);
+        const auto meltResult = statsEngine.process(sample1, sample2, pva::MeasurementStage::Melt);
+        const auto dipResult = statsEngine.process(sample1, sample2, pva::MeasurementStage::Dip);
+        check(meltResult.valid && meltResult.diagnostics.contains("melt_average_camera1") &&
+                  dipResult.valid && dipResult.diagnostics.contains("dip_line_average_camera1"),
+              "Melt and Dip stages produce measurement diagnostics");
+        check(meltResult.plcValues.size() == 7 &&
+                  meltResult.plcValues[0] == 0.0 &&
+                  std::abs(meltResult.plcValues[1] - melt1->average) < 0.001 &&
+                  meltResult.plcValues[2] == melt1->maximum &&
+                  meltResult.plcValues[3] == melt1->minimum &&
+                  std::abs(meltResult.plcValues[4] - melt2->average) < 0.001 &&
+                  meltResult.plcValues[5] == melt2->maximum &&
+                  meltResult.plcValues[6] == melt2->minimum &&
+                  dipResult.plcValues.size() == 1 &&
+                  std::abs(dipResult.plcValues[0] - *dip) < 0.001,
+              "Melt and Dip PLC fields are calculated by the measurement engine");
+
+        QTemporaryDir plcStateDir;
+        pva::PlcRuntimeState stateToSave;
+        stateToSave.stage = pva::MeasurementStage::Body;
+        stateToSave.pointFitSelected = true;
+        stateToSave.acquisitionEnabled = false;
+        stateToSave.relativeThreshold = true;
+        stateToSave.refreshRate = 2.5;
+        stateToSave.parameters.insert("dia_crd", {100, 100, 0, 90, 401, 500, 8, -6});
+        stateToSave.parameters.insert("mlt_crd", {5, 5, 4, 4, 2, 1});
+        stateToSave.parameters.insert("dip_crd", {5, 5, 5});
+        stateToSave.parameters.insert("dia_thr", {70});
+        stateToSave.parameters.insert("exptme1", {120});
+        pva::PlcRuntimeStore plcStore(plcStateDir.filePath("plc_runtime_state.json"));
+        pva::PlcRuntimeState loadedState;
+        check(plcStore.save(stateToSave, &plcError) &&
+                  plcStore.load(&loadedState, &plcError) &&
+                  loadedState.stage == pva::MeasurementStage::Body &&
+                  loadedState.pointFitSelected && !loadedState.acquisitionEnabled &&
+                  loadedState.relativeThreshold && loadedState.refreshRate == 2.5 &&
+                  loadedState.parameters.value("dia_crd").size() == 8 &&
+                  loadedState.parameters.value("exptme1").size() == 1 &&
+                  loadedState.parameters.value("exptme1").front() == 120,
+              "PLC mode, ROI and settings survive save and reload");
+
+        QTemporaryDir logDir;
+        pva::DailyLog dailyLog;
+        dailyLog.setDirectory(logDir.path());
+        const QDateTime firstTime(QDate(2026, 10, 1), QTime(10, 0, 0));
+        pva::DailyLogResult repeated;
+        for (int index = 0; index < 10; ++index)
+            repeated = dailyLog.append(firstTime.addSecs(index), "msg");
+        const auto changed = dailyLog.append(firstTime.addSecs(11), "next");
+        QFile firstDay(logDir.filePath("2026-10-01.log"));
+        check(firstDay.open(QIODevice::ReadOnly), "Daily log file opens");
+        const QByteArray firstDayContent = firstDay.readAll();
+        check(repeated.written && repeated.merged &&
+                  firstDayContent.contains("msg x 10\n") &&
+                  firstDayContent.contains("next\n") &&
+                  firstDayContent.count('\n') == 2 &&
+                  changed.written && !changed.merged,
+              "Ten consecutive identical messages merge into one file record");
+        const auto nextDay = dailyLog.append(firstTime.addDays(1), "next");
+        QFile secondDay(logDir.filePath("2026-10-02.log"));
+        check(nextDay.written && !nextDay.merged && secondDay.open(QIODevice::ReadOnly) &&
+                  secondDay.readAll().contains("next\n"),
+              "Daily log rotates at midnight");
         check(parsed.measurement.reflectorRoiCamera1.width > 0 &&
                   parsed.measurement.reflectorRoiCamera1.height > 0 &&
                   parsed.measurement.reflectorRoiCamera2.width > 0 &&
@@ -95,6 +252,34 @@ int main(int argc, char **argv)
                 check(result.diagnostics.contains("light_camera1") && result.diagnostics.contains("light_camera2"),
                       "Real offline frame produces Process diagnostics");
                 check(result.valid, "Real offline Neck frame detects meniscus");
+
+                // 在现场的上下拼接图片上验证新增阶段确实按 PLC 像素坐标取样。
+                pva::PlcRois liveRois;
+                const double cx = camera1.cols / 2.0;
+                const double cy = camera1.rows / 2.0;
+                check(pva::setPlcRoi(liveRois, "mlt_crd",
+                                      {cx, cy, 20, 20, 0, 0}, &plcError) &&
+                          pva::setPlcRoi(liveRois, "dip_crd",
+                                          {cx, cy, 20}, &plcError),
+                      "Real offline image PLC ROIs accepted");
+                auto liveConfig = parsed;
+                liveConfig.measurement.brightnessMin = 0;
+                liveConfig.measurement.brightnessMax = 255;
+                pva::MeasurementEngine liveStatsEngine(liveConfig);
+                liveStatsEngine.setPlcRois(liveRois);
+                const auto liveMelt = liveStatsEngine.process(
+                    camera1, camera2, pva::MeasurementStage::Melt);
+                const auto liveDip = liveStatsEngine.process(
+                    camera1, camera2, pva::MeasurementStage::Dip);
+                check(liveMelt.valid && liveDip.valid &&
+                          liveMelt.diagnostics.contains("melt_average_camera1") &&
+                          liveDip.diagnostics.contains("dip_line_average_camera1"),
+                      "Real offline stereo image supports Melt and Dip PLC statistics");
+                std::vector<pva::OverlayElement> meltOverlay1, meltOverlay2;
+                pva::appendPlcRoiOverlays(liveRois, pva::MeasurementStage::Melt, 80,
+                                          meltOverlay1, meltOverlay2);
+                check(meltOverlay1.size() == 1 && meltOverlay2.size() == 1,
+                      "Real offline stereo views each receive a Melt rectangle");
             }
         }
     }
@@ -125,6 +310,27 @@ int main(int argc, char **argv)
           "Cycle diagnostic populated");
     check(neckResult.diagnostics.contains("neck_major_axis_camera1_px"),
           "Neck process diagnostics populated");
+    check(!neckResult.diagnostics.contains("neck_ellipse_vertex_x_camera2_px") &&
+              neckResult.plcValues.size() == 14 && neckResult.plcValues[3] == 0.0,
+          "Neck Camera 2 detection failure reports zero vertex without failing measurement");
+    check(std::abs(neckResult.plcValues[2] -
+                       neckResult.diagnostics.at("neck_ellipse_vertex_x_camera1_px").toDouble()) < 0.01 &&
+              neckResult.plcValues[0] ==
+                  neckResult.diagnostics.at("neck_major_axis_camera1_px").toDouble() &&
+              neckResult.plcValues[1] == neckResult.plcValues[0] &&
+              neckResult.plcValues[4] == cv::mean(neck)[0] &&
+              neckResult.plcValues[5] == 220.0 &&
+              neckResult.plcValues[6] == 0.0 &&
+              neckResult.plcValues[7] == 100.0 &&
+              neckResult.plcValues[8] == 100.0 &&
+              neckResult.plcValues[9] == 100.0 &&
+              neckResult.plcValues[10] ==
+                  neckResult.diagnostics.at("neck_center_x_camera1_px").toDouble() &&
+              neckResult.plcValues[11] ==
+                  neckResult.diagnostics.at("neck_center_y_camera1_px").toDouble() &&
+              neckResult.plcValues[12] == 200.0 &&
+              neckResult.plcValues[13] == 200.0,
+          "Neck diameter payload uses Camera 1 left ellipse vertex");
     auto idleResult = engine.process(neck, camera2WithoutMeniscus, pva::MeasurementStage::Idle);
     check(idleResult.stage == pva::MeasurementStage::Idle && idleResult.overlay1.size() >= 4,
           "Idle uses Neck overlays while preserving Idle stage");
@@ -154,46 +360,23 @@ int main(int argc, char **argv)
               invalidNeckResult.message.find("ROI") != std::string::npos,
           "Neck detector failure reason reaches MeasurementResult message");
 
-    pva::MeasurementEngine earlyCrownEngine(config, engine.state());
-    const auto earlyCrownResult = earlyCrownEngine.process(
-        neck, camera2WithoutMeniscus, pva::MeasurementStage::Crown);
-    check(earlyCrownResult.valid &&
-              earlyCrownResult.diagnostics.at("crown_neck_tracking_active").toBool() &&
-              earlyCrownResult.diagnostics.at("crown_neck_tracking_valid").toBool() &&
-              !earlyCrownEngine.state().crownBoundaryPointsPx,
-          "Early Crown keeps Camera 1 neck diameter tracking below threshold 1");
-
-    // 直径进入两个阈值之间后，两台相机都拟合 Neck，但直径仍只取 Camera 1。
-    config.crown.diameterThreshold1Mm = 10.0;
-    config.crown.diameterThreshold2Mm = 30.0;
-    config.neck.diameterAlpha = 0.0;
+    // Neck 中两台相机均检出时，两侧顶点分别来自本次拟合。
     cv::Mat camera2Neck = cv::Mat::zeros(400, 400, CV_8U);
     cv::ellipse(camera2Neck, {240, 180}, {110, 45}, 0, 0, 360, cv::Scalar(220), 5);
-    pva::MeasurementState transitionState = engine.state();
-    transitionState.values.diameterMm = 20.0;
-    pva::MeasurementEngine transitionEngine(config, transitionState);
-    const auto transitionResult = transitionEngine.process(
-        neck, camera2Neck, pva::MeasurementStage::Crown);
-    const auto camera1TransitionHit = pva::algorithms::findNeckEllipse(
-        neck, config.measurement.reflectorRoiCamera1,
-        config.neck.gradientThresholdCamera1, config.neck.minContourAreaPx,
-        config.neck.startSearchRatio, config.neck.stopSearchRatio, {});
-    const double expectedCamera1Diameter = camera1TransitionHit
-                                               ? std::max(camera1TransitionHit->ellipse.size.width,
-                                                          camera1TransitionHit->ellipse.size.height) /
-                                                     config.neck.pixelsPerMm
-                                               : 0.0;
-    check(transitionResult.diagnostics.at("crown_camera2_neck_tracking_active").toBool() &&
-              transitionResult.diagnostics.at("crown_camera2_neck_tracking_valid").toBool(),
-          "Crown transition fits Camera 2 Neck between diameter thresholds");
-    check(transitionResult.values.diameterMm &&
-              std::abs(*transitionResult.values.diameterMm - expectedCamera1Diameter) < 0.01 &&
-              transitionResult.diagnostics.at("neck_diameter_source_camera").toInt() == 1,
-          "Crown transition diameter remains determined by Camera 1");
-    check(transitionEngine.state().neckCentersPx &&
-              std::abs((*transitionEngine.state().neckCentersPx)[1].x - 240.0) < 10.0 &&
-              transitionResult.diagnostics.contains("neck_major_axis_camera2_px"),
-          "Crown transition stores the fitted Camera 2 Neck reference");
+    pva::MeasurementEngine stereoNeckEngine(config);
+    const auto stereoNeckResult = stereoNeckEngine.process(
+        neck, camera2Neck, pva::MeasurementStage::Neck);
+    check(stereoNeckResult.valid &&
+              stereoNeckResult.diagnostics.contains("neck_major_axis_camera2_px") &&
+              stereoNeckResult.overlay2.size() >= 5 &&
+              stereoNeckResult.plcValues.size() == 14 &&
+              std::abs(stereoNeckResult.plcValues[3] -
+                       stereoNeckResult.diagnostics.at("neck_ellipse_vertex_x_camera2_px").toDouble()) < 0.01 &&
+              stereoNeckResult.plcValues[1] ==
+                  stereoNeckResult.diagnostics.at("neck_major_axis_camera2_px").toDouble() &&
+              stereoNeckResult.plcValues[12] ==
+                  stereoNeckResult.diagnostics.at("neck_center_x_camera2_px").toDouble(),
+          "Neck Camera 2 detection adds overlay and its left ellipse vertex");
 
     cv::Mat meniscus(300, 260, CV_8U, cv::Scalar(20));
     for (int y = 20; y < 280; ++y)
@@ -208,13 +391,28 @@ int main(int argc, char **argv)
     config.measurement.reflectorRoiCamera1 = config.measurement.reflectorRoiCamera2 = cv::Rect(29, 20, 231, 261);
     pva::MeasurementState crownState;
     crownState.validNeck = true;
-    crownState.values.diameterMm = 100.0;
+    crownState.values.diameterMm = 5.0;
     crownState.neckCentersPx = std::array<cv::Point2d, 2>{cv::Point2d(239, 140), cv::Point2d(239, 160)};
     pva::MeasurementEngine crownEngine(config, crownState);
     auto crownResult = crownEngine.process(meniscus, meniscus, pva::MeasurementStage::Crown);
     check(crownResult.valid, "Crown manual-ROI lower vertex valid");
-    check(!crownResult.diagnostics.at("crown_neck_tracking_active").toBool(),
-          "Crown stops Camera 1 neck fitting above diameter threshold 2");
+    check(!crownResult.diagnostics.contains("neck_major_axis_camera1_px") &&
+              !crownResult.diagnostics.contains("neck_major_axis_camera2_px") &&
+              crownResult.values.diameterMm &&
+              *crownResult.values.diameterMm == 5.0,
+          "Crown fits curves even below former diameter threshold without updating Neck diameter");
+    check(crownResult.plcValues.size() == 14 &&
+              crownResult.plcValues[2] ==
+                  crownResult.diagnostics.at("crown_boundary_camera1_px").toList()[0].toDouble() &&
+              crownResult.plcValues[3] ==
+                  crownResult.diagnostics.at("crown_boundary_camera2_px").toList()[0].toDouble() &&
+              crownResult.plcValues[0] == 5.0 && crownResult.plcValues[1] == 5.0,
+          "Crown diameter payload vertices use both fitted curve boundary x coordinates");
+    const auto missingNeckCrown = pva::MeasurementEngine(config).process(
+        meniscus, meniscus, pva::MeasurementStage::Crown);
+    check(!missingNeckCrown.valid &&
+              missingNeckCrown.message.find("valid Camera 1 neck reference") != std::string::npos,
+          "Crown requires an existing Neck reference");
     const auto hasStoredNeckCenter = [](const std::vector<pva::OverlayElement> &overlays,
                                         cv::Point2d expectedCenter)
     {
@@ -260,6 +458,12 @@ int main(int argc, char **argv)
     pva::MeasurementEngine bodyEngine(config, crownState);
     auto bodyResult = bodyEngine.process(meniscus, meniscus, pva::MeasurementStage::Body);
     check(bodyResult.valid, "Body manual-ROI lower vertex valid");
+    check(bodyResult.plcValues.size() == 14 &&
+              bodyResult.plcValues[2] ==
+                  bodyResult.diagnostics.at("body_boundary_camera1_px").toList()[0].toDouble() &&
+              bodyResult.plcValues[3] ==
+                  bodyResult.diagnostics.at("body_boundary_camera2_px").toList()[0].toDouble(),
+          "Body diameter payload vertices use both fitted curve boundary x coordinates");
     check(hasStoredNeckCenter(bodyResult.overlay1, {239, 140}) &&
               hasStoredNeckCenter(bodyResult.overlay2, {239, 160}),
           "Body overlays retain both stored Neck centers");

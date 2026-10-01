@@ -214,6 +214,25 @@
        </layout>
       </widget>
      </widget>
+     <widget class="QFrame" name="facetPanel">
+      <property name="minimumSize">
+       <size><width>160</width><height>0</height></size>
+      </property>
+      <property name="frameShape">
+       <enum>QFrame::Shape::StyledPanel</enum>
+      </property>
+      <layout class="QVBoxLayout" name="facetLayout">
+       <property name="spacing"><number>4</number></property>
+       <property name="leftMargin"><number>4</number></property>
+       <property name="topMargin"><number>4</number></property>
+       <property name="rightMargin"><number>4</number></property>
+       <property name="bottomMargin"><number>4</number></property>
+       <item><widget class="CustomGraphicsView" name="facetView1"/></item>
+       <item><widget class="CustomGraphicsView" name="facetView2"/></item>
+       <item><widget class="CustomGraphicsView" name="facetView3"/></item>
+       <item><widget class="CustomGraphicsView" name="facetView4"/></item>
+      </layout>
+     </widget>
      <widget class="QFrame" name="rightPanel">
       <property name="minimumSize">
        <size>
@@ -347,6 +366,18 @@
            <property name="checkable">
             <bool>true</bool>
            </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btnStageMelt">
+           <property name="text"><string>Melt</string></property>
+           <property name="checkable"><bool>true</bool></property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btnStageDip">
+           <property name="text"><string>Dip</string></property>
+           <property name="checkable"><bool>true</bool></property>
           </widget>
          </item>
          <item>
