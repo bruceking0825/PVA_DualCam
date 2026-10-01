@@ -356,7 +356,7 @@ namespace pva
             emit AppSignals::instance().onlineStageChanged(int(stage_));
         }
         log(QString("Offline stage selected: %1").arg(b->text()));
-        if (running_)
+        if (running_ && !activeOnline_)
             QTimer::singleShot(0, this, &PageHome::submitOfflineFrame);
     }
     void PageHome::firstImage() { setImageIndex(0); }
@@ -382,7 +382,7 @@ namespace pva
             return;
         imageIndex_ = std::clamp(index, 0, static_cast<int>(imagePaths_.size()) - 1);
         refreshControls();
-        if (running_)
+        if (running_ && !activeOnline_)
             submitOfflineFrame();
     }
     void PageHome::submitOfflineFrame()
@@ -513,7 +513,8 @@ namespace pva
         ui_->lblFrameDelta->setText(QString("Frame delta: %1 ms").arg(deltaMs, 0, 'f', 1));
         if (deltaMs > config_.runtime.stereoPairMaxDeltaMs)
         {
-            onlineFrames_.remove(first.timestampNs < second.timestampNs ? CameraRole::Cam1 : CameraRole::Cam2);
+            onlineFrames_.clear();
+            awaitingMeasurementCam1_ = false;
             const QString message = QString("Online stereo pair dropped: frame delta %1 ms > %2 ms").arg(deltaMs, 0, 'f', 1).arg(config_.runtime.stereoPairMaxDeltaMs);
             setStatus(message, false);
             log(message);
@@ -539,6 +540,8 @@ namespace pva
             {
                 const QString detail = QString("Facette%1 capture failed: %2")
                                            .arg(request.facetIndex).arg(message);
+                if (camera2Requests_.isEmpty())
+                    facetTimeoutTimer_->stop();
                 log(detail);
                 setStatus(detail, false);
                 return;
@@ -976,7 +979,7 @@ namespace pva
             sendPlcPayload("err_unk=" + name.toLatin1());
             return;
         }
-        if (!acquisitionEnabled_ || !running_ || !activeOnline_ || !worker_)
+        if (!acquisitionEnabled_ || !running_ /*|| !activeOnline_*/ || !worker_)
         {
             sendPlcPayload("err_lck=Measurement are disabled");
             return;
@@ -1145,7 +1148,8 @@ namespace pva
     }
     void PageHome::loadFacette(int index)
     {
-        auto *views[] = {ui_->facetView1, ui_->facetView2, ui_->facetView3, ui_->facetView4};
+        CustomGraphicsView *views[] = {ui_->facetView1, ui_->facetView2,
+                                       ui_->facetView3, ui_->facetView4};
         if (index < 1 || index > 4)
             return;
         const QString filename = QString("Facette%1.bmp").arg(index);
@@ -1184,7 +1188,8 @@ namespace pva
         {
             try
             {
-                cv::imencode(".bmp", gray, encoded);
+                if (!cv::imencode(".bmp", gray, encoded) || encoded.empty())
+                    error = "BMP encoding failed";
             }
             catch (const cv::Exception &exception)
             {
@@ -1216,13 +1221,17 @@ namespace pva
     {
         if (imageIndex_ < 0 || imageIndex_ >= imagePaths_.size())
         {
-            log(QString("Facette%1 offline capture failed: no selected image").arg(index));
+            const QString detail = QString("Facette%1 offline capture failed: no selected image").arg(index);
+            log(detail);
+            setStatus(detail, false);
             return;
         }
         const cv::Mat composite = readImage(imagePaths_[imageIndex_]);
         if (composite.empty() || composite.rows % 2 != 0)
         {
-            log(QString("Facette%1 offline capture failed: invalid stereo image").arg(index));
+            const QString detail = QString("Facette%1 offline capture failed: invalid stereo image").arg(index);
+            log(detail);
+            setStatus(detail, false);
             return;
         }
         saveFacette(index, composite.rowRange(composite.rows / 2, composite.rows));

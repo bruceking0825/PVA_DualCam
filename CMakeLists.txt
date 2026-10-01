@@ -196,6 +196,33 @@ if(BUILD_TESTING)
         target_link_options(sherlock_protocol_tests PRIVATE /MANIFEST:NO /INCREMENTAL:NO)
     endif()
     add_test(NAME sherlock_protocol_tests COMMAND sherlock_protocol_tests)
+    add_executable(facette_page_tests
+        tests/test_facette_page.cpp
+        src/app_signals.cpp
+        src/config_manager.cpp
+        src/custom_graphics_view.cpp
+        src/measurement_worker.cpp
+        src/page_home.cpp
+        src/sherlock_tcp_server.cpp
+        include/base_page.hpp
+        include/app_signals.hpp
+        include/config_manager.hpp
+        include/custom_graphics_view.hpp
+        include/measurement_worker.hpp
+        include/page_home.hpp
+        include/sherlock_tcp_server.hpp
+        ui/PageHome.ui
+        resources.qrc
+    )
+    set_property(TARGET facette_page_tests PROPERTY AUTOUIC_SEARCH_PATHS
+        "${CMAKE_CURRENT_SOURCE_DIR}/ui")
+    target_link_libraries(facette_page_tests PRIVATE pva_measurement pva_sherlock_protocol
+        ${PVA_QT_PACKAGE}::Gui ${PVA_QT_PACKAGE}::Widgets ${PVA_QT_PACKAGE}::Network)
+    if(MSVC)
+        target_link_options(facette_page_tests PRIVATE /MANIFEST:NO /INCREMENTAL:NO)
+    endif()
+    add_test(NAME facette_page_tests
+        COMMAND facette_page_tests "${CMAKE_CURRENT_SOURCE_DIR}/cnf.ini")
     if(WIN32)
         set_tests_properties(pva_measurement_tests PROPERTIES
             ENVIRONMENT_MODIFICATION
@@ -203,6 +230,9 @@ if(BUILD_TESTING)
         set_tests_properties(sherlock_protocol_tests PROPERTIES
             ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:${PVA_QT_PACKAGE}::Core>")
+        set_tests_properties(facette_page_tests PROPERTIES
+            ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:${PVA_QT_PACKAGE}::Core>;PATH=path_list_prepend:${OpenCV_DIR}/../bin;QT_QPA_PLATFORM=set:offscreen")
     endif()
 endif()
 

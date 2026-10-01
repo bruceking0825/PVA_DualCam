@@ -198,6 +198,9 @@ int main(int argc, char **argv)
         check(parsed.crown.diameterThreshold2Mm > parsed.crown.diameterThreshold1Mm,
               "Crown transition diameter thresholds parsed");
         check(QDir::isAbsolutePath(parsed.runtime.offlineImageDir), "Offline directory resolved relative to cnf");
+        check(QDir::isAbsolutePath(parsed.runtime.facetteImageDir) &&
+                  parsed.runtime.facetteImageDir.contains("FACETTES", Qt::CaseInsensitive),
+              "Facette output directory loaded from cnf");
         check(QDir(parsed.runtime.offlineImageDir).exists(), "Configured offline directory exists");
 
         pva::ConfigEntryUpdate update;
