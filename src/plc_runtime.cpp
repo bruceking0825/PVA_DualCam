@@ -28,23 +28,12 @@ namespace
                        {{left, top}, {right, top}, {right, bottom}, {left, bottom}},
                        color, 2, true});
     }
-    std::optional<pva::PlcGrayStats> imageStats(const cv::Mat &image, cv::Rect roi)
-    {
-        if (image.empty())
-            return {};
-        roi &= cv::Rect(0, 0, image.cols, image.rows);
-        if (roi.empty())
-            return {};
-        const cv::Mat pixels = image(roi);
-        double minimum = 0.0, maximum = 0.0;
-        cv::minMaxLoc(pixels, &minimum, &maximum);
-        return pva::PlcGrayStats{cv::mean(pixels)[0], maximum, minimum};
-    }
+
 }
 
 namespace pva
 {
-    bool setPlcRoi(PlcRois &rois, const QString &name,
+    bool setPlcRoi(MeasurementRois &rois, const QString &name,
                    const std::vector<double> &values, QString *error)
     {
         const auto reject = [error](const QString &message)
@@ -88,7 +77,7 @@ namespace pva
         return true;
     }
 
-    MeasurementStage diameterStage(bool pointFitSelected, const PlcRois &rois,
+    MeasurementStage diameterStage(bool pointFitSelected, const MeasurementRois &rois,
                                    double bodyRadiusThreshold)
     {
         if (!pointFitSelected)
@@ -99,7 +88,7 @@ namespace pva
     }
 
     MeasurementStage stageForPlcCommand(const QString &name, MeasurementStage current,
-                                        bool pointFitSelected, const PlcRois &rois,
+                                        bool pointFitSelected, const MeasurementRois &rois,
                                         double bodyRadiusThreshold)
     {
         if (name == "cfit_ne")
@@ -132,7 +121,7 @@ namespace pva
         return current;
     }
 
-    void appendPlcRoiOverlays(const PlcRois &rois, MeasurementStage stage,
+    void appendPlcRoiOverlays(const MeasurementRois &rois, MeasurementStage stage,
                               double diameterRectHeight,
                               std::vector<OverlayElement> &camera1,
                               std::vector<OverlayElement> &camera2)
@@ -182,29 +171,6 @@ namespace pva
                                 {v[0], v[1] + v[2] / 2.0}},
                                {255, 0, 255}, 2, false});
         }
-    }
-
-    std::optional<PlcGrayStats> meltRoiStats(const cv::Mat &image,
-                                            const std::array<double, 6> &v, int camera)
-    {
-        const double cx = v[0] + (camera == 2 ? v[4] : 0.0);
-        const double cy = v[1] + (camera == 2 ? v[5] : 0.0);
-        const int left = cvRound(cx - v[2] / 2.0), right = cvRound(cx + v[2] / 2.0);
-        const int top = cvRound(cy - v[3] / 2.0), bottom = cvRound(cy + v[3] / 2.0);
-        return imageStats(image, cv::Rect(left, top, right - left, bottom - top));
-    }
-
-    std::optional<double> dipLineMean(const cv::Mat &image,
-                                      const std::array<double, 3> &v)
-    {
-        if (image.empty())
-            return {};
-        const int x = cvRound(v[0]);
-        const int top = std::max(0, cvRound(v[1] - v[2] / 2.0));
-        const int bottom = std::min(image.rows, cvRound(v[1] + v[2] / 2.0) + 1);
-        if (x < 0 || x >= image.cols || top >= bottom)
-            return {};
-        return cv::mean(image(cv::Rect(x, top, 1, bottom - top)))[0];
     }
 
     bool PlcRuntimeStore::load(PlcRuntimeState *state, QString *error) const

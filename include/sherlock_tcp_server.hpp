@@ -45,5 +45,3 @@ namespace pva
         bool lastConnectionState_{false};
     };
 }
-
-Q_DECLARE_METATYPE(pva::SherlockCommand)

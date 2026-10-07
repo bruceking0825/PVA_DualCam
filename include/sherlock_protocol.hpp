@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QMetaType>
 #include <QString>
 #include <QStringList>
 #include <optional>
@@ -32,3 +33,4 @@ namespace pva
         static QByteArray framePayload(const QByteArray &payload, QString *error = nullptr);
     };
 }
+Q_DECLARE_METATYPE(pva::SherlockCommand)

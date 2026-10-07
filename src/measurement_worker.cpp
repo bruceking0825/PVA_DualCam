@@ -1,6 +1,7 @@
 #include "measurement_worker.hpp"
 #include "state_store.hpp"
 #include <QMutexLocker>
+#include "offline_image_source.hpp"
 
 namespace pva
 {
@@ -11,10 +12,21 @@ namespace pva
         stop();
         wait();
     }
-    void MeasurementWorker::submit(cv::Mat a, cv::Mat b, MeasurementStage stage)
+    void MeasurementWorker::submit(cv::Mat a, cv::Mat b, MeasurementStage stage, quint64 generation, MeasurementTaskInfo task)
+    {
+        // SDK 边界已持有图像内存；任务按只读方式引用，锁内仅交换句柄。
+        QMutexLocker lock(&mutex_);
+        if (stopping_) return;
+        generation_ = generation;
+        pending_ = Pending{std::move(a), std::move(b), stage, generation, {}, task};
+        condition_.wakeOne();
+    }
+    void MeasurementWorker::submitOffline(const QString &path, MeasurementStage stage, quint64 generation, MeasurementTaskInfo task)
     {
         QMutexLocker lock(&mutex_);
-        pending_ = Pending{a.clone(), b.clone(), stage};
+        if (stopping_) return;
+        generation_ = generation;
+        pending_ = Pending{{}, {}, stage, generation, path, task};
         condition_.wakeOne();
     }
     void MeasurementWorker::updateConfig(MeasurementConfig config)
@@ -22,10 +34,16 @@ namespace pva
         QMutexLocker lock(&mutex_);
         pendingConfig_ = std::move(config);
     }
-    void MeasurementWorker::updatePlcRois(PlcRois rois)
+    void MeasurementWorker::updateMeasurementRois(MeasurementRois rois)
     {
         QMutexLocker lock(&mutex_);
         pendingRois_ = std::move(rois);
+    }
+    void MeasurementWorker::invalidate(quint64 generation)
+    {
+        QMutexLocker lock(&mutex_);
+        generation_ = generation;
+        pending_.reset();
     }
     void MeasurementWorker::stop()
     {
@@ -35,11 +53,12 @@ namespace pva
     }
     void MeasurementWorker::run()
     {
+        OfflineImageSource offline;
         while (true)
         {
             std::optional<Pending> job;
             std::optional<MeasurementConfig> updatedConfig;
-            std::optional<PlcRois> updatedRois;
+            std::optional<MeasurementRois> updatedRois;
             {
                 QMutexLocker lock(&mutex_);
                 while (!stopping_ && !pending_)
@@ -58,19 +77,33 @@ namespace pva
                 if (updatedConfig)
                     engine_.setConfig(std::move(*updatedConfig));
                 if (updatedRois)
-                    engine_.setPlcRois(std::move(*updatedRois));
-                auto result = engine_.process(job->camera1, job->camera2, job->stage);
+                    engine_.setMeasurementRois(std::move(*updatedRois));
+                if (!job->path.isEmpty()) {
+                    const auto images = offline.load(job->path);
+                    job->camera1 = images.first;
+                    job->camera2 = images.second;
+                }
+                auto candidate = engine_;
+                auto result = candidate.process(job->camera1, job->camera2, job->stage);
+                result.generation = job->generation;
+                result.task = job->task;
+                {
+                    QMutexLocker lock(&mutex_);
+                    if (stopping_ || job->generation != generation_) continue;
+                    engine_ = std::move(candidate);
+                }
+                // PLC 结果先交付，磁盘状态写入不延迟协议回复。
+                emit resultReady(result);
                 if (result.valid && !statePath_.isEmpty())
                 {
                     QString error;
                     if (!StateStore(statePath_).save(engine_.state(), &error))
-                        emit failed("State save failed: " + error);
+                        emit persistenceFailed("State save failed: " + error);
                 }
-                emit resultReady(result);
             }
             catch (const std::exception &e)
             {
-                emit failed(QString::fromUtf8(e.what()));
+                emit failed(job->generation, QString::fromUtf8(e.what()));
             }
         }
     }

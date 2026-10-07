@@ -13,6 +13,22 @@ set(CMAKE_AUTORCC ON)
 # them explicitly so every translation unit and header gets an IntelliSense
 # configuration that can resolve the C++ standard library and Windows SDK.
 if(MSVC)
+    # Ninja 的规则文件使用 UTF-8；无英文语言包时 VSLANG 不生效，必须统一代码页。
+    set(PVA_MSVC_LAUNCHER "${CMAKE_CURRENT_SOURCE_DIR}/tools/msvc_utf8.cmd")
+    set(CMAKE_C_COMPILER_LAUNCHER "${PVA_MSVC_LAUNCHER}")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${PVA_MSVC_LAUNCHER}")
+    execute_process(COMMAND "${PVA_MSVC_LAUNCHER}" "${CMAKE_CXX_COMPILER}"
+        /nologo /utf-8 /showIncludes /EP "${CMAKE_CURRENT_SOURCE_DIR}/tools/msvc_include_probe.cpp"
+        OUTPUT_VARIABLE PVA_INCLUDE_PROBE ERROR_VARIABLE PVA_INCLUDE_PROBE_ERROR ENCODING UTF-8)
+    string(REGEX MATCH "(^|\n)([^\r\n]*: +)[A-Za-z]:[/\\\\]" PVA_INCLUDE_MATCH
+        "${PVA_INCLUDE_PROBE}\n${PVA_INCLUDE_PROBE_ERROR}")
+    if(PVA_INCLUDE_MATCH)
+        set(CMAKE_CL_SHOWINCLUDES_PREFIX "${CMAKE_MATCH_2}")
+        set(CMAKE_C_CL_SHOWINCLUDES_PREFIX "${CMAKE_CL_SHOWINCLUDES_PREFIX}")
+        set(CMAKE_CXX_CL_SHOWINCLUDES_PREFIX "${CMAKE_CL_SHOWINCLUDES_PREFIX}")
+    else()
+        message(FATAL_ERROR "Cannot detect MSVC header dependency prefix; configure from a Developer Prompt")
+    endif()
     # Source files contain Chinese comments and UI strings and are saved as
     # UTF-8.  Older MSVC toolsets otherwise decode them with the active ANSI
     # code page, which can even turn valid code after a comment into syntax
@@ -96,16 +112,18 @@ endif()
 
 add_library(pva_sherlock_protocol
     src/sherlock_protocol.cpp
+    src/measurement_payload.cpp
 )
 target_include_directories(pva_sherlock_protocol PUBLIC include)
-target_link_libraries(pva_sherlock_protocol PUBLIC ${PVA_QT_PACKAGE}::Core)
+target_link_libraries(pva_sherlock_protocol PUBLIC ${PVA_QT_PACKAGE}::Core ${OpenCV_LIBS})
 
 add_library(pva_measurement
     src/config.cpp
     src/daily_log.cpp
-    src/plc_runtime.cpp
+
     src/state_store.cpp
     src/measurement_engine.cpp
+    src/measurement_geometry.cpp
     src/algorithms/image_utils.cpp
     src/algorithms/neck_detector.cpp
     src/algorithms/meniscus_detector.cpp
@@ -114,6 +132,38 @@ add_library(pva_measurement
 target_include_directories(pva_measurement PUBLIC include)
 target_link_libraries(pva_measurement PUBLIC ${PVA_QT_PACKAGE}::Core ${OpenCV_LIBS})
 target_compile_definitions(pva_measurement PUBLIC NOMINMAX)
+
+
+# 运行服务不依赖 Widgets，可在 QCoreApplication 下进行完整业务回归。
+add_library(pva_runtime
+    src/runtime_controller.cpp
+    include/runtime_controller.hpp
+    src/plc_session.cpp
+    include/plc_session.hpp
+    src/offline_image_source.cpp
+    src/image_storage.cpp
+    include/image_storage.hpp
+    src/measurement_worker.cpp
+    include/measurement_worker.hpp
+    src/sherlock_tcp_server.cpp
+    include/sherlock_tcp_server.hpp
+    src/plc_runtime.cpp
+)
+target_include_directories(pva_runtime PUBLIC include)
+target_link_libraries(pva_runtime PUBLIC pva_measurement pva_sherlock_protocol ${PVA_QT_PACKAGE}::Network)
+
+add_library(pva_camera
+    src/camera_service.cpp
+    include/camera_service.hpp
+    src/camera_manager.cpp
+    include/camera_manager.hpp
+    src/camera_state_store.cpp
+    include/camera_state_store.hpp
+    src/dalsa_camera.cpp
+    include/dalsa_camera.hpp
+)
+target_include_directories(pva_camera PUBLIC include)
+target_link_libraries(pva_camera PUBLIC pva_measurement ${PVA_QT_PACKAGE}::Core)
 
 add_executable(pva_dualcam_cpp WIN32
     src/main.cpp
@@ -124,26 +174,24 @@ add_executable(pva_dualcam_cpp WIN32
     include/base_page.hpp
     include/config_manager.hpp
     src/custom_graphics_view.cpp
-    src/measurement_worker.cpp
+
     src/page_home.cpp
     src/page_camera.cpp
-    src/camera_manager.cpp
-    src/camera_state_store.cpp
-    src/dalsa_camera.cpp
-    src/sherlock_tcp_server.cpp
+
+    src/app_services.cpp
+    include/app_services.hpp
+
     src/page_parameters.cpp
     include/app_signals.hpp
     include/custom_graphics_view.hpp
-    include/measurement_worker.hpp
+
     include/page_home.hpp
     include/daily_log.hpp
     include/plc_runtime.hpp
     include/page_camera.hpp
-    include/camera_manager.hpp
-    include/camera_state_store.hpp
-    include/dalsa_camera.hpp
+
     include/sherlock_protocol.hpp
-    include/sherlock_tcp_server.hpp
+
     include/page_parameters.hpp
     ui/main.ui
     ui/PageHome.ui
@@ -153,7 +201,7 @@ add_executable(pva_dualcam_cpp WIN32
 )
 set_property(TARGET pva_dualcam_cpp PROPERTY AUTOUIC_SEARCH_PATHS
     "${CMAKE_CURRENT_SOURCE_DIR}/ui")
-target_link_libraries(pva_dualcam_cpp PRIVATE pva_measurement pva_sherlock_protocol
+target_link_libraries(pva_dualcam_cpp PRIVATE pva_runtime pva_camera
     ${PVA_QT_PACKAGE}::Gui ${PVA_QT_PACKAGE}::Widgets ${PVA_QT_PACKAGE}::Network)
 if(MSVC)
     # 当前工作站的cvtres.exe处理自动manifest时崩溃；程序不依赖自定义manifest。
@@ -163,9 +211,9 @@ if(EXISTS "${SAPERA_BASIC_INCLUDE}/SapClassBasic.h" AND
    EXISTS "${SAPERA_LIBRARY}" AND
    (NOT WIN32 OR PVA_SAPERA_RUNTIME_DLLS))
     message(STATUS "Sapera SDK enabled: ${SAPERA_ROOT} (${PVA_SAPERA_LIBRARY_SUBDIR})")
-    target_compile_definitions(pva_dualcam_cpp PRIVATE PVA_HAS_SAPERA=1)
-    target_include_directories(pva_dualcam_cpp SYSTEM PRIVATE "${SAPERA_INCLUDE}" "${SAPERA_BASIC_INCLUDE}")
-    target_link_libraries(pva_dualcam_cpp PRIVATE "${SAPERA_LIBRARY}")
+    target_compile_definitions(pva_camera PRIVATE PVA_HAS_SAPERA=1)
+    target_include_directories(pva_camera SYSTEM PRIVATE "${SAPERA_INCLUDE}" "${SAPERA_BASIC_INCLUDE}")
+    target_link_libraries(pva_camera PRIVATE "${SAPERA_LIBRARY}")
 else()
     message(WARNING
         "Sapera SDK/runtime not found for ${PVA_SAPERA_LIBRARY_SUBDIR}; camera support is disabled")
@@ -182,8 +230,22 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(service_lifecycle_tests
+        tests/test_services.cpp src/app_services.cpp src/config_manager.cpp src/app_signals.cpp
+        include/app_services.hpp include/config_manager.hpp include/app_signals.hpp)
+    target_link_libraries(service_lifecycle_tests PRIVATE pva_runtime pva_camera)
+    if(MSVC)
+        target_link_options(service_lifecycle_tests PRIVATE /MANIFEST:NO /INCREMENTAL:NO)
+    endif()
+    add_test(NAME service_lifecycle_tests COMMAND service_lifecycle_tests)
+    add_executable(runtime_tests tests/test_runtime.cpp)
+    target_link_libraries(runtime_tests PRIVATE pva_runtime pva_camera)
+    if(MSVC)
+        target_link_options(runtime_tests PRIVATE /MANIFEST:NO /INCREMENTAL:NO)
+    endif()
+    add_test(NAME runtime_tests COMMAND runtime_tests "${CMAKE_CURRENT_SOURCE_DIR}/cnf.ini")
     add_executable(pva_measurement_tests tests/test_measurement.cpp)
-    target_link_libraries(pva_measurement_tests PRIVATE pva_measurement)
+    target_link_libraries(pva_measurement_tests PRIVATE pva_runtime)
     if(MSVC)
         target_link_options(pva_measurement_tests PRIVATE /MANIFEST:NO /INCREMENTAL:NO)
     endif()
@@ -196,27 +258,36 @@ if(BUILD_TESTING)
         target_link_options(sherlock_protocol_tests PRIVATE /MANIFEST:NO /INCREMENTAL:NO)
     endif()
     add_test(NAME sherlock_protocol_tests COMMAND sherlock_protocol_tests)
-    add_executable(facette_page_tests
-        tests/test_facette_page.cpp
+    set(PVA_HOME_TEST_SOURCES
         src/app_signals.cpp
         src/config_manager.cpp
         src/custom_graphics_view.cpp
-        src/measurement_worker.cpp
+
         src/page_home.cpp
-        src/sherlock_tcp_server.cpp
+
         include/base_page.hpp
         include/app_signals.hpp
         include/config_manager.hpp
         include/custom_graphics_view.hpp
-        include/measurement_worker.hpp
+
         include/page_home.hpp
-        include/sherlock_tcp_server.hpp
+
         ui/PageHome.ui
         resources.qrc
     )
+    add_executable(facette_page_tests tests/test_facette_page.cpp ${PVA_HOME_TEST_SOURCES})
+    add_executable(runtime_ui_benchmark tests/runtime_ui_benchmark.cpp ${PVA_HOME_TEST_SOURCES})
+    set_property(TARGET runtime_ui_benchmark PROPERTY AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/ui")
+    target_link_libraries(runtime_ui_benchmark PRIVATE pva_runtime ${PVA_QT_PACKAGE}::Widgets)
+    if(WIN32)
+        target_link_libraries(runtime_ui_benchmark PRIVATE Psapi)
+    endif()
+    if(MSVC)
+        target_link_options(runtime_ui_benchmark PRIVATE /MANIFEST:NO /INCREMENTAL:NO)
+    endif()
     set_property(TARGET facette_page_tests PROPERTY AUTOUIC_SEARCH_PATHS
         "${CMAKE_CURRENT_SOURCE_DIR}/ui")
-    target_link_libraries(facette_page_tests PRIVATE pva_measurement pva_sherlock_protocol
+    target_link_libraries(facette_page_tests PRIVATE pva_runtime
         ${PVA_QT_PACKAGE}::Gui ${PVA_QT_PACKAGE}::Widgets ${PVA_QT_PACKAGE}::Network)
     if(MSVC)
         target_link_options(facette_page_tests PRIVATE /MANIFEST:NO /INCREMENTAL:NO)
@@ -224,7 +295,7 @@ if(BUILD_TESTING)
     add_test(NAME facette_page_tests
         COMMAND facette_page_tests "${CMAKE_CURRENT_SOURCE_DIR}/cnf.ini")
     if(WIN32)
-        set_tests_properties(pva_measurement_tests PROPERTIES
+        set_tests_properties(pva_measurement_tests runtime_tests service_lifecycle_tests PROPERTIES
             ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:${PVA_QT_PACKAGE}::Core>;PATH=path_list_prepend:${OpenCV_DIR}/../bin")
         set_tests_properties(sherlock_protocol_tests PROPERTIES
@@ -234,6 +305,8 @@ if(BUILD_TESTING)
             ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:${PVA_QT_PACKAGE}::Core>;PATH=path_list_prepend:${OpenCV_DIR}/../bin;QT_QPA_PLATFORM=set:offscreen")
     endif()
+    set_tests_properties(service_lifecycle_tests runtime_tests pva_measurement_tests sherlock_protocol_tests facette_page_tests
+        PROPERTIES TIMEOUT 30)
 endif()
 
 install(TARGETS pva_dualcam_cpp RUNTIME DESTINATION .)

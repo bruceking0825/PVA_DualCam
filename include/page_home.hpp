@@ -1,40 +1,27 @@
 #pragma once
 #include "base_page.hpp"
-#include "camera_manager.hpp"
-#include "config.hpp"
-#include "measurement_worker.hpp"
-#include "plc_runtime.hpp"
-#include "daily_log.hpp"
+#include "runtime_controller.hpp"
+#include <QElapsedTimer>
 #include <QHash>
-#include <QQueue>
-#include <array>
 #include <memory>
-#include <optional>
-#include <vector>
-
 class QTimer;
 class QLabel;
-class QByteArray;
-
+class QTreeWidgetItem;
 QT_BEGIN_NAMESPACE
-namespace Ui
-{
-    class PageHome;
-}
+namespace Ui { class PageHome; }
 QT_END_NAMESPACE
-
 namespace pva
 {
-    class SherlockTcpServer;
-    struct SherlockCommand;
-
+    // 页面只保存显示快照，不拥有采集、PLC 或测量运行状态。
     class PageHome final : public BasePage
     {
         Q_OBJECT
     public:
-        explicit PageHome(MeasurementConfig config, QWidget *parent = nullptr);
+        PageHome(MeasurementConfig config, RuntimeController &runtime, QWidget *parent = nullptr);
         ~PageHome() override;
         void reloadConfig(const MeasurementConfig &config);
+    public slots:
+        void onCameraExposure(const QString &userId, double exposureUs);
     private slots:
         void toggleRuntime();
         void toggleOnline(bool online);
@@ -43,89 +30,39 @@ namespace pva
         void previousImage();
         void nextImage();
         void lastImage();
-        void submitOfflineFrame();
-        void showResult(const pva::MeasurementResult &result);
-        void triggerOnlineCapture();
-        void onCameraFrame(const QString &userId, const cv::Mat &image, qint64 timestampNs);
-        void onCameraExposure(const QString &userId, double exposureUs);
-        void onOnlineCameraStarted();
-        void onOnlineCameraStopped();
-        void onOnlineCameraFailed(const QString &message);
-        void onOnlineCaptureFailed(const QString &userId, const QString &message);
-        void onFacetTriggerFailed(int requestId, const QString &message);
-        void expireFacetRequests();
-        void onSherlockCommand(const pva::SherlockCommand &command);
-
+        void showResult(const MeasurementResult &result);
+        void onSherlockCommand(const SherlockCommand &command);
+        void renderLatest();
     private:
         void initializeState() override;
         void setupPageUi() override;
         void bindEvents() override;
         void bindSignals() override;
         void onReady() override;
-        std::unique_ptr<Ui::PageHome> ui_;
-        MeasurementConfig config_;
-        std::unique_ptr<MeasurementWorker> worker_;
-        std::unique_ptr<SherlockTcpServer> plcServer_;
-        QTimer *offlineTimer_{};
-        QTimer *plcMeasurementTimeout_{};
-        QTimer *facetTimeoutTimer_{};
-        QStringList imagePaths_;
-        int imageIndex_{-1};
-        MeasurementStage stage_{MeasurementStage::Idle};
-        bool running_{false};
-        bool activeOnline_{false};
-        bool acquisitionEnabled_{true};
-        bool plcRelativeThreshold_{false};
-        bool pointFitSelected_{false};
-        QString pendingPlcCommand_;
-        double plcRefreshRate_{1.0};
-        // 保存旧Sherlock运行时参数；未映射到新算法的ROI仍用于协议兼容和诊断。
-        QHash<QString, std::vector<double>> plcParameters_;
-        PlcRois plcRois_;
-        std::vector<OverlayElement> lastAlgorithmOverlay1_;
-        std::vector<OverlayElement> lastAlgorithmOverlay2_;
-        DailyLog dailyLog_;
-        struct OnlineFrame { qint64 timestampNs{}; cv::Mat image; };
-        QHash<QString, OnlineFrame> onlineFrames_;
-        struct Camera2Request { int id{}; int facetIndex{}; qint64 deadlineMs{}; };
-        QQueue<Camera2Request> camera2Requests_;
-        int nextFacetRequestId_{1};
-        bool awaitingMeasurementCam1_{false};
-        struct ViewInfo
-        {
-            int x{};
-            int y{};
-            int gray{};
-            std::optional<double> light;
-            std::optional<double> exposureUs;
-            std::optional<double> roiMean;
-        };
-        std::array<ViewInfo, 2> viewInfo_{};
-        void reloadImages(bool preserve = false);
-        void setImageIndex(int index);
         void refreshControls();
-        void log(const QString &message);
-        QString plcStatePath() const;
-        bool persistPlcState(QString *error = nullptr) const;
-        void restorePlcState();
-        void applyPlcConfigOverrides();
-        void updatePlcOverlayViews();
-        void setStatus(const QString &message, bool ok);
-        static cv::Mat readImage(const QString &path);
-        void loadFacette(int index);
-        void saveFacette(int index, const cv::Mat &image);
-        void captureOfflineFacette(int index);
+        void applyStageToUi();
         void updateProcessDiagnostics(const MeasurementResult &result);
-        void startRuntime(bool online);
-        void stopRuntime();
         void setConnectionLed(QLabel *label, bool connected);
         void addAutoExposureRoi(std::vector<OverlayElement> &elements, const cv::Rect &roi, const cv::Size &size) const;
         static double roiMean(const cv::Mat &image, const cv::Rect &roi);
         void updateViewInfo(int viewId);
-        void startPlc();
-        void stopPlc();
-        void sendPlcPayload(const QByteArray &payload);
-        bool handleSherlockSettingCommand(const pva::SherlockCommand &command);
-        void applyStageToUi();
+        void paintResult(const MeasurementResult &result);
+        std::unique_ptr<Ui::PageHome> ui_;
+        RuntimeController &runtime_;
+        RuntimeSnapshot snapshot_;
+        QTimer *renderTimer_{};
+        QElapsedTimer diagnosticClock_;
+        std::optional<MeasurementResult> latestResult_;
+        bool frameDirty_{false};
+        bool diagnosticDirty_{false};
+        std::array<cv::Mat, 4> facetteImages_;
+        std::array<bool, 4> facetteDirty_{};
+        QHash<QString, QTreeWidgetItem *> diagnosticItems_;
+        struct ViewInfo
+        {
+            int x{}, y{}, gray{};
+            std::optional<double> light, exposureUs, roiMean;
+        };
+        std::array<ViewInfo, 2> viewInfo_{};
     };
 }

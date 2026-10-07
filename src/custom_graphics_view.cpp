@@ -22,6 +22,9 @@ namespace
 {
     QPixmap toPixmap(const cv::Mat &source)
     {
+        if (source.channels() == 1 && source.depth() == CV_8U)
+            return QPixmap::fromImage(QImage(source.data, source.cols, source.rows,
+                static_cast<int>(source.step), QImage::Format_Grayscale8).copy());
         cv::Mat rgb;
         if (source.channels() == 1)
             cv::cvtColor(source, rgb, cv::COLOR_GRAY2RGB);
@@ -49,6 +52,7 @@ CustomGraphicsView::CustomGraphicsView(QWidget *parent) : QGraphicsView(parent),
 }
 void CustomGraphicsView::setText(const QString &text)
 {
+    overlayItems_.clear();
     scene_.clear();
     scene_.addText(text)->setDefaultTextColor(Qt::white);
     imageItem_ = nullptr;
@@ -68,7 +72,8 @@ void CustomGraphicsView::showImage(const cv::Mat &image, bool preserveView)
         overlayGroup_->setZValue(1);
         cursorItem_ = nullptr;
     }
-    image_ = image.clone();
+    // 服务传来的图像只读且拥有引用计数；外部裸缓冲区仍需复制。
+    image_ = image.u ? image : image.clone();
     imageItem_->setPixmap(toPixmap(image_));
     scene_.setSceneRect(imageItem_->boundingRect());
     if (!preserveView || !fitted_)
@@ -82,39 +87,35 @@ void CustomGraphicsView::updateOverlays(const std::vector<pva::OverlayElement> &
     overlays_ = elements;
     if (!overlayGroup_)
         return;
-    for (auto *item : overlayGroup_->childItems())
-        delete item;
+    // 复用图元，避免每个测量结果都删除和重新创建场景对象。
+    size_t used = 0;
     for (const auto &e : elements)
     {
-        // 与 Python ContourItem 一致：线宽使用屏幕像素，不随视图缩放。
+        if (e.points.empty()) continue;
+        if (used == overlayItems_.size())
+            overlayItems_.push_back(new QGraphicsPathItem(overlayGroup_));
+        auto *item = overlayItems_[used++];
+        item->setVisible(true);
         QPen pen(color(e.colorBgr));
-        pen.setWidthF(e.width);
-        pen.setCosmetic(true);
-        if (e.type == pva::OverlayType::Cross && !e.points.empty())
-        {
-            auto p = e.points[0];
-            auto *a = new QGraphicsLineItem(-3, 0, 3, 0, overlayGroup_);
-            a->setPos(p.x + 0.5, p.y + 0.5);
-            a->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
-            a->setPen(pen);
-            auto *b = new QGraphicsLineItem(0, -3, 0, 3, overlayGroup_);
-            b->setPos(p.x + 0.5, p.y + 0.5);
-            b->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
-            b->setPen(pen);
+        pen.setWidthF(e.width); pen.setCosmetic(true);
+        item->setPen(pen);
+        QPainterPath path;
+        const bool cross = e.type == pva::OverlayType::Cross;
+        item->setFlag(QGraphicsItem::ItemIgnoresTransformations, cross);
+        if (cross) {
+            item->setPos(e.points[0].x + .5, e.points[0].y + .5);
+            path.moveTo(-3, 0); path.lineTo(3, 0); path.moveTo(0, -3); path.lineTo(0, 3);
+        } else {
+            item->setPos(0, 0);
+            path.moveTo(e.points[0].x + .5, e.points[0].y + .5);
+            for (size_t i = 1; i < e.points.size(); ++i) path.lineTo(e.points[i].x + .5, e.points[i].y + .5);
+            if (e.closed) path.closeSubpath();
         }
-        else if (e.points.size() > 1)
-        {
-            QPainterPath path;
-            path.moveTo(e.points[0].x + 0.5, e.points[0].y + 0.5);
-            for (size_t i = 1; i < e.points.size(); ++i)
-                path.lineTo(e.points[i].x + 0.5, e.points[i].y + 0.5);
-            if (e.closed)
-                path.closeSubpath();
-            auto *item = new QGraphicsPathItem(path, overlayGroup_);
-            item->setPen(pen);
-        }
+        item->setPath(path);
     }
+    for (size_t i = used; i < overlayItems_.size(); ++i) overlayItems_[i]->hide();
 }
+
 void CustomGraphicsView::contextMenuEvent(QContextMenuEvent *event)
 {
     QMenu menu(this);
@@ -318,8 +319,8 @@ void CustomGraphicsView::updatePixelInfo(int x, int y)
     if (image_.channels() == 1)
         gray = image_;
     else
-        cv::cvtColor(image_, gray, image_.channels() == 4 ? cv::COLOR_BGRA2GRAY : cv::COLOR_BGR2GRAY);
-    emit pixelInfoChanged(viewId_, x, y, gray.at<uchar>(y, x));
+        cv::cvtColor(image_(cv::Rect(x, y, 1, 1)), gray, image_.channels() == 4 ? cv::COLOR_BGRA2GRAY : cv::COLOR_BGR2GRAY);
+    emit pixelInfoChanged(viewId_, x, y, gray.at<uchar>(image_.channels() == 1 ? y : 0, image_.channels() == 1 ? x : 0));
 }
 void CustomGraphicsView::fitImage()
 {

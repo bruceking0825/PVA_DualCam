@@ -284,14 +284,12 @@ namespace pva
         if (effective == MeasurementStage::Neck || effective == MeasurementStage::Crown ||
             effective == MeasurementStage::Body)
         {
-            // 直径报文的 14 项在测量线程内就位，页面不再解析 diagnostics 或图像。
             const double previousDiameter = state_.values.diameterMm.value_or(0.0);
-            result.plcValues = {
-                previousDiameter, previousDiameter, 0.0, 0.0,
-                cv::mean(result.preview1)[0], light1, minimum1,
-                cv::mean(result.preview2)[0], light2, minimum2,
-                result.preview1.cols * 0.5, result.preview1.rows * 0.5,
-                result.preview2.cols * 0.5, result.preview2.rows * 0.5};
+            result.data.hasDiameter = true;
+            result.data.cameras[0] = {previousDiameter, 0.0, cv::mean(result.preview1)[0], light1, minimum1,
+                                      {result.preview1.cols * 0.5, result.preview1.rows * 0.5}};
+            result.data.cameras[1] = {previousDiameter, 0.0, cv::mean(result.preview2)[0], light2, minimum2,
+                                      {result.preview2.cols * 0.5, result.preview2.rows * 0.5}};
         }
         std::pair<bool, std::string> outcome;
         if (effective == MeasurementStage::Melt)
@@ -311,7 +309,7 @@ namespace pva
         result.valid = outcome.first;
         result.message = outcome.second;
         if (!result.valid)
-            result.plcValues.clear();
+            result.data = {};
         result.values = state_.values;
         result.diagnostics["cycle_ms"] = std::chrono::duration<double, std::milli>(
                                              std::chrono::steady_clock::now() - started)
@@ -322,10 +320,10 @@ namespace pva
     std::pair<bool, std::string> MeasurementEngine::processMelt(
         const cv::Mat &a, const cv::Mat &b, MeasurementResult &r)
     {
-        if (!plcRois_.melt)
+        if (!rois_.melt)
             return {false, "Melt requires mlt_crd from PLC"};
-        const auto first = meltRoiStats(a, *plcRois_.melt, 1);
-        const auto second = meltRoiStats(b, *plcRois_.melt, 2);
+        const auto first = meltRoiStats(a, *rois_.melt, 1);
+        const auto second = meltRoiStats(b, *rois_.melt, 2);
         if (!first || !second)
             return {false, "Melt ROI is outside camera image"};
         r.diagnostics["melt_average_camera1"] = first->average;
@@ -334,21 +332,23 @@ namespace pva
         r.diagnostics["melt_average_camera2"] = second->average;
         r.diagnostics["melt_maximum_camera2"] = second->maximum;
         r.diagnostics["melt_minimum_camera2"] = second->minimum;
-        r.plcValues = {0.0, first->average, first->maximum, first->minimum,
-                       second->average, second->maximum, second->minimum};
+        r.data.hasMelt = true;
+        r.data.cameras[0] = {0, 0, first->average, first->maximum, first->minimum, {}};
+        r.data.cameras[1] = {0, 0, second->average, second->maximum, second->minimum, {}};
         return {true, "Melt ROI statistics updated"};
     }
 
     std::pair<bool, std::string> MeasurementEngine::processDip(
         const cv::Mat &a, MeasurementResult &r)
     {
-        if (!plcRois_.dip)
+        if (!rois_.dip)
             return {false, "Dip requires dip_crd from PLC"};
-        const auto average = dipLineMean(a, *plcRois_.dip);
+        const auto average = dipLineMean(a, *rois_.dip);
         if (!average)
             return {false, "Dip line is outside Camera 1 image"};
         r.diagnostics["dip_line_average_camera1"] = *average;
-        r.plcValues = {*average};
+        r.data.hasDip = true;
+        r.data.dipAverage = *average;
         return {true, "Dip line statistics updated"};
     }
 
@@ -361,11 +361,11 @@ namespace pva
         if (!updated.first)
             return updated;
         const double majorAxis1 = std::max(first->ellipse.size.width, first->ellipse.size.height);
-        r.plcValues[0] = majorAxis1;
-        r.plcValues[1] = majorAxis1;
-        r.plcValues[2] = first->ellipse.center.x - first->ellipse.size.width * 0.5;
-        r.plcValues[10] = first->ellipse.center.x;
-        r.plcValues[11] = first->ellipse.center.y;
+        r.data.cameras[0].diameter = majorAxis1;
+        r.data.cameras[1].diameter = majorAxis1;
+        r.data.cameras[0].boundaryX = first->ellipse.center.x - first->ellipse.size.width * 0.5;
+        r.data.cameras[0].center.x = first->ellipse.center.x;
+        r.data.cameras[0].center.y = first->ellipse.center.y;
         // 相机 2 仅补充空间参考和 PLC 顶点；未检出不影响相机 1 的 Neck 测量。
         const auto second = algorithms::findNeckEllipse(
             b, config_.measurement.reflectorRoiCamera2,
@@ -373,10 +373,10 @@ namespace pva
             config_.neck.startSearchRatio, config_.neck.stopSearchRatio, {});
         if (second && applyCamera2NeckReference(*second, b.size(), config_, state_, r).first)
         {
-            r.plcValues[1] = std::max(second->ellipse.size.width, second->ellipse.size.height);
-            r.plcValues[3] = second->ellipse.center.x - second->ellipse.size.width * 0.5;
-            r.plcValues[12] = second->ellipse.center.x;
-            r.plcValues[13] = second->ellipse.center.y;
+            r.data.cameras[1].diameter = std::max(second->ellipse.size.width, second->ellipse.size.height);
+            r.data.cameras[1].boundaryX = second->ellipse.center.x - second->ellipse.size.width * 0.5;
+            r.data.cameras[1].center.x = second->ellipse.center.x;
+            r.data.cameras[1].center.y = second->ellipse.center.y;
         }
         return {true, "Neck measurement updated"};
     }
@@ -425,8 +425,8 @@ namespace pva
         addDiagnostics(*first, 1);
         addDiagnostics(*second, 2);
         state_.crownBoundaryPointsPx = std::array<cv::Point2d, 2>{first->boundary, second->boundary};
-        r.plcValues[2] = first->boundary.x;
-        r.plcValues[3] = second->boundary.x;
+        r.data.cameras[0].boundaryX = first->boundary.x;
+        r.data.cameras[1].boundaryX = second->boundary.x;
         addCurveOverlay(*first, r.overlay1);
         addCurveOverlay(*second, r.overlay2);
         return {true, "Crown meniscus lower vertices updated"};
@@ -475,8 +475,8 @@ namespace pva
         addDiagnostics(*second, 2);
         state_.bodyCentersPx = state_.neckCentersPx;
         state_.bodyBoundaryPointsPx = std::array<cv::Point2d, 2>{first->boundary, second->boundary};
-        r.plcValues[2] = first->boundary.x;
-        r.plcValues[3] = second->boundary.x;
+        r.data.cameras[0].boundaryX = first->boundary.x;
+        r.data.cameras[1].boundaryX = second->boundary.x;
         addCurveOverlay(*first, r.overlay1);
         addCurveOverlay(*second, r.overlay2);
         return {true, "Body meniscus lower vertices updated"};

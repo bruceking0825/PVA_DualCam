@@ -13,20 +13,8 @@ namespace pva
     public:
         static AppSignals &instance();
     signals:
-        void status(const QString &device, const QString &state, const QString &type, const QString &message);
-        void onlineCameraStartRequested();
-        void onlineCameraStopRequested();
-        void onlineCameraTriggerRequested();
-        void onlineFacetTriggerRequested(int requestId);
-        void onlineFacetTriggerFailed(int requestId, const QString &message);
-        void onlineCaptureFailed(const QString &userId, const QString &message);
-        void plcCameraExposureRequested(const QString &userId, double exposureUs);
-        void onlineStageChanged(int stage);
-        void onlineCameraStarted();
-        void onlineCameraStopped();
-        void onlineCameraFailed(const QString &message);
-        void cameraFrameCaptured(const QString &userId, const cv::Mat &image, qint64 timestampNs);
-        void cameraExposureChanged(const QString &userId, double exposureUs);
         void appClose();
+        void status(const QString &device, const QString &state, const QString &type, const QString &message);
+
     };
 }

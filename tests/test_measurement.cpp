@@ -1,4 +1,5 @@
 #include "config.hpp"
+#include "measurement_payload.hpp"
 #include "measurement_engine.hpp"
 #include "state_store.hpp"
 #include "plc_runtime.hpp"
@@ -39,7 +40,7 @@ int main(int argc, char **argv)
                   parsed.measurement.crownBodyInnerRadiusPx == 400.0,
               "PLC diameter ROI dimensions parsed");
 
-        pva::PlcRois plcRois;
+        pva::MeasurementRois plcRois;
         QString plcError;
         check(pva::setPlcRoi(plcRois, "dia_crd",
                              {100, 100, 0, 90, 400, 500, 8, -6}, &plcError),
@@ -126,22 +127,22 @@ int main(int argc, char **argv)
         statsConfig.measurement.brightnessMin = 0;
         statsConfig.measurement.brightnessMax = 255;
         pva::MeasurementEngine statsEngine(statsConfig);
-        statsEngine.setPlcRois(plcRois);
+        statsEngine.setMeasurementRois(plcRois);
         const auto meltResult = statsEngine.process(sample1, sample2, pva::MeasurementStage::Melt);
         const auto dipResult = statsEngine.process(sample1, sample2, pva::MeasurementStage::Dip);
         check(meltResult.valid && meltResult.diagnostics.contains("melt_average_camera1") &&
                   dipResult.valid && dipResult.diagnostics.contains("dip_line_average_camera1"),
               "Melt and Dip stages produce measurement diagnostics");
-        check(meltResult.plcValues.size() == 7 &&
-                  meltResult.plcValues[0] == 0.0 &&
-                  std::abs(meltResult.plcValues[1] - melt1->average) < 0.001 &&
-                  meltResult.plcValues[2] == melt1->maximum &&
-                  meltResult.plcValues[3] == melt1->minimum &&
-                  std::abs(meltResult.plcValues[4] - melt2->average) < 0.001 &&
-                  meltResult.plcValues[5] == melt2->maximum &&
-                  meltResult.plcValues[6] == melt2->minimum &&
-                  dipResult.plcValues.size() == 1 &&
-                  std::abs(dipResult.plcValues[0] - *dip) < 0.001,
+        check(pva::measurementPayloadValues(meltResult).size() == 7 &&
+                  pva::measurementPayloadValues(meltResult)[0] == 0.0 &&
+                  std::abs(pva::measurementPayloadValues(meltResult)[1] - melt1->average) < 0.001 &&
+                  pva::measurementPayloadValues(meltResult)[2] == melt1->maximum &&
+                  pva::measurementPayloadValues(meltResult)[3] == melt1->minimum &&
+                  std::abs(pva::measurementPayloadValues(meltResult)[4] - melt2->average) < 0.001 &&
+                  pva::measurementPayloadValues(meltResult)[5] == melt2->maximum &&
+                  pva::measurementPayloadValues(meltResult)[6] == melt2->minimum &&
+                  pva::measurementPayloadValues(dipResult).size() == 1 &&
+                  std::abs(pva::measurementPayloadValues(dipResult)[0] - *dip) < 0.001,
               "Melt and Dip PLC fields are calculated by the measurement engine");
 
         QTemporaryDir plcStateDir;
@@ -257,7 +258,7 @@ int main(int argc, char **argv)
                 check(result.valid, "Real offline Neck frame detects meniscus");
 
                 // 在现场的上下拼接图片上验证新增阶段确实按 PLC 像素坐标取样。
-                pva::PlcRois liveRois;
+                pva::MeasurementRois liveRois;
                 const double cx = camera1.cols / 2.0;
                 const double cy = camera1.rows / 2.0;
                 check(pva::setPlcRoi(liveRois, "mlt_crd",
@@ -269,7 +270,7 @@ int main(int argc, char **argv)
                 liveConfig.measurement.brightnessMin = 0;
                 liveConfig.measurement.brightnessMax = 255;
                 pva::MeasurementEngine liveStatsEngine(liveConfig);
-                liveStatsEngine.setPlcRois(liveRois);
+                liveStatsEngine.setMeasurementRois(liveRois);
                 const auto liveMelt = liveStatsEngine.process(
                     camera1, camera2, pva::MeasurementStage::Melt);
                 const auto liveDip = liveStatsEngine.process(
@@ -314,25 +315,25 @@ int main(int argc, char **argv)
     check(neckResult.diagnostics.contains("neck_major_axis_camera1_px"),
           "Neck process diagnostics populated");
     check(!neckResult.diagnostics.contains("neck_ellipse_vertex_x_camera2_px") &&
-              neckResult.plcValues.size() == 14 && neckResult.plcValues[3] == 0.0,
+              pva::measurementPayloadValues(neckResult).size() == 14 && pva::measurementPayloadValues(neckResult)[3] == 0.0,
           "Neck Camera 2 detection failure reports zero vertex without failing measurement");
-    check(std::abs(neckResult.plcValues[2] -
+    check(std::abs(pva::measurementPayloadValues(neckResult)[2] -
                        neckResult.diagnostics.at("neck_ellipse_vertex_x_camera1_px").toDouble()) < 0.01 &&
-              neckResult.plcValues[0] ==
+              pva::measurementPayloadValues(neckResult)[0] ==
                   neckResult.diagnostics.at("neck_major_axis_camera1_px").toDouble() &&
-              neckResult.plcValues[1] == neckResult.plcValues[0] &&
-              neckResult.plcValues[4] == cv::mean(neck)[0] &&
-              neckResult.plcValues[5] == 220.0 &&
-              neckResult.plcValues[6] == 0.0 &&
-              neckResult.plcValues[7] == 100.0 &&
-              neckResult.plcValues[8] == 100.0 &&
-              neckResult.plcValues[9] == 100.0 &&
-              neckResult.plcValues[10] ==
+              pva::measurementPayloadValues(neckResult)[1] == pva::measurementPayloadValues(neckResult)[0] &&
+              pva::measurementPayloadValues(neckResult)[4] == cv::mean(neck)[0] &&
+              pva::measurementPayloadValues(neckResult)[5] == 220.0 &&
+              pva::measurementPayloadValues(neckResult)[6] == 0.0 &&
+              pva::measurementPayloadValues(neckResult)[7] == 100.0 &&
+              pva::measurementPayloadValues(neckResult)[8] == 100.0 &&
+              pva::measurementPayloadValues(neckResult)[9] == 100.0 &&
+              pva::measurementPayloadValues(neckResult)[10] ==
                   neckResult.diagnostics.at("neck_center_x_camera1_px").toDouble() &&
-              neckResult.plcValues[11] ==
+              pva::measurementPayloadValues(neckResult)[11] ==
                   neckResult.diagnostics.at("neck_center_y_camera1_px").toDouble() &&
-              neckResult.plcValues[12] == 200.0 &&
-              neckResult.plcValues[13] == 200.0,
+              pva::measurementPayloadValues(neckResult)[12] == 200.0 &&
+              pva::measurementPayloadValues(neckResult)[13] == 200.0,
           "Neck diameter payload uses Camera 1 left ellipse vertex");
     auto idleResult = engine.process(neck, camera2WithoutMeniscus, pva::MeasurementStage::Idle);
     check(idleResult.stage == pva::MeasurementStage::Idle && idleResult.overlay1.size() >= 4,
@@ -372,12 +373,12 @@ int main(int argc, char **argv)
     check(stereoNeckResult.valid &&
               stereoNeckResult.diagnostics.contains("neck_major_axis_camera2_px") &&
               stereoNeckResult.overlay2.size() >= 5 &&
-              stereoNeckResult.plcValues.size() == 14 &&
-              std::abs(stereoNeckResult.plcValues[3] -
+              pva::measurementPayloadValues(stereoNeckResult).size() == 14 &&
+              std::abs(pva::measurementPayloadValues(stereoNeckResult)[3] -
                        stereoNeckResult.diagnostics.at("neck_ellipse_vertex_x_camera2_px").toDouble()) < 0.01 &&
-              stereoNeckResult.plcValues[1] ==
+              pva::measurementPayloadValues(stereoNeckResult)[1] ==
                   stereoNeckResult.diagnostics.at("neck_major_axis_camera2_px").toDouble() &&
-              stereoNeckResult.plcValues[12] ==
+              pva::measurementPayloadValues(stereoNeckResult)[12] ==
                   stereoNeckResult.diagnostics.at("neck_center_x_camera2_px").toDouble(),
           "Neck Camera 2 detection adds overlay and its left ellipse vertex");
 
@@ -404,12 +405,12 @@ int main(int argc, char **argv)
               crownResult.values.diameterMm &&
               *crownResult.values.diameterMm == 5.0,
           "Crown fits curves even below former diameter threshold without updating Neck diameter");
-    check(crownResult.plcValues.size() == 14 &&
-              crownResult.plcValues[2] ==
+    check(pva::measurementPayloadValues(crownResult).size() == 14 &&
+              pva::measurementPayloadValues(crownResult)[2] ==
                   crownResult.diagnostics.at("crown_boundary_camera1_px").toList()[0].toDouble() &&
-              crownResult.plcValues[3] ==
+              pva::measurementPayloadValues(crownResult)[3] ==
                   crownResult.diagnostics.at("crown_boundary_camera2_px").toList()[0].toDouble() &&
-              crownResult.plcValues[0] == 5.0 && crownResult.plcValues[1] == 5.0,
+              pva::measurementPayloadValues(crownResult)[0] == 5.0 && pva::measurementPayloadValues(crownResult)[1] == 5.0,
           "Crown diameter payload vertices use both fitted curve boundary x coordinates");
     const auto missingNeckCrown = pva::MeasurementEngine(config).process(
         meniscus, meniscus, pva::MeasurementStage::Crown);
@@ -461,10 +462,10 @@ int main(int argc, char **argv)
     pva::MeasurementEngine bodyEngine(config, crownState);
     auto bodyResult = bodyEngine.process(meniscus, meniscus, pva::MeasurementStage::Body);
     check(bodyResult.valid, "Body manual-ROI lower vertex valid");
-    check(bodyResult.plcValues.size() == 14 &&
-              bodyResult.plcValues[2] ==
+    check(pva::measurementPayloadValues(bodyResult).size() == 14 &&
+              pva::measurementPayloadValues(bodyResult)[2] ==
                   bodyResult.diagnostics.at("body_boundary_camera1_px").toList()[0].toDouble() &&
-              bodyResult.plcValues[3] ==
+              pva::measurementPayloadValues(bodyResult)[3] ==
                   bodyResult.diagnostics.at("body_boundary_camera2_px").toList()[0].toDouble(),
           "Body diameter payload vertices use both fitted curve boundary x coordinates");
     check(hasStoredNeckCenter(bodyResult.overlay1, {239, 140}) &&

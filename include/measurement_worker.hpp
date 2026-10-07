@@ -12,13 +12,16 @@ namespace pva
     public:
         explicit MeasurementWorker(MeasurementEngine engine, QString statePath = {}, QObject *parent = nullptr);
         ~MeasurementWorker() override;
-        void submit(cv::Mat camera1, cv::Mat camera2, MeasurementStage stage);
+        void submit(cv::Mat camera1, cv::Mat camera2, MeasurementStage stage, quint64 generation = 0, MeasurementTaskInfo task = {});
+        void submitOffline(const QString &path, MeasurementStage stage, quint64 generation, MeasurementTaskInfo task = {});
         void updateConfig(MeasurementConfig config);
-        void updatePlcRois(PlcRois rois);
+        void updateMeasurementRois(MeasurementRois rois);
         void stop();
+        void invalidate(quint64 generation);
     signals:
         void resultReady(const pva::MeasurementResult &result);
-        void failed(const QString &message);
+        void failed(quint64 generation, const QString &message);
+        void persistenceFailed(const QString &message);
 
     protected:
         void run() override;
@@ -28,6 +31,9 @@ namespace pva
         {
             cv::Mat camera1, camera2;
             MeasurementStage stage;
+            quint64 generation{};
+            QString path;
+            MeasurementTaskInfo task;
         };
         MeasurementEngine engine_;
         QString statePath_;
@@ -35,7 +41,8 @@ namespace pva
         QWaitCondition condition_;
         std::optional<Pending> pending_;
         std::optional<MeasurementConfig> pendingConfig_;
-        std::optional<PlcRois> pendingRois_;
+        std::optional<MeasurementRois> pendingRois_;
         bool stopping_{false};
+        quint64 generation_{};
     };
 }

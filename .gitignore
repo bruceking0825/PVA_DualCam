@@ -20,3 +20,7 @@ output/
 *.swp
 .tmp_pdf_libs/
 Thumbs.db
+
+# Isolated refactor performance comparison artifacts
+/out/baseline-refactor-20261004/
+/out/baseline-build-20261004/

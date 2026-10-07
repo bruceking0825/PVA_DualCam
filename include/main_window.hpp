@@ -15,6 +15,7 @@ QT_END_NAMESPACE
 
 namespace pva
 {
+    class AppServices;
     class PageHome;
     class PageCamera;
     class PageParameters;
@@ -47,6 +48,7 @@ namespace pva
         };
 
         std::unique_ptr<Ui::MainWindow> ui_;
+        std::unique_ptr<AppServices> services_;
         PageHome *home_{};
         PageCamera *camera_{};
         PageParameters *parameters_{};

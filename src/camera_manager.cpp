@@ -30,10 +30,20 @@ namespace pva
             if (id.isEmpty() || cameras_.contains(id))
                 continue;
             auto camera = std::make_unique<DalsaCamera>(id);
-            connect(camera.get(), &DalsaCamera::frameReady, this, &CameraManager::frameReady,
-                    Qt::QueuedConnection);
-            connect(camera.get(), &DalsaCamera::captureFailed, this, &CameraManager::captureFailed,
-                    Qt::QueuedConnection);
+            connect(camera.get(), &DalsaCamera::frameReady, this,
+                [this](const QString &id, const cv::Mat &frame, qint64 timestamp) {
+                    const auto epoch = deliveryEpoch_.load();
+                    QMetaObject::invokeMethod(this, [this, epoch, id, frame, timestamp] {
+                        if (epoch == deliveryEpoch_.load()) emit frameReady(id, frame, timestamp);
+                    }, Qt::QueuedConnection);
+                }, Qt::DirectConnection);
+            connect(camera.get(), &DalsaCamera::captureFailed, this,
+                [this](const QString &id, const QString &error) {
+                    const auto epoch = deliveryEpoch_.load();
+                    QMetaObject::invokeMethod(this, [this, epoch, id, error] {
+                        if (epoch == deliveryEpoch_.load()) emit captureFailed(id, error);
+                    }, Qt::QueuedConnection);
+                }, Qt::DirectConnection);
             cameras_.insert_or_assign(id, std::move(camera));
         }
     }
@@ -62,5 +72,7 @@ namespace pva
             Q_UNUSED(userId);
             camera->close();
         }
+        // SDK 已停止回调；使关闭前尚未投递的帧和错误事件失效。
+        ++deliveryEpoch_;
     }
 }

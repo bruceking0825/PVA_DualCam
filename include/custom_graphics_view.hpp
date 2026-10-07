@@ -1,4 +1,5 @@
 #pragma once
+class QGraphicsPathItem;
 #include "models.hpp"
 #include <QGraphicsPixmapItem>
 #include <QGraphicsScene>
@@ -30,6 +31,7 @@ private:
     QGraphicsScene scene_;
     QGraphicsPixmapItem *imageItem_{};
     QGraphicsItemGroup *overlayGroup_{};
+    std::vector<QGraphicsPathItem *> overlayItems_;
     QGraphicsItemGroup *cursorItem_{};
     cv::Mat image_;
     std::vector<pva::OverlayElement> overlays_;

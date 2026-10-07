@@ -5,6 +5,7 @@
 #include <opencv2/core.hpp>
 #include <map>
 #include <memory>
+#include <atomic>
 
 namespace pva
 {
@@ -38,5 +39,6 @@ namespace pva
     private:
         std::map<QString, std::unique_ptr<DalsaCamera>> cameras_;
         bool initialized_ = false;
+        std::atomic<quint64> deliveryEpoch_{0};
     };
 }

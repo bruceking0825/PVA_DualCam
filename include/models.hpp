@@ -58,13 +58,35 @@ namespace pva
         bool closed{false};
     };
 
+    // 领域输出：字段具有明确含义，PLC 字段顺序由适配器维护。
+    struct CameraMeasurement
+    {
+        double diameter{}, boundaryX{};
+        double average{}, maximum{}, minimum{};
+        cv::Point2d center;
+    };
+    struct MeasurementData
+    {
+        std::array<CameraMeasurement, 2> cameras;
+        double meltCount{}, dipAverage{};
+        bool hasDiameter{}, hasMelt{}, hasDip{};
+    };
+
+    enum class MeasurementSource { Offline, Online };
+    struct MeasurementTaskInfo
+    {
+        quint64 runId{}, requestId{}, configurationVersion{};
+        MeasurementSource source{MeasurementSource::Offline};
+    };
+
     struct MeasurementResult
     {
+        quint64 generation{};
+        MeasurementTaskInfo task;
         bool valid{false};
         MeasurementStage stage{MeasurementStage::Idle};
         MeasurementValues values;
-        // 未乘 100、按 PLC 报文字段顺序排列；仅有效测量用于回复。
-        std::vector<double> plcValues;
+        MeasurementData data;
         std::unordered_map<std::string, QVariant> diagnostics;
         cv::Mat preview1;
         cv::Mat preview2;

@@ -2,6 +2,7 @@
 #include "app_signals.hpp"
 #include "config_manager.hpp"
 #include "page_camera.hpp"
+#include "app_services.hpp"
 #include "page_home.hpp"
 #include "page_parameters.hpp"
 #include "ui_main.h"
@@ -77,8 +78,11 @@ namespace pva
             throw std::runtime_error("Cannot locate cnf.ini");
         auto &configManager = ConfigManager::instance();
         configManager.load(configPath_, false);
-        home_ = new PageHome(configManager.config(), ui_->stackedWidget);
-        camera_ = new PageCamera(configManager.config(), ui_->stackedWidget);
+        services_ = std::make_unique<AppServices>(configManager.config());
+        home_ = new PageHome(configManager.config(), services_->runtime(), ui_->stackedWidget);
+        camera_ = new PageCamera(services_->cameras(), ui_->stackedWidget);
+        connect(&services_->cameras(), &CameraService::cameraExposureChanged, home_, &PageHome::onCameraExposure);
+        services_->start();
         parameters_ = new PageParameters(configPath_, ui_->stackedWidget);
         ui_->stackedWidget->addWidget(home_);
         ui_->stackedWidget->addWidget(parameters_);
@@ -262,6 +266,7 @@ namespace pva
             return;
         }
         emit AppSignals::instance().appClose();
+        services_->stop();
         event->accept();
     }
     void MainWindow::mousePressEvent(QMouseEvent *event)
