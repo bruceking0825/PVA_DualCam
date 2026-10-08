@@ -51,6 +51,13 @@ class Ui_PageHome(object):
 "    border-right: 2px solid rgb(70, 80, 110);\n"
 "    background: transparent;\n"
 "}\n"
+"#facetPanel {\n"
+"    border-top: 2px solid rgb(70, 80, 110);\n"
+"    border-left: 0px solid rgb(70, 80, 110);\n"
+"    border-bottom: 2px solid rgb(70, 80, 110);\n"
+"    border-right: 0px solid rgb(70, 80, 110);\n"
+"    background: transparent;\n"
+"}\n"
 "#rightPanel QLabel {\n"
 "    border: 0px;\n"
 "}")

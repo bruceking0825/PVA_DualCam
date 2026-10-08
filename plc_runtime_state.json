@@ -6,7 +6,7 @@
             740,
             35,
             145,
-            0,
+            10,
             110,
             -11,
             -4
@@ -38,5 +38,5 @@
     "refresh_rate": 1,
     "relative_threshold": false,
     "schema_version": 1,
-    "stage": 3
+    "stage": 5
 }

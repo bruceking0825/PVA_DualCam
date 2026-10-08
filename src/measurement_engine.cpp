@@ -178,9 +178,9 @@ namespace
     void initializeCrownDiagnostics(pva::MeasurementResult &result)
     {
         static const std::array<const char *, 17> cameraKeys{
-            "crown_bottom_margin_camera%1_px", "crown_tracking_half_height_camera%1_px",
-            "crown_column_strengths_mean_camera%1", "crown_column_strengths_maximum_camera%1",
-            "crown_minimum_strength_camera%1", "crown_kept_column_count_camera%1",
+            "crown_left_margin_camera%1_px", "crown_tracking_half_width_camera%1_px",
+            "crown_row_strengths_mean_camera%1", "crown_row_strengths_maximum_camera%1",
+            "crown_minimum_strength_camera%1", "crown_kept_row_count_camera%1",
             "crown_seed_x_camera%1_px", "crown_edge_point_count_camera%1",
             "crown_residual_limit_camera%1_px", "crown_robust_inlier_count_camera%1",
             "crown_sagitta_camera%1_px", "crown_center_camera%1_px",
@@ -199,9 +199,9 @@ namespace
     {
         static const std::array<const char *, 17> cameraKeys{
             "body_search_start_x_camera%1_px", "body_search_stop_x_camera%1_px",
-            "body_bottom_margin_camera%1_px", "body_tracking_half_height_camera%1_px",
+            "body_left_margin_camera%1_px", "body_tracking_half_width_camera%1_px",
             "body_brightness_offset_camera%1", "body_threshold_crossing_count_camera%1",
-            "body_column_maximum_p90_camera%1", "body_column_maximum_maximum_camera%1",
+            "body_row_maximum_p90_camera%1", "body_row_maximum_maximum_camera%1",
             "body_residual_limit_camera%1_px", "body_robust_inlier_count_camera%1",
             "body_coverage_ratio_camera%1", "body_sagitta_camera%1_px",
             "body_center_camera%1_px", "body_boundary_camera%1_px",
@@ -370,7 +370,8 @@ namespace pva
         const auto second = algorithms::findNeckEllipse(
             b, config_.measurement.reflectorRoiCamera2,
             config_.neck.gradientThresholdCamera2, config_.neck.minContourAreaPx,
-            config_.neck.startSearchRatio, config_.neck.stopSearchRatio, {});
+            config_.neck.startSearchRatio, config_.neck.stopSearchRatio, {},
+            config_.neck.ellipseWidthHeightRatioCamera2);
         if (second && applyCamera2NeckReference(*second, b.size(), config_, state_, r).first)
         {
             r.data.cameras[1].diameter = std::max(second->ellipse.size.width, second->ellipse.size.height);
@@ -388,7 +389,7 @@ namespace pva
             return {false, "Crown meniscus requires a valid Camera 1 neck reference"};
 
         std::optional<double> p1, p2;
-        if (config_.crown.usePreviousBoundaryY && state_.crownBoundaryPointsPx)
+        if (config_.crown.usePreviousBoundaryX && state_.crownBoundaryPointsPx)
         {
             p1 = (*state_.crownBoundaryPointsPx)[0].x;
             p2 = (*state_.crownBoundaryPointsPx)[1].x;
@@ -404,12 +405,12 @@ namespace pva
         const auto addDiagnostics = [&r, this](const algorithms::CurveHit &hit, int camera)
         {
             const std::string suffix = "_camera" + std::to_string(camera);
-            r.diagnostics["crown_bottom_margin" + suffix + "_px"] = config_.crown.bottomMarginPx;
-            r.diagnostics["crown_tracking_half_height" + suffix + "_px"] = config_.crown.searchHalfHeightPx;
-            r.diagnostics["crown_column_strengths_mean" + suffix] = hit.columnStrengthsMean;
-            r.diagnostics["crown_column_strengths_maximum" + suffix] = hit.columnStrengthsMaximum;
+            r.diagnostics["crown_left_margin" + suffix + "_px"] = config_.crown.leftMarginPx;
+            r.diagnostics["crown_tracking_half_width" + suffix + "_px"] = config_.crown.searchHalfWidthPx;
+            r.diagnostics["crown_row_strengths_mean" + suffix] = hit.rowStrengthsMean;
+            r.diagnostics["crown_row_strengths_maximum" + suffix] = hit.rowStrengthsMaximum;
             r.diagnostics["crown_minimum_strength" + suffix] = hit.minimumStrength;
-            r.diagnostics["crown_kept_column_count" + suffix] = hit.keptColumnCount;
+            r.diagnostics["crown_kept_row_count" + suffix] = hit.keptRowCount;
             r.diagnostics["crown_seed_x" + suffix + "_px"] = hit.seedX;
             r.diagnostics["crown_edge_point_count" + suffix] = hit.edgePointCount;
             r.diagnostics["crown_residual_limit" + suffix + "_px"] = hit.residualLimitPx;
@@ -437,7 +438,7 @@ namespace pva
         if (!state_.validNeck || !state_.neckCentersPx)
             return {false, "Body mode requires a valid Idle/Neck result"};
         std::optional<double> p1, p2;
-        if (config_.body.usePreviousBoundaryY && state_.bodyBoundaryPointsPx)
+        if (config_.body.usePreviousBoundaryX && state_.bodyBoundaryPointsPx)
         {
             p1 = (*state_.bodyBoundaryPointsPx)[0].x;
             p2 = (*state_.bodyBoundaryPointsPx)[1].x;
@@ -455,12 +456,12 @@ namespace pva
             const std::string suffix = "_camera" + std::to_string(camera);
             r.diagnostics["body_search_start_x" + suffix + "_px"] = hit.searchStartX;
             r.diagnostics["body_search_stop_x" + suffix + "_px"] = hit.searchStopX;
-            r.diagnostics["body_bottom_margin" + suffix + "_px"] = hit.bottomMarginPx;
-            r.diagnostics["body_tracking_half_height" + suffix + "_px"] = hit.trackingHalfHeightPx;
+            r.diagnostics["body_left_margin" + suffix + "_px"] = hit.leftMarginPx;
+            r.diagnostics["body_tracking_half_width" + suffix + "_px"] = hit.trackingHalfWidthPx;
             r.diagnostics["body_brightness_offset" + suffix] = hit.brightnessOffset;
             r.diagnostics["body_threshold_crossing_count" + suffix] = hit.thresholdCrossingCount;
-            r.diagnostics["body_column_maximum_p90" + suffix] = hit.columnMaximumP90;
-            r.diagnostics["body_column_maximum_maximum" + suffix] = hit.columnMaximumMaximum;
+            r.diagnostics["body_row_maximum_p90" + suffix] = hit.rowMaximumP90;
+            r.diagnostics["body_row_maximum_maximum" + suffix] = hit.rowMaximumMaximum;
             r.diagnostics["body_residual_limit" + suffix + "_px"] = hit.residualLimitPx;
             r.diagnostics["body_robust_inlier_count" + suffix] = hit.robustInlierCount;
             r.diagnostics["body_coverage_ratio" + suffix] = hit.coverage;
@@ -487,7 +488,7 @@ namespace pva
         if (!state_.validNeck || !state_.bodyCentersPx || !state_.mmPerPixel)
             return {false, "Endcone requires valid neck and body state"};
         cv::Vec2i span = state_.neckYSpans ? (*state_.neckYSpans)[1] : cv::Vec2i(0, b.rows - 1);
-        auto hit = algorithms::findEndcone(b, (*state_.bodyCentersPx)[1], span, *state_.mmPerPixel, config_.endcone);
+        auto hit = algorithms::findEndcone(b, config_.measurement.reflectorRoiCamera2, (*state_.bodyCentersPx)[1], span, *state_.mmPerPixel, config_.endcone);
         if (!hit)
             return {false, detectionFailure("Camera 2 endcone detection failed", hit.error)};
         if (!(hit->diameterMm > config_.measurement.diameterMinMm && hit->diameterMm < config_.measurement.diameterMaxMm))

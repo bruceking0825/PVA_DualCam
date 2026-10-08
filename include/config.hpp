@@ -61,6 +61,7 @@ namespace pva
         int minEdgePoints{24};
         double gradientThresholdCamera1{70.0};
         double gradientThresholdCamera2{70.0};
+        double ellipseWidthHeightRatioCamera2{1.0}; // 相机 2 椭圆宽/高，由配置独立指定。
         double startSearchRatio{0.0};
         double stopSearchRatio{0.65};
         double pixelsPerMm{24.0};
@@ -72,11 +73,11 @@ namespace pva
         double diameterThreshold1Mm{50.0};
         double diameterThreshold2Mm{60.0};
         int minEdgePoints{24};
-        double columnMaxFactor{0.5};
-        bool usePreviousBoundaryY{true};
-        int searchHalfHeightPx{300};
-        int horizontalMarginPx{40};
-        int bottomMarginPx{100};
+        double rowMaxFactor{0.5};
+        bool usePreviousBoundaryX{true};
+        int searchHalfWidthPx{300};
+        int verticalMarginPx{40};
+        int leftMarginPx{100};
         double fitResidualPx{10.0};
     };
 
@@ -87,10 +88,10 @@ namespace pva
         double brightnessOffsetCamera2{15.0};
         double startSearchRatio{0.0};
         double stopSearchRatio{1.0};
-        bool usePreviousBoundaryY{true};
-        int searchHalfHeightPx{300};
-        int horizontalMarginPx{40};
-        int bottomMarginPx{100};
+        bool usePreviousBoundaryX{true};
+        int searchHalfWidthPx{300};
+        int verticalMarginPx{40};
+        int leftMarginPx{100};
         double minCoverageRatio{0.55};
         double fitResidualPx{10.0};
     };

@@ -127,7 +127,8 @@ namespace pva::algorithms
         return {std::move(outerArc), false};
     }
 
-    static std::optional<cv::RotatedRect> fitAxisAlignedEllipse(const std::vector<cv::Point> &contour)
+    static std::optional<cv::RotatedRect> fitAxisAlignedEllipse(const std::vector<cv::Point> &contour,
+                                                                std::optional<double> widthToHeightRatio)
     {
         if (contour.size() < 5)
             return {};
@@ -146,6 +147,42 @@ namespace pva::algorithms
         scale.y = std::sqrt(scale.y / contour.size());
         if (scale.x <= 1e-12 || scale.y <= 1e-12)
             return {};
+        if (widthToHeightRatio)
+        {
+            const double ratio = *widthToHeightRatio;
+            if (!std::isfinite(ratio) || ratio <= 0.0)
+                return {};
+
+            // 相机 2 在拟合方程中固定宽/高比；圆心和整体尺寸仍由自身轮廓决定。
+            const double unit = std::max(scale.x, scale.y);
+            const double ratioSquared = ratio * ratio;
+            cv::Mat a(int(contour.size()), 3, CV_64F), b(int(contour.size()), 1, CV_64F, cv::Scalar(1));
+            for (int i = 0; i < a.rows; ++i)
+            {
+                const double x = (contour[i].x - origin.x) / unit;
+                const double y = (contour[i].y - origin.y) / unit;
+                a.at<double>(i, 0) = x * x / ratioSquared + y * y;
+                a.at<double>(i, 1) = x;
+                a.at<double>(i, 2) = y;
+            }
+            cv::Mat c;
+            if (!cv::solve(a, b, c, cv::DECOMP_SVD))
+                return {};
+            const double curvature = c.at<double>(0);
+            if (!std::isfinite(curvature) || curvature <= 0.0)
+                return {};
+            const double cx = -c.at<double>(1) * ratioSquared / (2.0 * curvature);
+            const double cy = -c.at<double>(2) / (2.0 * curvature);
+            const double term = 1.0 + curvature * (cx * cx / ratioSquared + cy * cy);
+            const double radiusY = unit * std::sqrt(term / curvature);
+            const double radiusX = radiusY * ratio;
+            if (!std::isfinite(radiusX) || !std::isfinite(radiusY) ||
+                !std::isfinite(cx) || !std::isfinite(cy))
+                return {};
+            return cv::RotatedRect(
+                cv::Point2f(float(origin.x + cx * unit), float(origin.y + cy * unit)),
+                cv::Size2f(float(2.0 * radiusX), float(2.0 * radiusY)), 0);
+        }
         cv::Mat a(int(contour.size()), 4, CV_64F), b(int(contour.size()), 1, CV_64F, cv::Scalar(1));
         for (int i = 0; i < a.rows; ++i)
         {
@@ -171,16 +208,22 @@ namespace pva::algorithms
     DetectionResult<EllipseHit> findNeckEllipse(const cv::Mat &gray, const cv::Rect &configuredRoi,
                                                 double threshold, double minArea,
                                                 double startRatio, double stopRatio,
-                                                std::optional<double> expectedY)
+                                                std::optional<double> expectedY,
+                                                std::optional<double> widthToHeightRatio)
     {
         if (gray.empty())
             return DetectionResult<EllipseHit>::failure("input image is empty");
         if (gray.channels() != 1)
             return DetectionResult<EllipseHit>::failure("input image is not single-channel grayscale");
+        if (widthToHeightRatio && (!std::isfinite(*widthToHeightRatio) || *widthToHeightRatio <= 0.0))
+            return DetectionResult<EllipseHit>::failure("neck ellipse width-to-height ratio must be positive and finite");
 
-        // 旧图像从上向下的搜索方向，在原始相机图像中是从右向左。
-        int x0 = std::clamp(gray.cols - int(std::lround(gray.cols * stopRatio)), 0, gray.cols - 1);
-        int x1 = std::clamp(gray.cols - int(std::lround(gray.cols * startRatio)), x0 + 1, gray.cols);
+        if (!std::isfinite(startRatio) || !std::isfinite(stopRatio) ||
+            startRatio < 0.0 || stopRatio > 1.0 || startRatio >= stopRatio)
+            return DetectionResult<EllipseHit>::failure("neck search ratios must satisfy 0 <= start < stop <= 1");
+        // 搜索比例直接对应当前图像 x：0 为左边，1 为右边。
+        const int x0 = std::clamp(int(std::lround(gray.cols * startRatio)), 0, gray.cols - 1);
+        const int x1 = std::clamp(int(std::lround(gray.cols * stopRatio)), x0 + 1, gray.cols);
         const cv::Rect imageBounds(0, 0, gray.cols, gray.rows);
         const cv::Rect horizontalBounds(x0, 0, x1 - x0, gray.rows);
         const cv::Rect roi = configuredRoi & imageBounds & horizontalBounds;
@@ -223,7 +266,7 @@ namespace pva::algorithms
             }
             // 与 Python 一致，只使用最大凸缺陷另一侧的外侧弧拟合椭圆。
             auto fitContour = extractOuterConvexArc(contour);
-            auto fit = fitAxisAlignedEllipse(fitContour.points);
+            auto fit = fitAxisAlignedEllipse(fitContour.points, widthToHeightRatio);
             if (!fit)
             {
                 ++failedFit;

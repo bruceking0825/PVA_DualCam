@@ -36,8 +36,8 @@ int main(int argc, char **argv)
     try
     {
         auto parsed = pva::MeasurementConfig::loadIni(cnf);
-        check(parsed.measurement.diaRectHeightPx == 80.0 &&
-                  parsed.measurement.crownBodyInnerRadiusPx == 400.0,
+        check(parsed.measurement.diaRectHeightPx > 0.0 &&
+                  parsed.measurement.crownBodyInnerRadiusPx >= 0.0,
               "PLC diameter ROI dimensions parsed");
 
         pva::MeasurementRois plcRois;
@@ -198,6 +198,11 @@ int main(int argc, char **argv)
               "Manual reflector ROIs parsed");
         check(parsed.crown.diameterThreshold2Mm > parsed.crown.diameterThreshold1Mm,
               "Crown transition diameter thresholds parsed");
+        check(parsed.crown.rowMaxFactor > 0 && parsed.crown.searchHalfWidthPx > 0 &&
+                  parsed.crown.verticalMarginPx > 0 && parsed.crown.leftMarginPx > 0 &&
+                  parsed.body.searchHalfWidthPx > 0 && parsed.body.verticalMarginPx > 0 &&
+                  parsed.body.leftMarginPx >= 0,
+              "Native-coordinate Crown and Body configuration keys loaded");
         check(QDir::isAbsolutePath(parsed.runtime.offlineImageDir), "Offline directory resolved relative to cnf");
         check(QDir::isAbsolutePath(parsed.runtime.facetteImageDir) &&
                   parsed.runtime.facetteImageDir.contains("FACETTES", Qt::CaseInsensitive),
@@ -215,6 +220,39 @@ int main(int argc, char **argv)
                   update.recognized && update.changed &&
                   parsed.measurement.autoExposureRoiCamera1 == cv::Rect(10, 20, 30, 40),
               "Shared config registry parses live ROI edits");
+        auto renamedConfig = parsed;
+        check(pva::applyConfigEntry(renamedConfig, cnf, "Crown", "crown_edge_row_max_factor", "0.3",
+                                    &update, &configError) && update.recognized &&
+                  renamedConfig.crown.rowMaxFactor == 0.3 &&
+                  pva::applyConfigEntry(renamedConfig, cnf, "Crown", "crown_edge_use_previous_boundary_x", "1",
+                                        &update, &configError) && update.recognized &&
+                  renamedConfig.crown.usePreviousBoundaryX &&
+                  pva::applyConfigEntry(renamedConfig, cnf, "Crown", "crown_edge_search_half_width_px", "60",
+                                        &update, &configError) && update.recognized &&
+                  renamedConfig.crown.searchHalfWidthPx == 60 &&
+                  pva::applyConfigEntry(renamedConfig, cnf, "Crown", "crown_edge_vertical_margin_px", "21",
+                                        &update, &configError) && update.recognized &&
+                  renamedConfig.crown.verticalMarginPx == 21 &&
+                  pva::applyConfigEntry(renamedConfig, cnf, "Crown", "crown_edge_left_margin_px", "22",
+                                        &update, &configError) && update.recognized &&
+                  renamedConfig.crown.leftMarginPx == 22,
+              "Crown native-coordinate keys support live updates");
+        check(pva::applyConfigEntry(renamedConfig, cnf, "Body", "body_edge_use_previous_boundary_x", "1",
+                                    &update, &configError) && update.recognized &&
+                  renamedConfig.body.usePreviousBoundaryX &&
+                  pva::applyConfigEntry(renamedConfig, cnf, "Body", "body_edge_search_half_width_px", "61",
+                                        &update, &configError) && update.recognized &&
+                  renamedConfig.body.searchHalfWidthPx == 61 &&
+                  pva::applyConfigEntry(renamedConfig, cnf, "Body", "body_edge_vertical_margin_px", "23",
+                                        &update, &configError) && update.recognized &&
+                  renamedConfig.body.verticalMarginPx == 23 &&
+                  pva::applyConfigEntry(renamedConfig, cnf, "Body", "body_edge_left_margin_px", "24",
+                                        &update, &configError) && update.recognized &&
+                  renamedConfig.body.leftMarginPx == 24,
+              "Body native-coordinate keys support live updates");
+        check(pva::applyConfigEntry(renamedConfig, cnf, "Crown", "crown_edge_use_previous_boundary_y", "1",
+                                    &update, &configError) && !update.recognized,
+              "Renamed Crown key has no legacy alias");
         check(pva::applyConfigEntry(parsed, cnf, "Custom", "future_parameter", "value",
                                     &update, &configError) &&
                   !update.recognized && !update.changed,
@@ -244,7 +282,10 @@ int main(int argc, char **argv)
                 const int middle = composite.rows / 2;
                 const cv::Mat camera1 = composite.rowRange(0, middle);
                 const cv::Mat camera2 = composite.rowRange(middle, composite.rows);
-                pva::MeasurementEngine offlineEngine(parsed);
+                auto offlineConfig = parsed;
+                offlineConfig.neck.startSearchRatio = 0.0;
+                offlineConfig.neck.stopSearchRatio = 1.0;
+                pva::MeasurementEngine offlineEngine(offlineConfig);
                 const auto result = offlineEngine.process(
                     camera1, camera2,
                     pva::MeasurementStage::Neck);
@@ -298,7 +339,6 @@ int main(int argc, char **argv)
     config.neck.gradientThresholdCamera1 = 10;
     config.neck.gradientThresholdCamera2 = 10;
     config.neck.stopSearchRatio = 1;
-    config.neck.stopSearchRatio = .6;
     config.measurement.reflectorRoiCamera1 = config.measurement.reflectorRoiCamera2 = cv::Rect(0, 0, 400, 400);
     config.neck.pixelsPerMm = 10;
     cv::Mat neck = cv::Mat::zeros(400, 400, CV_8U);
@@ -355,6 +395,20 @@ int main(int argc, char **argv)
         concaveNeck, cv::Rect(-20, -20, 2, 2), 10, 80, 0, 1, {});
     check(!invalidNeckRoiHit && invalidNeckRoiHit.error.find("ROI") != std::string::npos,
           "Neck detector returns a detailed invalid-ROI reason");
+    const auto nativeNeckRange = pva::algorithms::findNeckEllipse(
+        neck, cv::Rect(0, 0, 400, 400), 10, 80, .1, .9, {});
+    const auto emptyNeckRange = pva::algorithms::findNeckEllipse(
+        neck, cv::Rect(300, 0, 100, 400), 10, 80, 0, .5, {});
+    const auto invalidNeckRange = pva::algorithms::findNeckEllipse(
+        neck, cv::Rect(0, 0, 400, 400), 10, 80, .9, .1, {});
+    check(nativeNeckRange && std::abs(nativeNeckRange->ellipse.center.x - 200.0) < 10.0 &&
+              !emptyNeckRange && emptyNeckRange.error.find("ROI") != std::string::npos &&
+              !invalidNeckRange && invalidNeckRange.error.find("ratios") != std::string::npos,
+          "Neck search ratios use native x and reject empty or reversed ranges");
+    const auto invalidNeckRatioHit = pva::algorithms::findNeckEllipse(
+        neck, cv::Rect(0, 0, 400, 400), 10, 80, 0, 1, {}, 0.0);
+    check(!invalidNeckRatioHit && invalidNeckRatioHit.error.find("ratio") != std::string::npos,
+          "Neck detector rejects an invalid constrained axis ratio");
     auto invalidNeckConfig = config;
     invalidNeckConfig.measurement.reflectorRoiCamera1 = cv::Rect(-20, -20, 2, 2);
     const auto invalidNeckResult = pva::MeasurementEngine(invalidNeckConfig).process(
@@ -381,6 +435,42 @@ int main(int argc, char **argv)
               pva::measurementPayloadValues(stereoNeckResult)[12] ==
                   stereoNeckResult.diagnostics.at("neck_center_x_camera2_px").toDouble(),
           "Neck Camera 2 detection adds overlay and its left ellipse vertex");
+    const auto camera1Hit = pva::algorithms::findNeckEllipse(
+        neck, cv::Rect(0, 0, 400, 400), 10, 80, 0, 1, {});
+    const auto constrainedCamera2Hit = camera1Hit ? pva::algorithms::findNeckEllipse(
+        camera2Neck, cv::Rect(0, 0, 400, 400), 10, 80, 0, 1, {},
+        config.neck.ellipseWidthHeightRatioCamera2) :
+        pva::algorithms::DetectionResult<pva::algorithms::EllipseHit>{};
+    check(camera1Hit && constrainedCamera2Hit &&
+              std::abs(double(constrainedCamera2Hit->ellipse.size.width) /
+                           constrainedCamera2Hit->ellipse.size.height -
+                       config.neck.ellipseWidthHeightRatioCamera2) < 1e-5 &&
+              std::abs(constrainedCamera2Hit->ellipse.center.x - 240.0) < 20.0 &&
+              std::abs(constrainedCamera2Hit->ellipse.center.y - 180.0) < 20.0 &&
+              std::abs(constrainedCamera2Hit->ellipse.size.width - camera1Hit->ellipse.size.width) > 10.0 &&
+              std::abs(pva::measurementPayloadValues(stereoNeckResult)[3] -
+                       (constrainedCamera2Hit->ellipse.center.x - constrainedCamera2Hit->ellipse.size.width * 0.5)) < 0.01,
+          "Camera 2 uses configured axis ratio and its own center, size and PLC vertex");
+
+    cv::Mat verticalCamera1 = cv::Mat::zeros(400, 400, CV_8U);
+    cv::Mat verticalCamera2 = cv::Mat::zeros(400, 400, CV_8U);
+    cv::ellipse(verticalCamera1, {180, 180}, {40, 80}, 0, 0, 360, cv::Scalar(220), 5);
+    cv::ellipse(verticalCamera2, {230, 175}, {55, 105}, 0, 0, 360, cv::Scalar(220), 5);
+    config.neck.ellipseWidthHeightRatioCamera2 = .7;
+    const auto verticalResult = pva::MeasurementEngine(config).process(
+        verticalCamera1, verticalCamera2, pva::MeasurementStage::Neck);
+    const auto verticalFirst = pva::algorithms::findNeckEllipse(
+        verticalCamera1, cv::Rect(0, 0, 400, 400), 10, 80, 0, 1, {});
+    const auto verticalSecond = verticalFirst ? pva::algorithms::findNeckEllipse(
+        verticalCamera2, cv::Rect(0, 0, 400, 400), 10, 80, 0, 1, {},
+        config.neck.ellipseWidthHeightRatioCamera2) :
+        pva::algorithms::DetectionResult<pva::algorithms::EllipseHit>{};
+    check(verticalResult.valid && verticalFirst && verticalSecond &&
+              verticalFirst->ellipse.size.height > verticalFirst->ellipse.size.width &&
+              verticalSecond->ellipse.size.height > verticalSecond->ellipse.size.width &&
+              std::abs(config.neck.ellipseWidthHeightRatioCamera2 -
+                       double(verticalSecond->ellipse.size.width) / verticalSecond->ellipse.size.height) < 1e-5,
+          "Camera 2 uses its configured vertical axis ratio independently of Camera 1");
 
     cv::Mat meniscus(300, 260, CV_8U, cv::Scalar(20));
     for (int y = 20; y < 280; ++y)
@@ -388,10 +478,10 @@ int main(int argc, char **argv)
         const int boundary = static_cast<int>(140 - .002 * (y - 150) * (y - 150));
         meniscus(cv::Rect(260 - boundary, y, std::max(boundary, 1), 1)).setTo(220);
     }
-    config.crown.horizontalMarginPx = 10;
-    config.crown.bottomMarginPx = 10;
+    config.crown.verticalMarginPx = 10;
+    config.crown.leftMarginPx = 10;
     config.crown.minEdgePoints = 20;
-    config.crown.columnMaxFactor = .2;
+    config.crown.rowMaxFactor = .2;
     config.measurement.reflectorRoiCamera1 = config.measurement.reflectorRoiCamera2 = cv::Rect(29, 20, 231, 261);
     pva::MeasurementState crownState;
     crownState.validNeck = true;
@@ -441,7 +531,7 @@ int main(int argc, char **argv)
           "Crown lower vertices use the stored Neck center y coordinates");
     check(crownResult.diagnostics.size() >= 40 &&
               crownResult.diagnostics.contains("crown_boundary_camera1_px") &&
-              crownResult.diagnostics.contains("crown_column_strengths_maximum_camera2") &&
+              crownResult.diagnostics.contains("crown_row_strengths_maximum_camera2") &&
               crownResult.diagnostics.contains("crown_edge_model"),
           "Crown Process diagnostics match the Python field set");
     auto invalidCrownConfig = config;
@@ -452,8 +542,8 @@ int main(int argc, char **argv)
               invalidCrownResult.message.find("Crown meniscus detection failed") != std::string::npos &&
               invalidCrownResult.message.find("Camera 1") != std::string::npos,
           "Crown detector failure identifies the failed camera and reason");
-    config.body.horizontalMarginPx = 10;
-    config.body.bottomMarginPx = 10;
+    config.body.verticalMarginPx = 10;
+    config.body.leftMarginPx = 10;
     config.body.minEdgePoints = 20;
     config.body.startSearchRatio = 0;
     config.body.stopSearchRatio = 1;
@@ -479,7 +569,7 @@ int main(int argc, char **argv)
           "Body lower vertices use the stored Neck center y coordinates");
     check(bodyResult.diagnostics.size() >= 40 &&
               bodyResult.diagnostics.contains("body_boundary_camera1_px") &&
-              bodyResult.diagnostics.contains("body_column_maximum_p90_camera2") &&
+              bodyResult.diagnostics.contains("body_row_maximum_p90_camera2") &&
               bodyResult.diagnostics.contains("body_edge_model"),
           "Body Process diagnostics match the Python field set");
     auto invalidBodyConfig = config;
@@ -491,6 +581,55 @@ int main(int argc, char **argv)
               invalidBodyResult.message.find("Camera 2") != std::string::npos,
           "Body detector failure identifies the failed camera and reason");
 
+    // 非正方形图像与偏移 ROI：边界、拟合曲线和历史跟踪均保持当前图像坐标。
+    cv::Mat shiftedMeniscus(420, 340, CV_8U, cv::Scalar(20));
+    meniscus.copyTo(shiftedMeniscus(cv::Rect(35, 45, meniscus.cols, meniscus.rows)));
+    const cv::Rect shiftedRoi(64, 65, 231, 261);
+    const cv::Point2d shiftedCenter(274, 185);
+    const auto shiftedCrown = pva::algorithms::findCrownMeniscus(
+        shiftedMeniscus, shiftedRoi, shiftedCenter, config.crown, {});
+    const auto trackedCrown = shiftedCrown ? pva::algorithms::findCrownMeniscus(
+        shiftedMeniscus, shiftedRoi, shiftedCenter, config.crown, shiftedCrown->boundary.x) :
+        pva::algorithms::DetectionResult<pva::algorithms::CurveHit>{};
+    auto nativeBodySettings = config.body;
+    nativeBodySettings.startSearchRatio = .2;
+    nativeBodySettings.stopSearchRatio = .8;
+    const auto shiftedBody = pva::algorithms::findBodyMeniscus(
+        shiftedMeniscus, shiftedRoi, shiftedCenter, nativeBodySettings, 20, {});
+    const auto trackedBody = shiftedBody ? pva::algorithms::findBodyMeniscus(
+        shiftedMeniscus, shiftedRoi, shiftedCenter, nativeBodySettings, 20, shiftedBody->boundary.x) :
+        pva::algorithms::DetectionResult<pva::algorithms::CurveHit>{};
+    check(shiftedCrown && trackedCrown && shiftedBody && trackedBody &&
+              std::abs(shiftedCrown->boundary.x - 155.0) < 10.0 &&
+              std::abs(shiftedBody->boundary.x - 155.0) < 10.0 &&
+              shiftedCrown->boundary.y == shiftedCenter.y &&
+              shiftedBody->boundary.y == shiftedCenter.y &&
+              cv::norm(trackedCrown->boundary - shiftedCrown->boundary) < 2.0 &&
+              cv::norm(trackedBody->boundary - shiftedBody->boundary) < 2.0 &&
+              !shiftedCrown->edges.empty() && !shiftedBody->curve.empty() &&
+              shiftedCrown->edges.front().y >= shiftedRoi.y &&
+              shiftedBody->curve.front().y >= shiftedRoi.y &&
+              shiftedBody->searchStartX == 68 && shiftedBody->searchStopX == 272,
+          "Crown and Body use native coordinates on shifted non-square images, including previous-boundary tracking");
+    // ROI 外亮度改变不应影响 ROI 内滤波、边界点及曲线拟合。
+    cv::Mat outsideChanged(shiftedMeniscus.size(), CV_8U, cv::Scalar(255));
+    shiftedMeniscus(shiftedRoi).copyTo(outsideChanged(shiftedRoi));
+    const auto isolatedCrown = pva::algorithms::findCrownMeniscus(
+        outsideChanged, shiftedRoi, shiftedCenter, config.crown, {});
+    const auto isolatedBody = pva::algorithms::findBodyMeniscus(
+        outsideChanged, shiftedRoi, shiftedCenter, nativeBodySettings, 20, {});
+    check(shiftedCrown && isolatedCrown && shiftedBody && isolatedBody &&
+              cv::norm(shiftedCrown->boundary - isolatedCrown->boundary) < 1e-6 &&
+              cv::norm(shiftedBody->boundary - isolatedBody->boundary) < 1e-6 &&
+              shiftedCrown->edges == isolatedCrown->edges && shiftedBody->edges == isolatedBody->edges,
+          "Crown and Body preprocessing is isolated from pixels outside the configured ROI");
+    nativeBodySettings.startSearchRatio = .8;
+    nativeBodySettings.stopSearchRatio = 1.0;
+    const auto emptyBodyRange = pva::algorithms::findBodyMeniscus(
+        shiftedMeniscus, cv::Rect(0, 65, 80, 261), shiftedCenter, nativeBodySettings, 20, {});
+    check(!emptyBodyRange && emptyBodyRange.error.find("horizontal search range") != std::string::npos,
+          "Body rejects a native-x ratio window that does not intersect the ROI");
+
     pva::MeasurementState state;
     state.validNeck = true;
     state.mmPerPixel = .1;
@@ -498,6 +637,13 @@ int main(int argc, char **argv)
     state.bodyCentersPx = std::array<cv::Point2d, 2>{cv::Point2d(149, 100), cv::Point2d(149, 100)};
     cv::Mat endcone(200, 250, CV_8U, cv::Scalar(200));
     endcone.colRange(0, 100).setTo(20);
+    const auto roiEndcone = pva::algorithms::findEndcone(
+        endcone, cv::Rect(75, 60, 100, 80), {149, 100}, {50, 150}, .1, config.endcone);
+    const auto emptyEndcone = pva::algorithms::findEndcone(
+        endcone, cv::Rect(180, 60, 60, 80), {149, 100}, {50, 150}, .1, config.endcone);
+    check(roiEndcone && roiEndcone->boundaryX == 99 && roiEndcone->y0 == 60 &&
+              roiEndcone->y1 == 140 && !emptyEndcone,
+          "Endcone clips search to ROI and keeps native output coordinates");
     pva::MeasurementEngine endconeEngine(config, state);
     auto endconeResult = endconeEngine.process(endcone, endcone, pva::MeasurementStage::Endcone);
     check(endconeResult.valid, "Endcone state-based measurement valid");

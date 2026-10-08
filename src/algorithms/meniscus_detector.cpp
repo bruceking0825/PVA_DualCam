@@ -11,26 +11,8 @@ namespace pva::algorithms
     {
         return roi & cv::Rect(0, 0, image.cols, image.rows);
     }
-    // 拟合仍使用“横向位置、从相机右侧向左的距离”作为数学坐标；
-    // 像素始终直接从原始图像读取，不生成旋转后的图像。
-    static cv::Rect searchCoordinates(const cv::Rect &roi, int imageWidth)
-    {
-        return {roi.y, imageWidth - roi.x - roi.width, roi.height, roi.width};
-    }
-    static cv::Point2d nativePoint(cv::Point2d point, int imageWidth)
-    {
-        return {imageWidth - 1.0 - point.y, point.x};
-    }
-    static void restoreNativeCoordinates(CurveHit &hit, int imageWidth)
-    {
-        for (auto &point : hit.edges)
-            point = nativePoint(point, imageWidth);
-        for (auto &point : hit.curve)
-            point = nativePoint(point, imageWidth);
-        hit.boundary = nativePoint(hit.boundary, imageWidth);
-        hit.seedX = imageWidth - 1.0 - hit.seedX;
-    }
-    static double value(const cv::Vec3d &c, double x) { return c[0] * x * x + c[1] * x + c[2]; }
+    // 当前图像坐标：每一行 y 找到边界 x，曲线直接拟合 x=f(y)。
+    static double value(const cv::Vec3d &c, double y) { return c[0] * y * y + c[1] * y + c[2]; }
     static double percentile(std::vector<double> values, double fraction)
     {
         if (values.empty())
@@ -51,11 +33,11 @@ namespace pva::algorithms
             cv::Mat a(int(points.size()), 3, CV_64F), b(int(points.size()), 1, CV_64F);
             for (int i = 0; i < a.rows; ++i)
             {
-                double w = std::sqrt(std::max(weights[i], 1e-6)), x = points[i].x;
-                a.at<double>(i, 0) = x * x * w;
-                a.at<double>(i, 1) = x * w;
+                double w = std::sqrt(std::max(weights[i], 1e-6)), y = points[i].y;
+                a.at<double>(i, 0) = y * y * w;
+                a.at<double>(i, 1) = y * w;
                 a.at<double>(i, 2) = w;
-                b.at<double>(i) = points[i].y * w;
+                b.at<double>(i) = points[i].x * w;
             }
             cv::Mat solution;
             if (!cv::solve(a, b, solution, cv::DECOMP_SVD))
@@ -63,7 +45,7 @@ namespace pva::algorithms
             c = {solution.at<double>(0), solution.at<double>(1), solution.at<double>(2)};
             std::vector<double> residual;
             for (auto p : points)
-                residual.push_back(p.y - value(c, p.x));
+                residual.push_back(p.x - value(c, p.y));
             const double median = percentile(residual, 0.5);
             auto sorted = residual;
             for (double &v : sorted)
@@ -106,28 +88,28 @@ namespace pva::algorithms
                 std::to_string(points.size()) + ", required=" +
                 std::to_string(minPoints) + ")");
         auto [minIt, maxIt] = std::minmax_element(points.begin(), points.end(), [](auto a, auto b)
-                                                  { return a.x < b.x; });
-        const double minX = minIt->x, maxX = maxIt->x, coverage = (maxX - minX + 1) / width;
-        const double sagitta = value(coefficients, middle) -
-                               .5 * (value(coefficients, minX) + value(coefficients, maxX));
-        // Python 以 Neck 中心投影到曲线得到下顶点，并拒绝外推、反向弯曲及低覆盖结果。
+                                                  { return a.y < b.y; });
+        const double minY = minIt->y, maxY = maxIt->y, coverage = (maxY - minY + 1) / width;
+        const double sagitta = .5 * (value(coefficients, minY) + value(coefficients, maxY)) -
+                               value(coefficients, middle);
+        // 当前图像中的有效弧线在中间向左凹；以 Neck 中心 y 投影得到边界顶点。
         if (enforceCoverage && coverage < minCoverage)
             return DetectionResult<CurveHit>::failure(
                 "curve coverage is below the configured minimum (coverage=" +
                 std::to_string(coverage) + ", minimum=" +
                 std::to_string(minCoverage) + ")");
-        if (middle < minX || middle > maxX)
+        if (middle < minY || middle > maxY)
             return DetectionResult<CurveHit>::failure(
-                "neck center x is outside the fitted curve range (center_x=" +
-                std::to_string(middle) + ", range=" + std::to_string(minX) +
-                ".." + std::to_string(maxX) + ")");
+                "neck center y is outside the fitted curve range (center_y=" +
+                std::to_string(middle) + ", range=" + std::to_string(minY) +
+                ".." + std::to_string(maxY) + ")");
         if (sagitta < 0)
             return DetectionResult<CurveHit>::failure(
                 "fitted curve bends in the wrong direction (sagitta=" +
                 std::to_string(sagitta) + ")");
         CurveHit hit;
         hit.edges = std::move(points);
-        hit.boundary = {middle, value(coefficients, middle)};
+        hit.boundary = {value(coefficients, middle), middle};
         hit.coverage = coverage;
         hit.edgePointCount = edgePointCount;
         hit.robustInlierCount = int(hit.edges.size());
@@ -138,27 +120,26 @@ namespace pva::algorithms
         double squaredError = 0.0;
         for (const auto &point : hit.edges)
         {
-            const double error = point.y - value(coefficients, point.x);
+            const double error = point.x - value(coefficients, point.y);
             squaredError += error * error;
         }
         hit.fitErrorPx = std::sqrt(squaredError / std::max<size_t>(hit.edges.size(), 1));
         std::vector<double> fittedY;
         fittedY.reserve(hit.edges.size());
         for (const auto &point : hit.edges)
-            fittedY.push_back(point.y);
+            fittedY.push_back(point.x);
         hit.seedX = percentile(std::move(fittedY), 0.5);
-        for (int x = int(minX); x <= int(maxX); ++x)
-            hit.curve.emplace_back(x, value(coefficients, x));
+        for (int y = int(minY); y <= int(maxY); ++y)
+            hit.curve.emplace_back(value(coefficients, y), y);
         return DetectionResult<CurveHit>::success(std::move(hit));
     }
 
-    static int lastPeakIndex(const std::vector<double> &scores)
+    static int firstPeakIndex(const std::vector<double> &scores)
     {
         if (scores.empty())
             return 0;
         const auto maximumIt = std::max_element(scores.begin(), scores.end());
         const double minimumHeight = *maximumIt * 0.5;
-        int lastPeak = -1;
         for (int begin = 1; begin + 1 < int(scores.size());)
         {
             int end = begin;
@@ -166,10 +147,10 @@ namespace pva::algorithms
                 ++end;
             if (end + 1 < int(scores.size()) && scores[begin] > scores[begin - 1] &&
                 scores[end] > scores[end + 1] && scores[begin] >= minimumHeight)
-                lastPeak = (begin + end) / 2;
+                return (begin + end) / 2;
             begin = end + 1;
         }
-        return lastPeak >= 0 ? lastPeak : int(maximumIt - scores.begin());
+        return int(maximumIt - scores.begin());
     }
 
     DetectionResult<CurveHit> findCrownMeniscus(const cv::Mat &gray,
@@ -187,125 +168,117 @@ namespace pva::algorithms
         if (!std::isfinite(expectedCenter.x) || !std::isfinite(expectedCenter.y))
             return DetectionResult<CurveHit>::failure("neck center contains a non-finite coordinate");
 
-        const cv::Rect roi = searchCoordinates(clippedRoi(configuredRoi, gray), gray.cols);
-        const int x0 = std::max(1, roi.x + std::max(0, s.horizontalMarginPx));
-        const int x1 = std::min(gray.rows - 2, roi.x + roi.width - 1 - std::max(0, s.horizontalMarginPx));
-        if (x1 - x0 + 1 < s.minEdgePoints)
+        const cv::Rect roi = clippedRoi(configuredRoi, gray);
+        // 竖直边距裁剪图像上下边；左边距裁剪 x 搜索起点。
+        const int y0 = std::max(1, roi.y + std::max(0, s.verticalMarginPx));
+        const int y1 = std::min(gray.rows - 2, roi.y + roi.height - 1 - std::max(0, s.verticalMarginPx));
+        if (y1 - y0 + 1 < s.minEdgePoints)
             return DetectionResult<CurveHit>::failure(
-                "ROI horizontal search width is smaller than min_edge_points (width=" +
-                std::to_string(std::max(0, x1 - x0 + 1)) + ", required=" +
+                "ROI vertical search height is smaller than min_edge_points (height=" +
+                std::to_string(std::max(0, y1 - y0 + 1)) + ", required=" +
                 std::to_string(s.minEdgePoints) + ")");
 
-        if (roi.height < 3)
+        if (roi.width < 3)
             return DetectionResult<CurveHit>::failure(
-                "ROI height is smaller than 3 pixels after clipping (height=" +
-                std::to_string(roi.height) + ")");
-        std::vector<double> bottom(x1 - x0 + 1,
-                                   std::min(double(roi.y + roi.height - 1 - std::max(0, s.bottomMarginPx)),
-                                            gray.cols - 2.0));
-        const double maximumBottom = *std::max_element(bottom.begin(), bottom.end());
-        int searchStart = std::max({1, roi.y, int(std::floor(gray.cols - 1.0 - expectedCenter.x))});
-        int searchStop = std::min(gray.cols - 1, int(std::ceil(maximumBottom)));
-        const int trackingHalfHeight = std::max(8, s.searchHalfHeightPx);
+                "ROI width is smaller than 3 pixels after clipping (width=" +
+                std::to_string(roi.width) + ")");
+        int searchStart = std::max(1, roi.x + std::max(0, s.leftMarginPx));
+        int searchStop = std::min({gray.cols - 1, roi.x + roi.width,
+                                   int(std::ceil(expectedCenter.x)) + 1});
+        const int trackingHalfWidth = std::max(8, s.searchHalfWidthPx);
         if (previous)
         {
-            const double tracked = gray.cols - 1.0 - *previous;
-            searchStart = std::max(searchStart, int(std::floor(tracked)) - trackingHalfHeight);
-            searchStop = std::min(searchStop, int(std::ceil(tracked)) + trackingHalfHeight + 1);
+            searchStart = std::max(searchStart, int(std::floor(*previous)) - trackingHalfWidth);
+            searchStop = std::min(searchStop, int(std::ceil(*previous)) + trackingHalfWidth + 1);
         }
         if (searchStop - searchStart < 3)
             return DetectionResult<CurveHit>::failure(
-                "vertical search range is smaller than 3 pixels (start=" +
+                "horizontal search range is smaller than 3 pixels (start=" +
                 std::to_string(searchStart) + ", stop=" +
                 std::to_string(searchStop) + ")");
 
         cv::Mat blurred, gradient, score;
-        cv::GaussianBlur(gray, blurred, {7, 7}, 1.5);
+        // 独立 ROI 图像避免滤波读取父图像中 ROI 外的像素。
+        cv::GaussianBlur(gray(roi).clone(), blurred, {7, 7}, 1.5);
         cv::Sobel(blurred, gradient, CV_32F, 1, 0, 3);
         cv::max(gradient, 0, score);
-        cv::blur(score, score, {1, std::max(3, int(std::lround((x1 - x0 + 1) * .01)))});
+        cv::blur(score, score, {1, std::max(3, int(std::lround((y1 - y0 + 1) * .01)))});
 
-        std::vector<double> maxima(x1 - x0 + 1, 0.0);
+        std::vector<double> maxima(y1 - y0 + 1, 0.0);
         double globalMaximum = 0.0;
-        for (int x = x0; x <= x1; ++x)
+        for (int y = y0; y <= y1; ++y)
         {
-            const int index = x - x0;
-            const int columnStop = std::min(searchStop, int(std::ceil(bottom[index])));
-            if (columnStop <= searchStart)
-                continue;
-            cv::minMaxLoc(score(cv::Rect(gray.cols - columnStop, x, columnStop - searchStart, 1)),
+            const int index = y - y0;
+            cv::minMaxLoc(score(cv::Rect(searchStart - roi.x, y - roi.y, searchStop - searchStart, 1)),
                           nullptr, &maxima[index]);
             globalMaximum = std::max(globalMaximum, maxima[index]);
         }
-        const double minimumStrength = globalMaximum * std::max(0.0, s.columnMaxFactor);
+        const double minimumStrength = globalMaximum * std::max(0.0, s.rowMaxFactor);
         const double keepThreshold = std::max(minimumStrength, std::numeric_limits<double>::epsilon());
-        const double columnStrengthsMean = std::accumulate(maxima.begin(), maxima.end(), 0.0) / maxima.size();
-        const int keptColumnCount = int(std::count_if(maxima.begin(), maxima.end(),
-                                                      [keepThreshold](double strength)
-                                                      { return strength >= keepThreshold; }));
-        if (keptColumnCount < s.minEdgePoints)
+        const double rowStrengthsMean = std::accumulate(maxima.begin(), maxima.end(), 0.0) / maxima.size();
+        const int keptRowCount = int(std::count_if(maxima.begin(), maxima.end(),
+                                                   [keepThreshold](double strength)
+                                                   { return strength >= keepThreshold; }));
+        if (keptRowCount < s.minEdgePoints)
             return DetectionResult<CurveHit>::failure(
-                "too few columns have sufficient negative-gradient strength (kept=" +
-                std::to_string(keptColumnCount) + ", required=" +
+                "too few rows have sufficient positive-gradient strength (kept=" +
+                std::to_string(keptRowCount) + ", required=" +
                 std::to_string(s.minEdgePoints) + ", maximum_strength=" +
                 std::to_string(globalMaximum) + ")");
 
-        std::vector<double> rowScores(searchStop - searchStart, 0.0);
+        std::vector<double> columnScores(searchStop - searchStart, 0.0);
         std::vector<int> validCounts(searchStop - searchStart, 0);
-        int selectedX0 = x1;
-        int selectedX1 = x0;
-        for (int x = x0; x <= x1; ++x)
+        int selectedY0 = y1;
+        int selectedY1 = y0;
+        for (int y = y0; y <= y1; ++y)
         {
-            const int index = x - x0;
+            const int index = y - y0;
             if (maxima[index] < keepThreshold)
                 continue;
-            selectedX0 = std::min(selectedX0, x);
-            selectedX1 = std::max(selectedX1, x);
-            for (int y = searchStart; y < searchStop; ++y)
-                if (y < bottom[index])
-                {
-                    rowScores[y - searchStart] += score.at<float>(x, gray.cols - 1 - y);
-                    ++validCounts[y - searchStart];
-                }
+            selectedY0 = std::min(selectedY0, y);
+            selectedY1 = std::max(selectedY1, y);
+            for (int x = searchStart; x < searchStop; ++x)
+            {
+                columnScores[x - searchStart] += score.at<float>(y - roi.y, x - roi.x);
+                ++validCounts[x - searchStart];
+            }
         }
-        for (size_t i = 0; i < rowScores.size(); ++i)
-            rowScores[i] /= std::max(validCounts[i], 1);
-        const int seed = searchStart + lastPeakIndex(rowScores);
-        const int localStart = std::max(searchStart, seed - trackingHalfHeight);
+        for (size_t i = 0; i < columnScores.size(); ++i)
+            columnScores[i] /= std::max(validCounts[i], 1);
+        const int seed = searchStart + firstPeakIndex(columnScores);
+        const int localStart = std::max(searchStart, seed - trackingHalfWidth);
 
         std::vector<cv::Point2d> points;
         std::vector<double> strengths;
-        for (int x = x0; x <= x1; ++x)
+        for (int y = y0; y <= y1; ++y)
         {
-            const int index = x - x0;
+            const int index = y - y0;
             if (maxima[index] < keepThreshold)
                 continue;
-            const int localStop = std::min({searchStop, int(std::floor(bottom[index])) + 1,
-                                            seed + trackingHalfHeight + 1});
+            const int localStop = std::min(searchStop, seed + trackingHalfWidth + 1);
             if (localStop <= localStart)
                 continue;
             cv::Point location;
             double maximum = 0.0;
-            cv::minMaxLoc(score(cv::Rect(gray.cols - localStop, x, localStop - localStart, 1)),
+            cv::minMaxLoc(score(cv::Rect(localStart - roi.x, y - roi.y, localStop - localStart, 1)),
                           nullptr, &maximum, nullptr, &location);
             if (maximum >= minimumStrength)
             {
-                points.emplace_back(x, localStop - 1 - location.x);
+                points.emplace_back(localStart + location.x, y);
                 strengths.push_back(maximum);
             }
         }
         auto hit = finish(std::move(points), std::move(strengths), s.minEdgePoints,
                           s.fitResidualPx, expectedCenter.y,
-                          std::max(selectedX1 - selectedX0 + 1, 1), 0.0, false);
+                          std::max(selectedY1 - selectedY0 + 1, 1), 0.0, false);
         if (hit)
         {
             hit->center = expectedCenter;
             hit->seedX = seed;
-            hit->columnStrengthsMean = columnStrengthsMean;
-            hit->columnStrengthsMaximum = globalMaximum;
+            hit->rowStrengthsMean = rowStrengthsMean;
+            hit->rowStrengthsMaximum = globalMaximum;
             hit->minimumStrength = minimumStrength;
-            hit->keptColumnCount = keptColumnCount;
-            restoreNativeCoordinates(*hit, gray.cols);
+            hit->keptRowCount = keptRowCount;
         }
         return hit;
     }
@@ -327,76 +300,76 @@ namespace pva::algorithms
             return DetectionResult<CurveHit>::failure("neck center contains a non-finite coordinate");
         if (!std::isfinite(offset))
             return DetectionResult<CurveHit>::failure("brightness offset is not finite");
+        if (!std::isfinite(s.startSearchRatio) || !std::isfinite(s.stopSearchRatio) ||
+            s.startSearchRatio < 0.0 || s.stopSearchRatio > 1.0 ||
+            s.startSearchRatio >= s.stopSearchRatio)
+            return DetectionResult<CurveHit>::failure("body search ratios must satisfy 0 <= start < stop <= 1");
 
-        const cv::Rect roi = searchCoordinates(clippedRoi(configuredRoi, gray), gray.cols);
-        const int x0 = std::max(1, roi.x + std::max(0, s.horizontalMarginPx));
-        const int x1 = std::min(gray.rows - 2, roi.x + roi.width - 1 - std::max(0, s.horizontalMarginPx));
-        if (x1 - x0 + 1 < s.minEdgePoints)
+        const cv::Rect roi = clippedRoi(configuredRoi, gray);
+        // 竖直边距裁剪图像上下边；左边距裁剪 x 搜索起点。
+        const int y0 = std::max(1, roi.y + std::max(0, s.verticalMarginPx));
+        const int y1 = std::min(gray.rows - 2, roi.y + roi.height - 1 - std::max(0, s.verticalMarginPx));
+        if (y1 - y0 + 1 < s.minEdgePoints)
             return DetectionResult<CurveHit>::failure(
-                "ROI horizontal search width is smaller than min_edge_points (width=" +
-                std::to_string(std::max(0, x1 - x0 + 1)) + ", required=" +
+                "ROI vertical search height is smaller than min_edge_points (height=" +
+                std::to_string(std::max(0, y1 - y0 + 1)) + ", required=" +
                 std::to_string(s.minEdgePoints) + ")");
-        if (roi.height < 3)
+        if (roi.width < 3)
             return DetectionResult<CurveHit>::failure(
-                "ROI height is smaller than 3 pixels after clipping (height=" +
-                std::to_string(roi.height) + ")");
-        std::vector<double> bottom(x1 - x0 + 1,
-                                   std::min(double(roi.y + roi.height - 1 - std::max(0, s.bottomMarginPx)),
-                                            gray.cols - 2.0));
+                "ROI width is smaller than 3 pixels after clipping (width=" +
+                std::to_string(roi.width) + ")");
 
         const int ratioStart = std::clamp(int(std::nearbyint(gray.cols * s.startSearchRatio)), 0, gray.cols - 1);
         const int ratioStop = std::clamp(int(std::nearbyint(gray.cols * s.stopSearchRatio)), ratioStart + 1, gray.cols);
-        int y0 = std::max({ratioStart, roi.y, 1, int(std::floor(gray.cols - 1.0 - expectedCenter.x))});
-        int y1 = std::min({ratioStop, gray.cols - 1,
-                           int(std::ceil(*std::max_element(bottom.begin(), bottom.end())))});
-        const int trackingHalfHeight = std::max(8, s.searchHalfHeightPx);
+        int searchStart = std::max({ratioStart, roi.x + std::max(0, s.leftMarginPx), 1});
+        int searchStop = std::min({ratioStop, roi.x + roi.width, gray.cols - 1,
+                                   int(std::ceil(expectedCenter.x)) + 1});
+        const int trackingHalfWidth = std::max(8, s.searchHalfWidthPx);
         if (previous)
         {
-            const double tracked = gray.cols - 1.0 - *previous;
-            y0 = std::max(y0, int(std::floor(tracked)) - trackingHalfHeight);
-            y1 = std::min(y1, int(std::ceil(tracked)) + trackingHalfHeight + 1);
+            searchStart = std::max(searchStart, int(std::floor(*previous)) - trackingHalfWidth);
+            searchStop = std::min(searchStop, int(std::ceil(*previous)) + trackingHalfWidth + 1);
         }
-        if (y1 - y0 < 3)
+        if (searchStop - searchStart < 3)
             return DetectionResult<CurveHit>::failure(
-                "vertical search range is smaller than 3 pixels (start=" +
-                std::to_string(y0) + ", stop=" + std::to_string(y1) + ")");
+                "horizontal search range is smaller than 3 pixels (start=" +
+                std::to_string(searchStart) + ", stop=" + std::to_string(searchStop) + ")");
 
-        // Python 仅在比例 ROI 内执行滤波，边界像素处理也保持一致。
-        const cv::Mat ratioRoi = gray.colRange(gray.cols - ratioStop, gray.cols - ratioStart);
+        // 在配置 ROI 与原生 x 比例窗口的交集内滤波，隔离 ROI 外像素。
+        const cv::Rect processingRoi = roi & cv::Rect(ratioStart, 0, ratioStop - ratioStart, gray.rows);
+        const cv::Mat ratioRoi = gray(processingRoi).clone();
         cv::Mat blurred, brightness;
         cv::GaussianBlur(ratioRoi, blurred, {7, 7}, 1.5);
-        cv::blur(blurred, brightness, {1, std::max(3, int(std::lround((x1 - x0 + 1) * .05)))});
+        cv::blur(blurred, brightness, {1, std::max(3, int(std::lround((y1 - y0 + 1) * .05)))});
 
         std::vector<cv::Point2d> points;
         std::vector<double> strengths;
         std::vector<double> usableMaxima;
-        for (int x = x0; x <= x1; ++x)
+        for (int y = y0; y <= y1; ++y)
         {
-            const int index = x - x0;
-            const int columnStop = std::min(y1, int(std::floor(bottom[index])) + 1);
-            if (columnStop <= y0)
-                continue;
             double maximum = 0.0;
-            cv::minMaxLoc(brightness(cv::Rect(ratioStop - columnStop, x, columnStop - y0, 1)),
+            cv::minMaxLoc(brightness(cv::Rect(searchStart - processingRoi.x, y - processingRoi.y,
+                                               searchStop - searchStart, 1)),
                           nullptr, &maximum);
             if (maximum > std::numeric_limits<double>::epsilon())
                 usableMaxima.push_back(maximum);
             const double threshold = maximum - std::max(offset, 0.0);
-            for (int outside = columnStop - 1; outside >= y0 + 3; --outside)
+            for (int outside = searchStart; outside + 3 < searchStop; ++outside)
             {
-                const int local = ratioStop - 1 - outside;
-                if (brightness.at<uchar>(x, local) < threshold &&
-                    brightness.at<uchar>(x, local + 1) >= threshold &&
-                    brightness.at<uchar>(x, local + 2) >= threshold &&
-                    brightness.at<uchar>(x, local + 3) >= threshold)
+                const int local = outside - processingRoi.x;
+                const int row = y - processingRoi.y;
+                if (brightness.at<uchar>(row, local) < threshold &&
+                    brightness.at<uchar>(row, local + 1) >= threshold &&
+                    brightness.at<uchar>(row, local + 2) >= threshold &&
+                    brightness.at<uchar>(row, local + 3) >= threshold)
                 {
-                    const double insideValue = brightness.at<uchar>(x, local + 1);
-                    const double outsideValue = brightness.at<uchar>(x, local);
+                    const double insideValue = brightness.at<uchar>(row, local + 1);
+                    const double outsideValue = brightness.at<uchar>(row, local);
                     const double denominator = insideValue - outsideValue;
                     const double fraction = std::abs(denominator) < 1e-12
                                                 ? 0.0
                                                 : std::clamp((insideValue - threshold) / denominator, 0.0, 1.0);
-                    points.emplace_back(x, outside - 1 + fraction);
+                    points.emplace_back(outside + 1 - fraction, y);
                     strengths.push_back(maximum);
                     break;
                 }
@@ -406,20 +379,19 @@ namespace pva::algorithms
         const double maximumP90 = percentile(usableMaxima, 0.9);
         const double maximumMaximum = usableMaxima.empty() ? 0.0 : *std::max_element(usableMaxima.begin(), usableMaxima.end());
         auto hit = finish(std::move(points), std::move(strengths), s.minEdgePoints,
-                          s.fitResidualPx, expectedCenter.y, x1 - x0 + 1,
+                          s.fitResidualPx, expectedCenter.y, y1 - y0 + 1,
                           s.minCoverageRatio, true);
         if (hit)
         {
             hit->center = expectedCenter;
-            hit->bottomMarginPx = s.bottomMarginPx;
-            hit->trackingHalfHeightPx = trackingHalfHeight;
+            hit->leftMarginPx = s.leftMarginPx;
+            hit->trackingHalfWidthPx = trackingHalfWidth;
             hit->brightnessOffset = offset;
             hit->thresholdCrossingCount = thresholdCrossingCount;
-            hit->columnMaximumP90 = maximumP90;
-            hit->columnMaximumMaximum = maximumMaximum;
-            restoreNativeCoordinates(*hit, gray.cols);
-            hit->searchStartX = gray.cols - ratioStop;
-            hit->searchStopX = gray.cols - ratioStart;
+            hit->rowMaximumP90 = maximumP90;
+            hit->rowMaximumMaximum = maximumMaximum;
+            hit->searchStartX = ratioStart;
+            hit->searchStopX = ratioStop;
         }
         return hit;
     }
