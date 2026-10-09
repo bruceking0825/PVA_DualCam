@@ -26,7 +26,7 @@ namespace
     {
         out.push_back({OverlayType::Polyline,
                        {{left, top}, {right, top}, {right, bottom}, {left, bottom}},
-                       color, 2, true});
+                       color, 1, true});
     }
 
 }
@@ -97,8 +97,7 @@ namespace pva
             return diameterStage(true, rois, bodyRadiusThreshold);
         if (name == "dia_crd")
         {
-            if (current == MeasurementStage::Idle ||
-                current == MeasurementStage::Melt ||
+            if (current == MeasurementStage::Melt ||
                 current == MeasurementStage::Dip)
                 return diameterStage(pointFitSelected, rois, bodyRadiusThreshold);
             if (pointFitSelected &&
@@ -114,8 +113,7 @@ namespace pva
         if (name == "mlt_crd")
             return MeasurementStage::Melt;
         if ((name == "dia_msr" || name == "dia_rec") &&
-            (current == MeasurementStage::Idle ||
-             current == MeasurementStage::Melt ||
+            (current == MeasurementStage::Melt ||
              current == MeasurementStage::Dip))
             return diameterStage(pointFitSelected, rois, bodyRadiusThreshold);
         return current;
@@ -127,7 +125,7 @@ namespace pva
                               std::vector<OverlayElement> &camera2)
     {
         if ((stage == MeasurementStage::Neck || stage == MeasurementStage::Crown ||
-             stage == MeasurementStage::Body || stage == MeasurementStage::Endcone) &&
+             stage == MeasurementStage::Body) &&
             rois.diameter)
         {
             const auto &v = *rois.diameter;
@@ -143,10 +141,10 @@ namespace pva
                     outline.push_back(sectorPoint(cx, cy, v[5], v[2] + (stop - v[2]) * i / segments));
                 for (int i = segments; i >= 0; --i)
                     outline.push_back(sectorPoint(cx, cy, v[4], v[2] + (stop - v[2]) * i / segments));
-                out.push_back({OverlayType::Polyline, std::move(outline), {255, 255, 0}, 2, true});
+                out.push_back({OverlayType::Polyline, std::move(outline), {0, 255, 0}, 1, true});
                 // 当前图像比旧版顺时针旋转 90°；直径矩形在当前图像坐标中保持轴对齐。
                 rectangle(out, cx - v[5], cy - diameterRectHeight / 2.0,
-                          cx - v[4], cy + diameterRectHeight / 2.0, {0, 255, 255});
+                          cx - v[4], cy + diameterRectHeight / 2.0, {0, 255, 0});
             };
             add(camera1, 0.0, 0.0);
             add(camera2, v[6], v[7]);
@@ -158,7 +156,7 @@ namespace pva
             {
                 rectangle(out, v[0] + dx - v[2] / 2.0, v[1] + dy - v[3] / 2.0,
                           v[0] + dx + v[2] / 2.0, v[1] + dy + v[3] / 2.0,
-                          {255, 0, 255});
+                          {0, 255, 0});
             };
             add(camera1, 0.0, 0.0);
             add(camera2, v[4], v[5]);
@@ -192,13 +190,14 @@ namespace pva
         }
         const auto root = doc.object();
         const int stage = root.value("stage").toInt(-1);
-        if (stage < int(MeasurementStage::Idle) || stage > int(MeasurementStage::Endcone))
+        if (stage < 0 || stage > 6)
         {
             if (error) *error = "Invalid saved PLC stage";
             return false;
         }
         PlcRuntimeState next;
-        next.stage = MeasurementStage(stage);
+        // 旧 Idle(0)、Endcone(6) 状态统一恢复为 Melt。
+        next.stage = (stage == 0 || stage == 6) ? MeasurementStage::Melt : MeasurementStage(stage);
         next.pointFitSelected = root.value("point_fit_selected").toBool(false);
         next.acquisitionEnabled = root.value("acquisition_enabled").toBool(true);
         next.relativeThreshold = root.value("relative_threshold").toBool(false);

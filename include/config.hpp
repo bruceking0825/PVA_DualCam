@@ -10,11 +10,9 @@ namespace pva
     {
         bool disableCameraForPlcTest{false};
         bool connectPlcInOffline{false};
-        int idleSampleIntervalMs{1000};
         int neckSampleIntervalMs{300};
         int crownSampleIntervalMs{1000};
         int bodySampleIntervalMs{1000};
-        int endconeSampleIntervalMs{1000};
         QString offlineImageDir{"../live_img"};
         QString facetteImageDir{"D:/data/EKZData/FACETTES"};
         int loopIntervalMs{500};
@@ -48,7 +46,6 @@ namespace pva
         double diameterMinMm{0.0};
         double diameterMaxMm{350.0};
         double lightAlpha{0.2};
-        double mmPerPixelAlpha{0.5};
         cv::Rect autoExposureRoiCamera1{0, 0, 512, 512};
         cv::Rect autoExposureRoiCamera2{0, 0, 512, 512};
         cv::Rect reflectorRoiCamera1{0, 0, 512, 512};
@@ -59,8 +56,8 @@ namespace pva
     {
         double minContourAreaPx{80.0};
         int minEdgePoints{24};
-        double gradientThresholdCamera1{70.0};
-        double gradientThresholdCamera2{70.0};
+        double gradientThresholdPercentCamera1{50.0};
+        double gradientThresholdPercentCamera2{50.0};
         double ellipseWidthHeightRatioCamera2{1.0}; // 相机 2 椭圆宽/高，由配置独立指定。
         double startSearchRatio{0.0};
         double stopSearchRatio{0.65};
@@ -70,10 +67,8 @@ namespace pva
 
     struct CrownSettings
     {
-        double diameterThreshold1Mm{50.0};
-        double diameterThreshold2Mm{60.0};
         int minEdgePoints{24};
-        double rowMaxFactor{0.5};
+        double gradientThresholdRatio{0.5};
         bool usePreviousBoundaryX{true};
         int searchHalfWidthPx{300};
         int verticalMarginPx{40};
@@ -84,8 +79,8 @@ namespace pva
     struct BodySettings
     {
         int minEdgePoints{24};
-        double brightnessOffsetCamera1{6.0};
-        double brightnessOffsetCamera2{15.0};
+        double brightnessThresholdPercentCamera1{80.0};
+        double brightnessThresholdPercentCamera2{80.0};
         double startSearchRatio{0.0};
         double stopSearchRatio{1.0};
         bool usePreviousBoundaryX{true};
@@ -96,12 +91,6 @@ namespace pva
         double fitResidualPx{10.0};
     };
 
-    struct EndconeSettings
-    {
-        double diameterAlpha{0.2};
-        int boundaryOffsetPx{0};
-    };
-
     struct MeasurementConfig
     {
         RuntimeSettings runtime;
@@ -110,7 +99,6 @@ namespace pva
         NeckSettings neck;
         CrownSettings crown;
         BodySettings body;
-        EndconeSettings endcone;
 
         static MeasurementConfig loadIni(const QString &path);
     };

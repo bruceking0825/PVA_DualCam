@@ -226,10 +226,10 @@ void PlcSession::complete(const MeasurementResult &result)
                 return {};
             return it.value().front();
         };
-        if (const auto value = threshold("dia_thr"))
-            config_.neck.gradientThresholdCamera1 = std::clamp(*value * 255.0 / 100.0, 0.0, 255.0);
-        if (const auto value = threshold("diathr2"))
-            config_.neck.gradientThresholdCamera2 = std::clamp(*value * 255.0 / 100.0, 0.0, 255.0);
+        // if (const auto value = threshold("dia_thr"))
+        //     config_.neck.gradientThresholdPercentCamera1 = std::clamp(*value, 0.0, 100.0);
+        // if (const auto value = threshold("diathr2"))
+        //     config_.neck.gradientThresholdPercentCamera2 = std::clamp(*value, 0.0, 100.0);
         if (const auto value = threshold("exptme1"); value && *value > 0.0)
             config_.camera.initialExposureCamera1 = 3000.0 * *value / 100.0;
         if (const auto value = threshold("exptme2"); value && *value > 0.0)

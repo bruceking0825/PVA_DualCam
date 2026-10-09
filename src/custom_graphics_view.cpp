@@ -97,6 +97,7 @@ void CustomGraphicsView::updateOverlays(const std::vector<pva::OverlayElement> &
         auto *item = overlayItems_[used++];
         item->setVisible(true);
         QPen pen(color(e.colorBgr));
+        pen.setStyle(e.dashed ? Qt::DashLine : Qt::SolidLine);
         pen.setWidthF(e.width); pen.setCosmetic(true);
         item->setPen(pen);
         QPainterPath path;
@@ -158,7 +159,7 @@ void CustomGraphicsView::saveFigure()
         QJsonArray points;
         for (const auto &p : element.points)
             points.append(QJsonArray{p.x, p.y});
-        elements.append(QJsonObject{{"type", int(element.type)}, {"points", points}, {"color", QJsonArray{element.colorBgr[0], element.colorBgr[1], element.colorBgr[2]}}, {"width", element.width}, {"closed", element.closed}});
+        elements.append(QJsonObject{{"type", int(element.type)}, {"points", points}, {"color", QJsonArray{element.colorBgr[0], element.colorBgr[1], element.colorBgr[2]}}, {"width", element.width}, {"closed", element.closed}, {"dashed", element.dashed}});
     }
     QFile file(path);
     if (file.open(QIODevice::WriteOnly))
@@ -195,6 +196,7 @@ void CustomGraphicsView::loadFigure()
             element.colorBgr = {color[0].toDouble(), color[1].toDouble(), color[2].toDouble()};
         element.width = value.value("width").toInt(2);
         element.closed = value.value("closed").toBool(false);
+        element.dashed = value.value("dashed").toBool(false);
         elements.push_back(std::move(element));
     }
     showImage(image);

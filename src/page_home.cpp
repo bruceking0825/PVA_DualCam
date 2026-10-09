@@ -29,7 +29,7 @@ namespace pva
     {
         connect(ui_->btnStart, &QPushButton::clicked, this, &PageHome::toggleRuntime);
         connect(ui_->btnOnline, &QPushButton::toggled, this, &PageHome::toggleOnline);
-        for (auto *b : {ui_->btnStageIdle, ui_->btnStageMelt, ui_->btnStageDip, ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody, ui_->btnStageEndcone})
+        for (auto *b : {ui_->btnStageMelt, ui_->btnStageDip, ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody})
             connect(b, &QPushButton::clicked, this, &PageHome::selectStage);
         connect(ui_->btnFirstImage, &QPushButton::clicked, this, &PageHome::firstImage);
         connect(ui_->btnPreviousImage, &QPushButton::clicked, this, &PageHome::previousImage);
@@ -118,11 +118,13 @@ namespace pva
     }
     void PageHome::selectStage()
     {
-        const std::array<QPushButton *, 7> buttons{ui_->btnStageIdle, ui_->btnStageMelt, ui_->btnStageDip,
-            ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody, ui_->btnStageEndcone};
+        const std::array<QPushButton *, 5> buttons{ui_->btnStageMelt, ui_->btnStageDip,
+            ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody};
+        const std::array<MeasurementStage, 5> stages{MeasurementStage::Melt, MeasurementStage::Dip,
+            MeasurementStage::Neck, MeasurementStage::Crown, MeasurementStage::Body};
         for (size_t i = 0; i < buttons.size(); ++i) if (sender() == buttons[i]) {
             auto *runtime = &runtime_;
-            QMetaObject::invokeMethod(runtime, [runtime, i] { runtime->selectStage(MeasurementStage(i)); }, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(runtime, [runtime, stage = stages[i]] { runtime->selectStage(stage); }, Qt::QueuedConnection);
         }
     }
     void PageHome::firstImage() { QMetaObject::invokeMethod(&runtime_, "setImageIndex", Qt::QueuedConnection, Q_ARG(int, 0)); }
@@ -170,7 +172,7 @@ namespace pva
         ui_->mainSplitter->setSizes({680, 170, 300});
         auto *group = new QButtonGroup(this);
         group->setExclusive(true);
-        for (auto *b : {ui_->btnStageIdle, ui_->btnStageMelt, ui_->btnStageDip, ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody, ui_->btnStageEndcone})
+        for (auto *b : {ui_->btnStageMelt, ui_->btnStageDip, ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody})
             group->addButton(b);
         applyStageToUi();
     }
@@ -183,7 +185,7 @@ namespace pva
         ui_->btnStart->style()->unpolish(ui_->btnStart);
         ui_->btnStart->style()->polish(ui_->btnStart);
         ui_->btnStart->setEnabled(offline);
-        for (auto *b : {ui_->btnStageIdle, ui_->btnStageMelt, ui_->btnStageDip, ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody, ui_->btnStageEndcone})
+        for (auto *b : {ui_->btnStageMelt, ui_->btnStageDip, ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody})
             b->setEnabled(offline);
         ui_->lblOfflineImage->setText(snapshot_.imageIndex >= 0 ? QFileInfo(snapshot_.images[snapshot_.imageIndex]).fileName() : "No image");
         ui_->lblOfflineImage->setToolTip(snapshot_.imageIndex >= 0 ? snapshot_.images[snapshot_.imageIndex] : snapshot_.config.runtime.offlineImageDir);
@@ -196,7 +198,7 @@ namespace pva
 
     void PageHome::applyStageToUi()
     {
-        QPushButton *selected = ui_->btnStageIdle;
+        QPushButton *selected = ui_->btnStageMelt;
         switch (snapshot_.stage)
         {
         case MeasurementStage::Melt:
@@ -213,9 +215,6 @@ namespace pva
             break;
         case MeasurementStage::Body:
             selected = ui_->btnStageBody;
-            break;
-        case MeasurementStage::Endcone:
-            selected = ui_->btnStageEndcone;
             break;
         default:
             break;

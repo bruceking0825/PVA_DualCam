@@ -50,7 +50,7 @@ namespace pva::algorithms
             auto sorted = residual;
             for (double &v : sorted)
                 v = std::abs(v - median);
-            const double threshold = std::max(limit, 3 * 1.4826 * percentile(sorted, 0.5));
+            const double threshold = std::max(limit, 1.5 * 1.4826 * percentile(sorted, 0.5));
             std::vector<cv::Point2d> kept;
             std::vector<double> keptWeights;
             for (size_t i = 0; i < points.size(); ++i)
@@ -69,9 +69,11 @@ namespace pva::algorithms
     static DetectionResult<CurveHit> finish(std::vector<cv::Point2d> points,
                                             std::vector<double> strengths,
                                             int minPoints, double residual,
-                                            double middle, double width,
+                                            double middle, int searchRowCount,
                                             double minCoverage, bool enforceCoverage)
     {
+        if (searchRowCount <= 0)
+            return DetectionResult<CurveHit>::failure("vertical search row count must be positive");
         if (points.size() < size_t(minPoints))
             return DetectionResult<CurveHit>::failure(
                 "too few edge points for curve fitting (found=" +
@@ -89,7 +91,9 @@ namespace pva::algorithms
                 std::to_string(minPoints) + ")");
         auto [minIt, maxIt] = std::minmax_element(points.begin(), points.end(), [](auto a, auto b)
                                                   { return a.y < b.y; });
-        const double minY = minIt->y, maxY = maxIt->y, coverage = (maxY - minY + 1) / width;
+        const double minY = minIt->y, maxY = maxIt->y;
+        // 每行最多一个边缘点；缺失行和鲁棒拟合剔除点均降低覆盖率。
+        const double coverage = static_cast<double>(points.size()) / searchRowCount;
         const double sagitta = .5 * (value(coefficients, minY) + value(coefficients, maxY)) -
                                value(coefficients, middle);
         // 当前图像中的有效弧线在中间向左凹；以 Neck 中心 y 投影得到边界顶点。
@@ -213,7 +217,7 @@ namespace pva::algorithms
                           nullptr, &maxima[index]);
             globalMaximum = std::max(globalMaximum, maxima[index]);
         }
-        const double minimumStrength = globalMaximum * std::max(0.0, s.rowMaxFactor);
+        const double minimumStrength = globalMaximum * std::max(0.0, s.gradientThresholdRatio);
         const double keepThreshold = std::max(minimumStrength, std::numeric_limits<double>::epsilon());
         const double rowStrengthsMean = std::accumulate(maxima.begin(), maxima.end(), 0.0) / maxima.size();
         const int keptRowCount = int(std::count_if(maxima.begin(), maxima.end(),
@@ -228,15 +232,11 @@ namespace pva::algorithms
 
         std::vector<double> columnScores(searchStop - searchStart, 0.0);
         std::vector<int> validCounts(searchStop - searchStart, 0);
-        int selectedY0 = y1;
-        int selectedY1 = y0;
         for (int y = y0; y <= y1; ++y)
         {
             const int index = y - y0;
             if (maxima[index] < keepThreshold)
                 continue;
-            selectedY0 = std::min(selectedY0, y);
-            selectedY1 = std::max(selectedY1, y);
             for (int x = searchStart; x < searchStop; ++x)
             {
                 columnScores[x - searchStart] += score.at<float>(y - roi.y, x - roi.x);
@@ -270,7 +270,7 @@ namespace pva::algorithms
         }
         auto hit = finish(std::move(points), std::move(strengths), s.minEdgePoints,
                           s.fitResidualPx, expectedCenter.y,
-                          std::max(selectedY1 - selectedY0 + 1, 1), 0.0, false);
+                          y1 - y0 + 1, 0.0, false);
         if (hit)
         {
             hit->center = expectedCenter;
@@ -287,7 +287,7 @@ namespace pva::algorithms
                                                const cv::Rect &configuredRoi,
                                                cv::Point2d expectedCenter,
                                                const BodySettings &s,
-                                               double offset,
+                                               double thresholdPercent,
                                                std::optional<double> previous)
     {
         if (gray.empty())
@@ -298,8 +298,8 @@ namespace pva::algorithms
             return DetectionResult<CurveHit>::failure("input image is smaller than 3 x 3 pixels");
         if (!std::isfinite(expectedCenter.x) || !std::isfinite(expectedCenter.y))
             return DetectionResult<CurveHit>::failure("neck center contains a non-finite coordinate");
-        if (!std::isfinite(offset))
-            return DetectionResult<CurveHit>::failure("brightness offset is not finite");
+        if (!std::isfinite(thresholdPercent) || thresholdPercent < 0 || thresholdPercent > 100)
+            return DetectionResult<CurveHit>::failure("brightness threshold percent must be between 0 and 100");
         if (!std::isfinite(s.startSearchRatio) || !std::isfinite(s.stopSearchRatio) ||
             s.startSearchRatio < 0.0 || s.stopSearchRatio > 1.0 ||
             s.startSearchRatio >= s.stopSearchRatio)
@@ -353,7 +353,8 @@ namespace pva::algorithms
                           nullptr, &maximum);
             if (maximum > std::numeric_limits<double>::epsilon())
                 usableMaxima.push_back(maximum);
-            const double threshold = maximum - std::max(offset, 0.0);
+            // 每行阈值按该行搜索范围内最大亮度的百分比计算。
+            const double threshold = maximum * thresholdPercent / 100.0;
             for (int outside = searchStart; outside + 3 < searchStop; ++outside)
             {
                 const int local = outside - processingRoi.x;
@@ -386,7 +387,7 @@ namespace pva::algorithms
             hit->center = expectedCenter;
             hit->leftMarginPx = s.leftMarginPx;
             hit->trackingHalfWidthPx = trackingHalfWidth;
-            hit->brightnessOffset = offset;
+            hit->brightnessThresholdPercent = thresholdPercent;
             hit->thresholdCrossingCount = thresholdCrossingCount;
             hit->rowMaximumP90 = maximumP90;
             hit->rowMaximumMaximum = maximumMaximum;

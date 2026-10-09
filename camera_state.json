@@ -1,0 +1,7 @@
+{
+    "exposure_us": {
+        "camera:cam1": 10011,
+        "camera:cam2": 10011
+    },
+    "version": 1
+}

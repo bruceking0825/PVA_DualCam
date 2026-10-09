@@ -34,9 +34,9 @@
             0
         ]
     },
-    "point_fit_selected": true,
+    "point_fit_selected": false,
     "refresh_rate": 1,
-    "relative_threshold": false,
+    "relative_threshold": true,
     "schema_version": 1,
-    "stage": 5
+    "stage": 3
 }

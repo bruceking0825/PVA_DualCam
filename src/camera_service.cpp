@@ -391,7 +391,7 @@ void CameraService::publishState()
         if (plcExposureOverrides_.contains(value.userId()))
             return;
         if (streamOwner_ != "online" || !config_.camera.autoExposureEnabled ||
-            (onlineStage_ != MeasurementStage::Idle && onlineStage_ != MeasurementStage::Neck))
+            onlineStage_ != MeasurementStage::Neck)
             return;
         const qint64 minimumDelta = qint64(std::max(config_.camera.autoExposureIntervalMs, 50)) * 1000000;
         if (timestampNs - lastExposureAdjustNs_.value(value.userId(), 0) < minimumDelta)

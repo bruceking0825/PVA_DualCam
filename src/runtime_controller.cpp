@@ -24,11 +24,9 @@ namespace pva
         {
             return left.disableCameraForPlcTest == right.disableCameraForPlcTest &&
                    left.connectPlcInOffline == right.connectPlcInOffline &&
-                   left.idleSampleIntervalMs == right.idleSampleIntervalMs &&
                    left.neckSampleIntervalMs == right.neckSampleIntervalMs &&
                    left.crownSampleIntervalMs == right.crownSampleIntervalMs &&
                    left.bodySampleIntervalMs == right.bodySampleIntervalMs &&
-                   left.endconeSampleIntervalMs == right.endconeSampleIntervalMs &&
                    left.offlineImageDir == right.offlineImageDir &&
                    left.loopIntervalMs == right.loopIntervalMs &&
                    left.stateFile == right.stateFile &&

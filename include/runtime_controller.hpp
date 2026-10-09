@@ -27,7 +27,7 @@ namespace pva
     {
         RunState state{RunState::Stopped};
         bool online{};
-        MeasurementStage stage{MeasurementStage::Neck};
+        MeasurementStage stage{MeasurementStage::Melt};
         QStringList images;
         int imageIndex{-1};
         MeasurementConfig config;
@@ -92,7 +92,7 @@ namespace pva
         QTimer *facetTimeoutTimer_{};
         QStringList imagePaths_;
         int imageIndex_{-1};
-        MeasurementStage stage_{MeasurementStage::Neck};
+        MeasurementStage stage_{MeasurementStage::Melt};
         RunState state_{RunState::Stopped};
         quint64 generation_{1};
         bool networkEnabled_{true};

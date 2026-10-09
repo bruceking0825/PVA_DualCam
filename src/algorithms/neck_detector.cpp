@@ -206,7 +206,7 @@ namespace pva::algorithms
         return cv::RotatedRect(center, size, 0);
     }
     DetectionResult<EllipseHit> findNeckEllipse(const cv::Mat &gray, const cv::Rect &configuredRoi,
-                                                double threshold, double minArea,
+                                                double thresholdPercent, double minArea,
                                                 double startRatio, double stopRatio,
                                                 std::optional<double> expectedY,
                                                 std::optional<double> widthToHeightRatio)
@@ -215,6 +215,8 @@ namespace pva::algorithms
             return DetectionResult<EllipseHit>::failure("input image is empty");
         if (gray.channels() != 1)
             return DetectionResult<EllipseHit>::failure("input image is not single-channel grayscale");
+        if (!std::isfinite(thresholdPercent) || thresholdPercent < 0.0 || thresholdPercent > 100.0)
+            return DetectionResult<EllipseHit>::failure("neck gradient threshold percent must be between 0 and 100");
         if (widthToHeightRatio && (!std::isfinite(*widthToHeightRatio) || *widthToHeightRatio <= 0.0))
             return DetectionResult<EllipseHit>::failure("neck ellipse width-to-height ratio must be positive and finite");
 
@@ -236,7 +238,12 @@ namespace pva::algorithms
         cv::Sobel(blur, gx, CV_32F, 1, 0, 3);
         cv::Sobel(blur, gy, CV_32F, 0, 1, 3);
         cv::magnitude(gx, gy, mag);
-        cv::threshold(mag, binary, std::max(threshold, 0.0), 255, cv::THRESH_BINARY);
+        double maximumGradient = 0.0;
+        cv::minMaxLoc(mag, nullptr, &maximumGradient);
+        if (maximumGradient <= 0.0)
+            return DetectionResult<EllipseHit>::failure("effective ROI has no gradient");
+        const double threshold = maximumGradient * thresholdPercent / 100.0;
+        cv::threshold(mag, binary, threshold, 255, cv::THRESH_BINARY);
         binary.convertTo(binary, CV_8U);
         cv::morphologyEx(binary, binary, cv::MORPH_CLOSE, cv::Mat::ones(3, 3, CV_8U));
         std::vector<std::vector<cv::Point>> contours;
@@ -303,6 +310,7 @@ namespace pva::algorithms
                 std::to_string(rejectedArea) + ", fit_failed=" +
                 std::to_string(failedFit) + ", size_rejected=" +
                 std::to_string(rejectedSize) + ")");
+        best->maximumGradient = maximumGradient;
         return DetectionResult<EllipseHit>::success(std::move(*best));
     }
 }

@@ -247,18 +247,6 @@ class Ui_PageHome(object):
         self.stageModeLayout = QHBoxLayout()
         self.stageModeLayout.setSpacing(4)
         self.stageModeLayout.setObjectName(u"stageModeLayout")
-        self.btnStageIdle = QPushButton(self.rightPanel)
-        self.btnStageIdle.setObjectName(u"btnStageIdle")
-        self.btnStageIdle.setCheckable(True)
-
-        self.stageModeLayout.addWidget(self.btnStageIdle)
-
-        self.btnStageNeck = QPushButton(self.rightPanel)
-        self.btnStageNeck.setObjectName(u"btnStageNeck")
-        self.btnStageNeck.setCheckable(True)
-
-        self.stageModeLayout.addWidget(self.btnStageNeck)
-
         self.btnStageMelt = QPushButton(self.rightPanel)
         self.btnStageMelt.setObjectName(u"btnStageMelt")
         self.btnStageMelt.setCheckable(True)
@@ -271,6 +259,12 @@ class Ui_PageHome(object):
 
         self.stageModeLayout.addWidget(self.btnStageDip)
 
+        self.btnStageNeck = QPushButton(self.rightPanel)
+        self.btnStageNeck.setObjectName(u"btnStageNeck")
+        self.btnStageNeck.setCheckable(True)
+
+        self.stageModeLayout.addWidget(self.btnStageNeck)
+
         self.btnStageCrown = QPushButton(self.rightPanel)
         self.btnStageCrown.setObjectName(u"btnStageCrown")
         self.btnStageCrown.setCheckable(True)
@@ -282,12 +276,6 @@ class Ui_PageHome(object):
         self.btnStageBody.setCheckable(True)
 
         self.stageModeLayout.addWidget(self.btnStageBody)
-
-        self.btnStageEndcone = QPushButton(self.rightPanel)
-        self.btnStageEndcone.setObjectName(u"btnStageEndcone")
-        self.btnStageEndcone.setCheckable(True)
-
-        self.stageModeLayout.addWidget(self.btnStageEndcone)
 
 
         self.rightLayout.addLayout(self.stageModeLayout)
@@ -452,13 +440,11 @@ class Ui_PageHome(object):
         self.lblPlcStatus.setText("")
         self.labelPlcStatus.setText(QCoreApplication.translate("PageHome", u"PLC", None))
         self.labelOfflineMode.setText(QCoreApplication.translate("PageHome", u"Mode", None))
-        self.btnStageIdle.setText(QCoreApplication.translate("PageHome", u"Idle", None))
-        self.btnStageNeck.setText(QCoreApplication.translate("PageHome", u"Neck", None))
         self.btnStageMelt.setText(QCoreApplication.translate("PageHome", u"Melt", None))
         self.btnStageDip.setText(QCoreApplication.translate("PageHome", u"Dip", None))
+        self.btnStageNeck.setText(QCoreApplication.translate("PageHome", u"Neck", None))
         self.btnStageCrown.setText(QCoreApplication.translate("PageHome", u"Crown", None))
         self.btnStageBody.setText(QCoreApplication.translate("PageHome", u"Body", None))
-        self.btnStageEndcone.setText(QCoreApplication.translate("PageHome", u"Endcone", None))
         self.labelOfflineImages.setText(QCoreApplication.translate("PageHome", u"Image Sequence", None))
 #if QT_CONFIG(tooltip)
         self.btnFirstImage.setToolTip(QCoreApplication.translate("PageHome", u"First image", None))

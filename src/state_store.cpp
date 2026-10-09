@@ -66,21 +66,10 @@ namespace pva
             state.filteredLight = {light[0].toDouble(), light[1].toDouble()};
         if (object.contains("neck_centers_px"))
             state.neckCentersPx = points(object.value("neck_centers_px"));
-        if (object.contains("neck_y_spans"))
-        {
-            const auto spans = object.value("neck_y_spans").toArray();
-            const auto a = spans.size() > 0 ? spans.at(0).toArray() : QJsonArray{};
-            const auto b = spans.size() > 1 ? spans.at(1).toArray() : QJsonArray{};
-            state.neckYSpans = std::array<cv::Vec2i, 2>{cv::Vec2i(a.size() > 0 ? a.at(0).toInt() : 0, a.size() > 1 ? a.at(1).toInt() : 0), cv::Vec2i(b.size() > 0 ? b.at(0).toInt() : 0, b.size() > 1 ? b.at(1).toInt() : 0)};
-        }
         if (object.contains("crown_boundary_points_px"))
             state.crownBoundaryPointsPx = points(object.value("crown_boundary_points_px"));
-        if (object.contains("body_centers_px"))
-            state.bodyCentersPx = points(object.value("body_centers_px"));
         if (object.contains("body_boundary_points_px"))
             state.bodyBoundaryPointsPx = points(object.value("body_boundary_points_px"));
-        if (object.value("mm_per_pixel").isDouble())
-            state.mmPerPixel = object.value("mm_per_pixel").toDouble();
         state.validNeck = object.value("valid_neck").toBool(false) && state.neckCentersPx.has_value();
         return state;
     }
@@ -99,15 +88,10 @@ namespace pva
         object["filtered_light"] = QJsonArray{state.filteredLight[0], state.filteredLight[1]};
         if (state.neckCentersPx)
             object["neck_centers_px"] = points(*state.neckCentersPx);
-        if (state.neckYSpans)
-            object["neck_y_spans"] = QJsonArray{QJsonArray{(*state.neckYSpans)[0][0], (*state.neckYSpans)[0][1]}, QJsonArray{(*state.neckYSpans)[1][0], (*state.neckYSpans)[1][1]}};
         if (state.crownBoundaryPointsPx)
             object["crown_boundary_points_px"] = points(*state.crownBoundaryPointsPx);
-        if (state.bodyCentersPx)
-            object["body_centers_px"] = points(*state.bodyCentersPx);
         if (state.bodyBoundaryPointsPx)
             object["body_boundary_points_px"] = points(*state.bodyBoundaryPointsPx);
-        object["mm_per_pixel"] = state.mmPerPixel ? QJsonValue(*state.mmPerPixel) : QJsonValue();
         object["valid_neck"] = state.validNeck;
         QSaveFile file(path_);
         if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(QJsonObject{{"schema_version", schemaVersion}, {"state", object}}).toJson(QJsonDocument::Indented)) < 0 || !file.commit())

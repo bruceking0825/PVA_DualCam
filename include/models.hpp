@@ -13,14 +13,11 @@ namespace pva
 {
 
     enum class MeasurementStage : int
-    {
-        Idle = 0,
-        Melt = 1,
+    {        Melt = 1,
         Dip = 2,
         Neck = 3,
         Crown = 4,
-        Body = 5,
-        Endcone = 6
+        Body = 5
     };
 
     struct MeasurementValues
@@ -34,11 +31,8 @@ namespace pva
         MeasurementValues values;
         cv::Vec2d filteredLight{0.0, 0.0};
         std::optional<std::array<cv::Point2d, 2>> neckCentersPx;
-        std::optional<std::array<cv::Vec2i, 2>> neckYSpans;
         std::optional<std::array<cv::Point2d, 2>> crownBoundaryPointsPx;
-        std::optional<std::array<cv::Point2d, 2>> bodyCentersPx;
         std::optional<std::array<cv::Point2d, 2>> bodyBoundaryPointsPx;
-        std::optional<double> mmPerPixel;
         bool validNeck{false};
     };
 
@@ -56,6 +50,7 @@ namespace pva
         cv::Scalar colorBgr{0, 255, 0};
         int width{2};
         bool closed{false};
+        bool dashed{false};
     };
 
     // 领域输出：字段具有明确含义，PLC 字段顺序由适配器维护。
@@ -84,7 +79,7 @@ namespace pva
         quint64 generation{};
         MeasurementTaskInfo task;
         bool valid{false};
-        MeasurementStage stage{MeasurementStage::Idle};
+        MeasurementStage stage{MeasurementStage::Melt};
         MeasurementValues values;
         MeasurementData data;
         std::unordered_map<std::string, QVariant> diagnostics;

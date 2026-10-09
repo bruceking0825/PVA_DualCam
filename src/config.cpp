@@ -191,11 +191,9 @@ namespace
         static const std::vector<ConfigEntry> entries{
             setting("Runtime", "disable_camera_for_plc_test", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::disableCameraForPlcTest),
             setting("Runtime", "connect_plc_in_offline", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::connectPlcInOffline),
-            setting("Runtime", "idle_sample_interval_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::idleSampleIntervalMs, minimum(50)),
             setting("Runtime", "neck_sample_interval_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::neckSampleIntervalMs, minimum(50)),
             setting("Runtime", "crown_sample_interval_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::crownSampleIntervalMs, minimum(50)),
             setting("Runtime", "body_sample_interval_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::bodySampleIntervalMs, minimum(50)),
-            setting("Runtime", "endcone_sample_interval_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::endconeSampleIntervalMs, minimum(50)),
             setting("Runtime", "offline_image_dir", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::offlineImageDir, path()),
             setting("Runtime", "facette_image_dir", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::facetteImageDir, path()),
             setting("Runtime", "loop_interval_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::loopIntervalMs, minimum(50)),
@@ -223,7 +221,6 @@ namespace
             setting("Measurement", "diameter_min_mm", &pva::MeasurementConfig::measurement, &pva::MeasurementSettings::diameterMinMm),
             setting("Measurement", "diameter_max_mm", &pva::MeasurementConfig::measurement, &pva::MeasurementSettings::diameterMaxMm),
             setting("Measurement", "light_alpha", &pva::MeasurementConfig::measurement, &pva::MeasurementSettings::lightAlpha),
-            setting("Measurement", "mm_per_pixel_alpha", &pva::MeasurementConfig::measurement, &pva::MeasurementSettings::mmPerPixelAlpha),
             setting("Measurement", "auto_exposure_roi_camera1", &pva::MeasurementConfig::measurement, &pva::MeasurementSettings::autoExposureRoiCamera1),
             setting("Measurement", "auto_exposure_roi_camera2", &pva::MeasurementConfig::measurement, &pva::MeasurementSettings::autoExposureRoiCamera2),
             setting("Measurement", "reflector_roi_camera1", &pva::MeasurementConfig::measurement, &pva::MeasurementSettings::reflectorRoiCamera1),
@@ -231,18 +228,16 @@ namespace
 
             setting("Neck", "min_contour_area_px", &pva::MeasurementConfig::neck, &pva::NeckSettings::minContourAreaPx),
             setting("Neck", "neck_min_edge_points", &pva::MeasurementConfig::neck, &pva::NeckSettings::minEdgePoints),
-            setting("Neck", "neck_gradient_threshold_cam1", &pva::MeasurementConfig::neck, &pva::NeckSettings::gradientThresholdCamera1),
-            setting("Neck", "neck_gradient_threshold_cam2", &pva::MeasurementConfig::neck, &pva::NeckSettings::gradientThresholdCamera2),
+            setting("Neck", "neck_gradient_threshold_percent_cam1", &pva::MeasurementConfig::neck, &pva::NeckSettings::gradientThresholdPercentCamera1, range(0, 100)),
+            setting("Neck", "neck_gradient_threshold_percent_cam2", &pva::MeasurementConfig::neck, &pva::NeckSettings::gradientThresholdPercentCamera2, range(0, 100)),
             setting("Neck", "neck_ellipse_width_height_ratio_cam2", &pva::MeasurementConfig::neck, &pva::NeckSettings::ellipseWidthHeightRatioCamera2, minimum(1e-6)),
             setting("Neck", "neck_start_search_ratio", &pva::MeasurementConfig::neck, &pva::NeckSettings::startSearchRatio),
             setting("Neck", "neck_stop_search_ratio", &pva::MeasurementConfig::neck, &pva::NeckSettings::stopSearchRatio),
             setting("Neck", "neck_pixels_per_mm", &pva::MeasurementConfig::neck, &pva::NeckSettings::pixelsPerMm),
             setting("Neck", "neck_diameter_alpha", &pva::MeasurementConfig::neck, &pva::NeckSettings::diameterAlpha),
 
-            setting("Crown", "crown_diameter_threshold1_mm", &pva::MeasurementConfig::crown, &pva::CrownSettings::diameterThreshold1Mm, minimum(0)),
-            setting("Crown", "crown_diameter_threshold2_mm", &pva::MeasurementConfig::crown, &pva::CrownSettings::diameterThreshold2Mm, minimum(0)),
             setting("Crown", "crown_min_edge_points", &pva::MeasurementConfig::crown, &pva::CrownSettings::minEdgePoints),
-            setting("Crown", "crown_edge_row_max_factor", &pva::MeasurementConfig::crown, &pva::CrownSettings::rowMaxFactor),
+            setting("Crown", "crown_edge_gradient_threshold_ratio", &pva::MeasurementConfig::crown, &pva::CrownSettings::gradientThresholdRatio),
             setting("Crown", "crown_edge_use_previous_boundary_x", &pva::MeasurementConfig::crown, &pva::CrownSettings::usePreviousBoundaryX),
             setting("Crown", "crown_edge_search_half_width_px", &pva::MeasurementConfig::crown, &pva::CrownSettings::searchHalfWidthPx),
             setting("Crown", "crown_edge_vertical_margin_px", &pva::MeasurementConfig::crown, &pva::CrownSettings::verticalMarginPx),
@@ -250,8 +245,8 @@ namespace
             setting("Crown", "crown_edge_fit_residual_px", &pva::MeasurementConfig::crown, &pva::CrownSettings::fitResidualPx),
 
             setting("Body", "body_min_edge_points", &pva::MeasurementConfig::body, &pva::BodySettings::minEdgePoints),
-            setting("Body", "body_brightness_offset_cam1", &pva::MeasurementConfig::body, &pva::BodySettings::brightnessOffsetCamera1),
-            setting("Body", "body_brightness_offset_cam2", &pva::MeasurementConfig::body, &pva::BodySettings::brightnessOffsetCamera2),
+            setting("Body", "body_brightness_threshold_percent_cam1", &pva::MeasurementConfig::body, &pva::BodySettings::brightnessThresholdPercentCamera1, range(0, 100)),
+            setting("Body", "body_brightness_threshold_percent_cam2", &pva::MeasurementConfig::body, &pva::BodySettings::brightnessThresholdPercentCamera2, range(0, 100)),
             setting("Body", "body_start_search_ratio", &pva::MeasurementConfig::body, &pva::BodySettings::startSearchRatio),
             setting("Body", "body_stop_search_ratio", &pva::MeasurementConfig::body, &pva::BodySettings::stopSearchRatio),
             setting("Body", "body_edge_use_previous_boundary_x", &pva::MeasurementConfig::body, &pva::BodySettings::usePreviousBoundaryX),
@@ -261,8 +256,6 @@ namespace
             setting("Body", "body_edge_min_coverage_ratio", &pva::MeasurementConfig::body, &pva::BodySettings::minCoverageRatio),
             setting("Body", "body_edge_fit_residual_px", &pva::MeasurementConfig::body, &pva::BodySettings::fitResidualPx),
 
-            setting("Endcone", "endcone_diameter_alpha", &pva::MeasurementConfig::endcone, &pva::EndconeSettings::diameterAlpha),
-            setting("Endcone", "endcone_boundary_offset_px", &pva::MeasurementConfig::endcone, &pva::EndconeSettings::boundaryOffsetPx),
         };
         return entries;
     }

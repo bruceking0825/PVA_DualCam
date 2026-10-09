@@ -11,7 +11,7 @@ namespace pva
 {
     struct PlcRuntimeState
     {
-        MeasurementStage stage{MeasurementStage::Neck};
+        MeasurementStage stage{MeasurementStage::Melt};
         bool pointFitSelected{false};
         bool acquisitionEnabled{true};
         bool relativeThreshold{false};

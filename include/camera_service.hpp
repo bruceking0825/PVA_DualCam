@@ -82,7 +82,7 @@ private:
     std::unique_ptr<CameraManager> cameraManager_;
     DalsaCamera *current_{};
     QString streamOwner_;
-    MeasurementStage onlineStage_{MeasurementStage::Idle};
+    MeasurementStage onlineStage_{MeasurementStage::Melt};
     QHash<QString, qint64> lastExposureAdjustNs_, lastExposurePublishNs_;
     QHash<QString, double> plcExposureOverrides_;
     qint64 lastManualPreviewNs_{};

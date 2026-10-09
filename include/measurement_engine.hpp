@@ -28,7 +28,6 @@ namespace pva
         std::pair<bool, std::string> processNeck(const cv::Mat &, const cv::Mat &, MeasurementResult &);
         std::pair<bool, std::string> processCrown(const cv::Mat &, const cv::Mat &, MeasurementResult &);
         std::pair<bool, std::string> processBody(const cv::Mat &, const cv::Mat &, MeasurementResult &);
-        std::pair<bool, std::string> processEndcone(const cv::Mat &, const cv::Mat &, MeasurementResult &);
     };
 
 } // namespace pva

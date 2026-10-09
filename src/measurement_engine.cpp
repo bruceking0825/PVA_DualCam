@@ -46,14 +46,6 @@ namespace
                        2,
                        false});
     }
-    cv::Vec2i ellipseYSpan(const pva::algorithms::EllipseHit &hit, int imageHeight)
-    {
-        const double halfHeight = std::max(hit.ellipse.size.width, hit.ellipse.size.height) * 0.5;
-        const int top = std::clamp(cvRound(hit.ellipse.center.y - halfHeight), 0, imageHeight - 1);
-        const int bottom = std::clamp(cvRound(hit.ellipse.center.y + halfHeight), top, imageHeight - 1);
-        return {top, bottom};
-    }
-
     cv::Rect clippedRoi(const cv::Rect &configuredRoi, const cv::Size &imageSize)
     {
         return configuredRoi & cv::Rect(0, 0, imageSize.width, imageSize.height);
@@ -65,15 +57,8 @@ namespace
         return {double(roi.x + roi.width - 1), roi.y + (roi.height - 1) * 0.5};
     }
 
-    cv::Vec2i roiYSpan(const cv::Rect &configuredRoi, const cv::Size &imageSize)
-    {
-        const cv::Rect roi = clippedRoi(configuredRoi, imageSize);
-        return {roi.y, std::max(roi.y, roi.y + roi.height - 1)};
-    }
-
     std::pair<bool, std::string> applyCamera1Neck(
         const pva::algorithms::EllipseHit &hit,
-        const cv::Size &camera1Size,
         const cv::Size &camera2Size,
         const pva::MeasurementConfig &config,
         pva::MeasurementState &state,
@@ -92,6 +77,7 @@ namespace
             return {false, "Neck diameter is outside physical limits"};
 
         result.diagnostics["neck_contour_area_camera1_px"] = hit.area;
+        result.diagnostics["neck_gradient_maximum_camera1"] = hit.maximumGradient;
         result.diagnostics["neck_edge_points_camera1"] = static_cast<double>(hit.contour.size());
         result.diagnostics["neck_center_x_camera1_px"] = hit.ellipse.center.x;
         result.diagnostics["neck_center_y_camera1_px"] = hit.ellipse.center.y;
@@ -102,19 +88,13 @@ namespace
         result.diagnostics["raw_diameter_mm"] = rawDiameter;
 
         state.values.diameterMm = ema(state.values.diameterMm, rawDiameter, config.neck.diameterAlpha);
-        state.mmPerPixel = ema(state.mmPerPixel, 1.0 / config.neck.pixelsPerMm,
-                               config.measurement.mmPerPixelAlpha);
         state.neckCentersPx = std::array<cv::Point2d, 2>{
             hit.ellipse.center,
             roiRightCenter(config.measurement.reflectorRoiCamera2, camera2Size)};
-        state.neckYSpans = std::array<cv::Vec2i, 2>{
-            ellipseYSpan(hit, camera1Size.height),
-            roiYSpan(config.measurement.reflectorRoiCamera2, camera2Size)};
         state.validNeck = true;
         if (resetFollowingStages)
         {
             state.crownBoundaryPointsPx.reset();
-            state.bodyCentersPx.reset();
             state.bodyBoundaryPointsPx.reset();
         }
         addNeckOverlay(hit, result.overlay1);
@@ -123,18 +103,18 @@ namespace
 
     std::pair<bool, std::string> applyCamera2NeckReference(
         const pva::algorithms::EllipseHit &hit,
-        const cv::Size &camera2Size,
         const pva::MeasurementConfig &config,
         pva::MeasurementState &state,
         pva::MeasurementResult &result)
     {
         if (hit.contour.size() < size_t(config.neck.minEdgePoints))
             return {false, "Not enough Camera 2 neck edge points"};
-        if (!state.neckCentersPx || !state.neckYSpans)
+        if (!state.neckCentersPx)
             return {false, "Camera 2 neck reference requires a valid Camera 1 result"};
 
         const double majorAxis = std::max(hit.ellipse.size.width, hit.ellipse.size.height);
         result.diagnostics["neck_contour_area_camera2_px"] = hit.area;
+        result.diagnostics["neck_gradient_maximum_camera2"] = hit.maximumGradient;
         result.diagnostics["neck_edge_points_camera2"] = static_cast<double>(hit.contour.size());
         result.diagnostics["neck_center_x_camera2_px"] = hit.ellipse.center.x;
         result.diagnostics["neck_center_y_camera2_px"] = hit.ellipse.center.y;
@@ -144,7 +124,6 @@ namespace
 
         // Camera 2 只提供过渡阶段的空间参考；直径和毫米比例始终由 Camera 1 更新。
         (*state.neckCentersPx)[1] = hit.ellipse.center;
-        (*state.neckYSpans)[1] = ellipseYSpan(hit, camera2Size.height);
         addNeckOverlay(hit, result.overlay2);
         return {true, {}};
     }
@@ -172,7 +151,7 @@ namespace
         out.push_back({pva::OverlayType::Polyline,
                        {{double(roi.x), double(roi.y)}, {right, double(roi.y)},
                         {right, bottom}, {double(roi.x), bottom}},
-                       {0, 255, 0}, 2, true});
+                       {0, 255, 0}, 1, true, true});
     }
 
     void initializeCrownDiagnostics(pva::MeasurementResult &result)
@@ -197,16 +176,17 @@ namespace
 
     void initializeBodyDiagnostics(pva::MeasurementResult &result)
     {
-        static const std::array<const char *, 17> cameraKeys{
+        static const std::array<const char *, 19> cameraKeys{
             "body_search_start_x_camera%1_px", "body_search_stop_x_camera%1_px",
             "body_left_margin_camera%1_px", "body_tracking_half_width_camera%1_px",
-            "body_brightness_offset_camera%1", "body_threshold_crossing_count_camera%1",
+            "body_brightness_threshold_percent_camera%1", "body_threshold_crossing_count_camera%1",
             "body_row_maximum_p90_camera%1", "body_row_maximum_maximum_camera%1",
             "body_residual_limit_camera%1_px", "body_robust_inlier_count_camera%1",
             "body_coverage_ratio_camera%1", "body_sagitta_camera%1_px",
             "body_center_camera%1_px", "body_boundary_camera%1_px",
             "body_edge_seed_x_camera%1_px", "body_edge_coverage_camera%1",
-            "body_fit_strength_mean_camera%1"};
+            "body_fit_strength_mean_camera%1", "body_edge_fit_error_camera%1_px",
+            "body_edge_point_count_camera%1"};
         for (int camera = 1; camera <= 2; ++camera)
             for (const char *pattern : cameraKeys)
                 result.diagnostics.emplace(QString::fromLatin1(pattern).arg(camera).toStdString(), QVariant{});
@@ -250,10 +230,9 @@ namespace pva
         const auto started = std::chrono::steady_clock::now();
         MeasurementResult result;
         result.stage = stage;
-        const auto effective = stage == MeasurementStage::Idle ? MeasurementStage::Neck : stage;
-        if (effective == MeasurementStage::Crown)
+        if (stage == MeasurementStage::Crown)
             initializeCrownDiagnostics(result);
-        else if (effective == MeasurementStage::Body)
+        else if (stage == MeasurementStage::Body)
             initializeBodyDiagnostics(result);
         result.preview1 = algorithms::normalizeGray8(a);
         result.preview2 = algorithms::normalizeGray8(b);
@@ -281,8 +260,8 @@ namespace pva
                                                  .count();
             return result;
         }
-        if (effective == MeasurementStage::Neck || effective == MeasurementStage::Crown ||
-            effective == MeasurementStage::Body)
+        if (stage == MeasurementStage::Neck || stage == MeasurementStage::Crown ||
+            stage == MeasurementStage::Body)
         {
             const double previousDiameter = state_.values.diameterMm.value_or(0.0);
             result.data.hasDiameter = true;
@@ -292,18 +271,16 @@ namespace pva
                                       {result.preview2.cols * 0.5, result.preview2.rows * 0.5}};
         }
         std::pair<bool, std::string> outcome;
-        if (effective == MeasurementStage::Melt)
+        if (stage == MeasurementStage::Melt)
             outcome = processMelt(result.preview1, result.preview2, result);
-        else if (effective == MeasurementStage::Dip)
+        else if (stage == MeasurementStage::Dip)
             outcome = processDip(result.preview1, result);
-        else if (effective == MeasurementStage::Neck)
+        else if (stage == MeasurementStage::Neck)
             outcome = processNeck(result.preview1, result.preview2, result);
-        else if (effective == MeasurementStage::Crown)
+        else if (stage == MeasurementStage::Crown)
             outcome = processCrown(result.preview1, result.preview2, result);
-        else if (effective == MeasurementStage::Body)
+        else if (stage == MeasurementStage::Body)
             outcome = processBody(result.preview1, result.preview2, result);
-        else if (effective == MeasurementStage::Endcone)
-            outcome = processEndcone(result.preview1, result.preview2, result);
         else
             outcome = {false, "Unsupported stage"};
         result.valid = outcome.first;
@@ -354,10 +331,10 @@ namespace pva
 
     std::pair<bool, std::string> MeasurementEngine::processNeck(const cv::Mat &a, const cv::Mat &b, MeasurementResult &r)
     {
-        auto first = algorithms::findNeckEllipse(a, config_.measurement.reflectorRoiCamera1, config_.neck.gradientThresholdCamera1, config_.neck.minContourAreaPx, config_.neck.startSearchRatio, config_.neck.stopSearchRatio, {});
+        auto first = algorithms::findNeckEllipse(a, config_.measurement.reflectorRoiCamera1, config_.neck.gradientThresholdPercentCamera1, config_.neck.minContourAreaPx, config_.neck.startSearchRatio, config_.neck.stopSearchRatio, {});
         if (!first)
             return {false, detectionFailure("Camera 1 neck meniscus detection failed", first.error)};
-        const auto updated = applyCamera1Neck(*first, a.size(), b.size(), config_, state_, r, true);
+        const auto updated = applyCamera1Neck(*first, b.size(), config_, state_, r, true);
         if (!updated.first)
             return updated;
         const double majorAxis1 = std::max(first->ellipse.size.width, first->ellipse.size.height);
@@ -369,10 +346,10 @@ namespace pva
         // 相机 2 仅补充空间参考和 PLC 顶点；未检出不影响相机 1 的 Neck 测量。
         const auto second = algorithms::findNeckEllipse(
             b, config_.measurement.reflectorRoiCamera2,
-            config_.neck.gradientThresholdCamera2, config_.neck.minContourAreaPx,
+            config_.neck.gradientThresholdPercentCamera2, config_.neck.minContourAreaPx,
             config_.neck.startSearchRatio, config_.neck.stopSearchRatio, {},
             config_.neck.ellipseWidthHeightRatioCamera2);
-        if (second && applyCamera2NeckReference(*second, b.size(), config_, state_, r).first)
+        if (second && applyCamera2NeckReference(*second, config_, state_, r).first)
         {
             r.data.cameras[1].diameter = std::max(second->ellipse.size.width, second->ellipse.size.height);
             r.data.cameras[1].boundaryX = second->ellipse.center.x - second->ellipse.size.width * 0.5;
@@ -395,7 +372,7 @@ namespace pva
             p2 = (*state_.crownBoundaryPointsPx)[1].x;
         }
         r.diagnostics["crown_edge_previous_tracking_active"] = p1.has_value() && p2.has_value();
-        r.diagnostics["crown_edge_model"] = "maximum_negative_gradient_quadratic";
+        r.diagnostics["crown_edge_model"] = "maximum_positive_x_gradient_quadratic";
         const auto &centers = *state_.neckCentersPx;
         addStoredNeckCenterOverlays(state_, r);
         auto first = algorithms::findCrownMeniscus(a, config_.measurement.reflectorRoiCamera1, centers[0], config_.crown, p1);
@@ -436,7 +413,7 @@ namespace pva
     std::pair<bool, std::string> MeasurementEngine::processBody(const cv::Mat &a, const cv::Mat &b, MeasurementResult &r)
     {
         if (!state_.validNeck || !state_.neckCentersPx)
-            return {false, "Body mode requires a valid Idle/Neck result"};
+            return {false, "Body mode requires a valid Neck result"};
         std::optional<double> p1, p2;
         if (config_.body.usePreviousBoundaryX && state_.bodyBoundaryPointsPx)
         {
@@ -447,8 +424,8 @@ namespace pva
         r.diagnostics["body_edge_model"] = "maximum_brightness_quadratic";
         const auto &centers = *state_.neckCentersPx;
         addStoredNeckCenterOverlays(state_, r);
-        auto first = algorithms::findBodyMeniscus(a, config_.measurement.reflectorRoiCamera1, centers[0], config_.body, config_.body.brightnessOffsetCamera1, p1);
-        auto second = algorithms::findBodyMeniscus(b, config_.measurement.reflectorRoiCamera2, centers[1], config_.body, config_.body.brightnessOffsetCamera2, p2);
+        auto first = algorithms::findBodyMeniscus(a, config_.measurement.reflectorRoiCamera1, centers[0], config_.body, config_.body.brightnessThresholdPercentCamera1, p1);
+        auto second = algorithms::findBodyMeniscus(b, config_.measurement.reflectorRoiCamera2, centers[1], config_.body, config_.body.brightnessThresholdPercentCamera2, p2);
         if (!first || !second)
             return {false, stereoDetectionFailure("Body", first, second)};
         const auto addDiagnostics = [&r](const algorithms::CurveHit &hit, int camera)
@@ -458,7 +435,7 @@ namespace pva
             r.diagnostics["body_search_stop_x" + suffix + "_px"] = hit.searchStopX;
             r.diagnostics["body_left_margin" + suffix + "_px"] = hit.leftMarginPx;
             r.diagnostics["body_tracking_half_width" + suffix + "_px"] = hit.trackingHalfWidthPx;
-            r.diagnostics["body_brightness_offset" + suffix] = hit.brightnessOffset;
+            r.diagnostics["body_brightness_threshold_percent" + suffix] = hit.brightnessThresholdPercent;
             r.diagnostics["body_threshold_crossing_count" + suffix] = hit.thresholdCrossingCount;
             r.diagnostics["body_row_maximum_p90" + suffix] = hit.rowMaximumP90;
             r.diagnostics["body_row_maximum_maximum" + suffix] = hit.rowMaximumMaximum;
@@ -470,11 +447,12 @@ namespace pva
             r.diagnostics["body_boundary" + suffix + "_px"] = pointValue(hit.boundary);
             r.diagnostics["body_edge_seed_x" + suffix + "_px"] = hit.seedX;
             r.diagnostics["body_edge_coverage" + suffix] = hit.coverage;
+            r.diagnostics["body_edge_fit_error" + suffix + "_px"] = hit.fitErrorPx;
+            r.diagnostics["body_edge_point_count" + suffix] = hit.edgePointCount;
             r.diagnostics["body_fit_strength_mean" + suffix] = hit.fitStrengthMean;
         };
         addDiagnostics(*first, 1);
         addDiagnostics(*second, 2);
-        state_.bodyCentersPx = state_.neckCentersPx;
         state_.bodyBoundaryPointsPx = std::array<cv::Point2d, 2>{first->boundary, second->boundary};
         r.data.cameras[0].boundaryX = first->boundary.x;
         r.data.cameras[1].boundaryX = second->boundary.x;
@@ -483,21 +461,5 @@ namespace pva
         return {true, "Body meniscus lower vertices updated"};
     }
 
-    std::pair<bool, std::string> MeasurementEngine::processEndcone(const cv::Mat &, const cv::Mat &b, MeasurementResult &r)
-    {
-        if (!state_.validNeck || !state_.bodyCentersPx || !state_.mmPerPixel)
-            return {false, "Endcone requires valid neck and body state"};
-        cv::Vec2i span = state_.neckYSpans ? (*state_.neckYSpans)[1] : cv::Vec2i(0, b.rows - 1);
-        auto hit = algorithms::findEndcone(b, config_.measurement.reflectorRoiCamera2, (*state_.bodyCentersPx)[1], span, *state_.mmPerPixel, config_.endcone);
-        if (!hit)
-            return {false, detectionFailure("Camera 2 endcone detection failed", hit.error)};
-        if (!(hit->diameterMm > config_.measurement.diameterMinMm && hit->diameterMm < config_.measurement.diameterMaxMm))
-            return {false, "Endcone diameter is outside physical limits"};
-        state_.values.diameterMm = ema(state_.values.diameterMm, hit->diameterMm, config_.endcone.diameterAlpha);
-        r.overlay2.push_back({OverlayType::Line, {{hit->boundaryX, double(hit->y0)}, {hit->boundaryX, double(hit->y1 - 1)}}, {0, 0, 255}, 4, false});
-        r.overlay2.push_back({OverlayType::Cross, {(*state_.bodyCentersPx)[1]}, {255, 0, 255}, 2, false});
-        r.diagnostics["boundary_x_px"] = hit->boundaryX;
-        r.diagnostics["raw_diameter_mm"] = hit->diameterMm;
-        return {true, "Endcone measurement updated"};
-    }
+
 }

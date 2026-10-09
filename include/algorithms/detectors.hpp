@@ -38,6 +38,7 @@ namespace pva::algorithms
         std::vector<cv::Point> contour;
         double area{};
         bool contourClosed{true};
+        double maximumGradient{};
     };
     struct CurveHit
     {
@@ -61,20 +62,13 @@ namespace pva::algorithms
         int thresholdCrossingCount{};
         double leftMarginPx{};
         double trackingHalfWidthPx{};
-        double brightnessOffset{};
+        double brightnessThresholdPercent{};
         double rowMaximumP90{};
         double rowMaximumMaximum{};
     };
-    struct EndconeHit
-    {
-        double boundaryX{};
-        double diameterMm{};
-        int y0{}, y1{};
-    };
 
     cv::Mat normalizeGray8(const cv::Mat &source);
-    DetectionResult<EllipseHit> findNeckEllipse(const cv::Mat &gray, const cv::Rect &roi, double threshold, double minArea, double startRatio, double stopRatio, std::optional<double> expectedY, std::optional<double> widthToHeightRatio = {});
+    DetectionResult<EllipseHit> findNeckEllipse(const cv::Mat &gray, const cv::Rect &roi, double thresholdPercent, double minArea, double startRatio, double stopRatio, std::optional<double> expectedY, std::optional<double> widthToHeightRatio = {});
     DetectionResult<CurveHit> findCrownMeniscus(const cv::Mat &gray, const cv::Rect &roi, cv::Point2d expectedCenter, const CrownSettings &settings, std::optional<double> previousX);
-    DetectionResult<CurveHit> findBodyMeniscus(const cv::Mat &gray, const cv::Rect &roi, cv::Point2d expectedCenter, const BodySettings &settings, double brightnessOffset, std::optional<double> previousX);
-    DetectionResult<EndconeHit> findEndcone(const cv::Mat &gray, const cv::Rect &roi, cv::Point2d bodyCenter, cv::Vec2i neckSpan, double mmPerPixel, const EndconeSettings &settings);
+    DetectionResult<CurveHit> findBodyMeniscus(const cv::Mat &gray, const cv::Rect &roi, cv::Point2d expectedCenter, const BodySettings &settings, double brightnessThresholdPercent, std::optional<double> previousX);
 }

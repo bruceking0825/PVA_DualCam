@@ -73,6 +73,7 @@ int main(int argc, char **argv) {
     QObject::connect(&runtime, &pva::RuntimeController::resultReady, &app, [&](const auto &r) { ++results; last = r; });
     QObject::connect(&runtime, &pva::RuntimeController::payloadReady, &app, [&](const auto &r) { replies.append(r); });
     runtime.initialize();
+    runtime.selectStage(pva::MeasurementStage::Neck);
     runtime.stepImage(1);
     runtime.stepImage(1);
     check(snapshot.imageIndex == 2, "Relative navigation uses controller index for rapid clicks");
@@ -84,10 +85,10 @@ int main(int argc, char **argv) {
           "Measurement carries run, request and configuration identity");
     const auto originalVersion = last.task.configurationVersion;
     runtime.onSherlockCommand({"dia_thr", {"2500"}, "dia_thr=2500"});
-    check(std::abs(snapshot.config.neck.gradientThresholdCamera1 - 63.75) < 1e-9,
+    check(std::abs(snapshot.config.neck.gradientThresholdPercentCamera1 - 25.0) < 1e-9,
           "PLC threshold overrides base configuration");
     runtime.reloadConfig(config);
-    check(std::abs(snapshot.config.neck.gradientThresholdCamera1 - 63.75) < 1e-9,
+    check(std::abs(snapshot.config.neck.gradientThresholdPercentCamera1 - 25.0) < 1e-9,
           "Base hot reload preserves PLC override priority");
     check(until([&] { return last.task.configurationVersion > originalVersion; }),
           "Configuration update tags subsequent results");

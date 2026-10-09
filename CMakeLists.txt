@@ -127,7 +127,6 @@ add_library(pva_measurement
     src/algorithms/image_utils.cpp
     src/algorithms/neck_detector.cpp
     src/algorithms/meniscus_detector.cpp
-    src/algorithms/endcone_detector.cpp
 )
 target_include_directories(pva_measurement PUBLIC include)
 target_link_libraries(pva_measurement PUBLIC ${PVA_QT_PACKAGE}::Core ${OpenCV_LIBS})
