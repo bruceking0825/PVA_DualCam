@@ -32,7 +32,6 @@ int main(int argc, char **argv)
     config.runtime.stateFile = directory.filePath("state.json");
     config.runtime.facetteImageDir = directory.filePath("facettes");
     config.runtime.loopIntervalMs = 50;
-    config.runtime.connectPlcInOffline = false;
     config.measurement.reflectorRoiCamera1 = config.measurement.reflectorRoiCamera2 = {0,0,1024,1024};
     config.measurement.brightnessMin = 1;
     config.neck.stopSearchRatio = 1;

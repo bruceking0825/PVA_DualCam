@@ -79,8 +79,7 @@ namespace pva
         const QFileInfo info(path_);
         if (!QDir().mkpath(info.absolutePath()))
         {
-            if (error)
-                *error = "Cannot create state directory";
+            if (error) *error = QFileInfo(path_).absoluteFilePath() + ": create directory failed";
             return false;
         }
         QJsonObject object;
@@ -94,12 +93,14 @@ namespace pva
             object["body_boundary_points_px"] = points(*state.bodyBoundaryPointsPx);
         object["valid_neck"] = state.validNeck;
         QSaveFile file(path_);
-        if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(QJsonObject{{"schema_version", schemaVersion}, {"state", object}}).toJson(QJsonDocument::Indented)) < 0 || !file.commit())
-        {
-            if (error)
-                *error = file.errorString();
+        const auto fail = [&](const QString &step) {
+            if (error) *error = QFileInfo(path_).absoluteFilePath() + ": " + step + ": " + file.errorString();
             return false;
-        }
+        };
+        if (!file.open(QIODevice::WriteOnly)) return fail("open temporary file failed");
+        const auto data = QJsonDocument(QJsonObject{{"schema_version", schemaVersion}, {"state", object}}).toJson(QJsonDocument::Indented);
+        if (file.write(data) != data.size()) return fail("write failed");
+        if (!file.commit()) return fail("commit/replace failed");
         return true;
     }
 }

@@ -190,7 +190,6 @@ namespace
         // share it, so each new typed parameter is registered once.
         static const std::vector<ConfigEntry> entries{
             setting("Runtime", "disable_camera_for_plc_test", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::disableCameraForPlcTest),
-            setting("Runtime", "connect_plc_in_offline", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::connectPlcInOffline),
             setting("Runtime", "neck_sample_interval_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::neckSampleIntervalMs, minimum(50)),
             setting("Runtime", "crown_sample_interval_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::crownSampleIntervalMs, minimum(50)),
             setting("Runtime", "body_sample_interval_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::bodySampleIntervalMs, minimum(50)),

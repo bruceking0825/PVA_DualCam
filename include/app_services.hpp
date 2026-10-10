@@ -9,7 +9,7 @@ class AppServices final : public QObject
 {
     Q_OBJECT
 public:
-    explicit AppServices(const MeasurementConfig &config, QObject *parent = nullptr);
+    explicit AppServices(const MeasurementConfig &config, QObject *parent = nullptr, bool enableTcp = true);
     ~AppServices() override;
     RuntimeController &runtime() { return *runtime_; }
     CameraService &cameras() { return *cameras_; }

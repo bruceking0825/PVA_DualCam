@@ -289,7 +289,8 @@ class Ui_PageCamera(object):
         self.btnRefresh = QPushButton(self.frame_7)
         self.btnRefresh.setObjectName(u"btnRefresh")
         self.btnRefresh.setMaximumSize(QSize(30, 30))
-        icon = QIcon(QIcon.fromTheme(QIcon.ThemeIcon.SystemReboot))
+        icon = QIcon()
+        icon.addFile(u":/icons/images/icons/cil-reload.png", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.btnRefresh.setIcon(icon)
 
         self.horizontalLayout_3.addWidget(self.btnRefresh)
@@ -362,6 +363,8 @@ class Ui_PageCamera(object):
 
         self.combTrigMode = QComboBox(self.frame_9)
         self.combTrigMode.setObjectName(u"combTrigMode")
+        self.combTrigMode.setMinimumSize(QSize(0, 30))
+        self.combTrigMode.setMaximumSize(QSize(16777215, 30))
 
         self.gridLayout_5.addWidget(self.combTrigMode, 1, 1, 1, 1)
 
@@ -372,6 +375,8 @@ class Ui_PageCamera(object):
 
         self.combTrigSource = QComboBox(self.frame_9)
         self.combTrigSource.setObjectName(u"combTrigSource")
+        self.combTrigSource.setMinimumSize(QSize(0, 30))
+        self.combTrigSource.setMaximumSize(QSize(16777215, 30))
 
         self.gridLayout_5.addWidget(self.combTrigSource, 2, 1, 1, 1)
 
@@ -382,6 +387,8 @@ class Ui_PageCamera(object):
 
         self.btnSoftTrigger = QPushButton(self.frame_9)
         self.btnSoftTrigger.setObjectName(u"btnSoftTrigger")
+        self.btnSoftTrigger.setMinimumSize(QSize(0, 30))
+        self.btnSoftTrigger.setMaximumSize(QSize(16777215, 30))
 
         self.gridLayout_5.addWidget(self.btnSoftTrigger, 3, 1, 1, 1)
 
@@ -392,6 +399,8 @@ class Ui_PageCamera(object):
 
         self.combTrigEdge = QComboBox(self.frame_9)
         self.combTrigEdge.setObjectName(u"combTrigEdge")
+        self.combTrigEdge.setMinimumSize(QSize(0, 30))
+        self.combTrigEdge.setMaximumSize(QSize(16777215, 30))
 
         self.gridLayout_5.addWidget(self.combTrigEdge, 4, 1, 1, 1)
 

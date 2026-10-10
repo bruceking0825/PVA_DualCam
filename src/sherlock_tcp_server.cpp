@@ -8,51 +8,81 @@
 
 namespace pva
 {
-    SherlockTcpServer::SherlockTcpServer(QObject *parent)
-        : QObject(parent), commandServer_(new QTcpServer(this)), resultServer_(new QTcpServer(this))
+    SherlockTcpServer::SherlockTcpServer(QObject *parent, quint16 commandPort, quint16 resultPort)
+        : QObject(parent), commandServer_(new QTcpServer(this)), resultServer_(new QTcpServer(this)),
+          commandPort_(commandPort), resultPort_(resultPort)
     {
         connect(commandServer_, &QTcpServer::newConnection, this, &SherlockTcpServer::acceptCommandConnection);
         connect(resultServer_, &QTcpServer::newConnection, this, &SherlockTcpServer::acceptResultConnection);
+        for (auto *server : {commandServer_, resultServer_})
+            connect(server, &QTcpServer::acceptError, this, [this, server](QAbstractSocket::SocketError) {
+                communicationError(QString("Sherlock TCP %1 accept error: %2")
+                    .arg(server->serverPort()).arg(server->errorString()));
+            });
     }
 
     SherlockTcpServer::~SherlockTcpServer() { stop(); }
 
     bool SherlockTcpServer::start(QString *error)
     {
+        if (commandServer_->isListening() && resultServer_->isListening()) return true;
         stop();
-        if (!commandServer_->listen(QHostAddress::AnyIPv4, SherlockProtocol::CommandPort))
+        if (!commandServer_->listen(QHostAddress::AnyIPv4, commandPort_))
         {
             if (error)
                 *error = QString("Cannot listen on TCP %1: %2")
-                             .arg(SherlockProtocol::CommandPort)
+                             .arg(commandPort_)
                              .arg(commandServer_->errorString());
             return false;
         }
-        if (!resultServer_->listen(QHostAddress::AnyIPv4, SherlockProtocol::ResultPort))
+        if (!resultServer_->listen(QHostAddress::AnyIPv4, resultPort_))
         {
             if (error)
                 *error = QString("Cannot listen on TCP %1: %2")
-                             .arg(SherlockProtocol::ResultPort)
+                             .arg(resultPort_)
                              .arg(resultServer_->errorString());
             commandServer_->close();
             return false;
         }
+        emit logMessage(QString("Sherlock service started on TCP %1/%2; waiting for PLC connection")
+            .arg(commandPort()).arg(resultPort()));
         return true;
     }
 
     void SherlockTcpServer::stop()
     {
+        const bool wasListening = commandServer_->isListening() || resultServer_->isListening();
         commandServer_->close();
         resultServer_->close();
-        if (commandSocket_)
-            commandSocket_->disconnectFromHost();
-        if (resultSocket_)
-            resultSocket_->disconnectFromHost();
+        closeConnections();
+        if (wasListening) emit logMessage("Sherlock service closed");
+    }
+
+    void SherlockTcpServer::closeConnections()
+    {
+        const auto command = commandSocket_;
+        const auto result = resultSocket_;
         commandSocket_.clear();
         resultSocket_.clear();
         commandBuffer_.clear();
         pendingPackets_.clear();
+        for (auto socket : {command, result})
+            if (socket) {
+                emit logMessage(QString("PLC TCP %1 disconnected: %2:%3")
+                    .arg(socket->property("serverPort").toUInt())
+                    .arg(socket->property("peerAddress").toString()).arg(socket->property("peerPort").toUInt()));
+                socket->abort();
+                socket->deleteLater();
+            }
         updateConnectionState();
+        if ((command || result) && commandServer_->isListening() && resultServer_->isListening())
+            emit logMessage("Sherlock service waiting for PLC connection");
+    }
+
+    void SherlockTcpServer::communicationError(const QString &message)
+    {
+        emit failed(message);
+        closeConnections();
     }
 
     bool SherlockTcpServer::fullyConnected() const
@@ -61,6 +91,8 @@ namespace pva
                commandSocket_->state() == QAbstractSocket::ConnectedState &&
                resultSocket_->state() == QAbstractSocket::ConnectedState;
     }
+    quint16 SherlockTcpServer::commandPort() const { return commandServer_->serverPort(); }
+    quint16 SherlockTcpServer::resultPort() const { return resultServer_->serverPort(); }
 
     bool SherlockTcpServer::sendPayload(const QByteArray &payload, QString *error)
     {
@@ -87,8 +119,10 @@ namespace pva
         qDebug().noquote() << "PLC TX ASCII:" << QString::fromLatin1(payload);
         if (resultSocket_->write(packet) != packet.size())
         {
+            const QString message = "PLC response write failed: " + resultSocket_->errorString();
             if (error)
-                *error = resultSocket_->errorString();
+                *error = message;
+            communicationError(message);
             return false;
         }
         resultSocket_->flush();
@@ -111,17 +145,23 @@ namespace pva
     void SherlockTcpServer::setCommandSocket(QTcpSocket *socket)
     {
         if (commandSocket_ && commandSocket_ != socket)
-            commandSocket_->disconnectFromHost();
+            closeConnections();
         commandSocket_ = socket;
+        socket->setProperty("serverPort", socket->localPort());
+        socket->setProperty("peerAddress", socket->peerAddress().toString());
+        socket->setProperty("peerPort", socket->peerPort());
+        emit logMessage(QString("PLC TCP 5000 connected: %1:%2")
+            .arg(socket->peerAddress().toString()).arg(socket->peerPort()));
+        connect(socket, &QTcpSocket::errorOccurred, this, [this, socket](QAbstractSocket::SocketError) {
+            if (commandSocket_ == socket) communicationError("PLC TCP 5000 error: " + socket->errorString());
+        });
         commandBuffer_.clear();
         connect(socket, &QTcpSocket::readyRead, this, &SherlockTcpServer::readCommands);
         connect(socket, &QTcpSocket::disconnected, this, [this, socket]
                 {
                     if (commandSocket_ == socket)
                     {
-                        commandSocket_.clear();
-                        commandBuffer_.clear();
-                        updateConnectionState();
+                        closeConnections();
                     }
                     socket->deleteLater();
                 });
@@ -131,14 +171,21 @@ namespace pva
     void SherlockTcpServer::setResultSocket(QTcpSocket *socket)
     {
         if (resultSocket_ && resultSocket_ != socket)
-            resultSocket_->disconnectFromHost();
+            closeConnections();
         resultSocket_ = socket;
+        socket->setProperty("serverPort", socket->localPort());
+        socket->setProperty("peerAddress", socket->peerAddress().toString());
+        socket->setProperty("peerPort", socket->peerPort());
+        emit logMessage(QString("PLC TCP 5001 connected: %1:%2")
+            .arg(socket->peerAddress().toString()).arg(socket->peerPort()));
+        connect(socket, &QTcpSocket::errorOccurred, this, [this, socket](QAbstractSocket::SocketError) {
+            if (resultSocket_ == socket) communicationError("PLC TCP 5001 error: " + socket->errorString());
+        });
         connect(socket, &QTcpSocket::disconnected, this, [this, socket]
                 {
                     if (resultSocket_ == socket)
                     {
-                        resultSocket_.clear();
-                        updateConnectionState();
+                        closeConnections();
                     }
                     socket->deleteLater();
                 });
@@ -153,7 +200,7 @@ namespace pva
         if (commandBuffer_.size() > 4096)
         {
             commandBuffer_.clear();
-            emit failed("PLC command buffer exceeded 4096 bytes and was cleared");
+            communicationError("PLC command buffer exceeded 4096 bytes");
             return;
         }
 
@@ -182,8 +229,10 @@ namespace pva
             const auto command = SherlockProtocol::parseCommand(line, &parseError);
             if (command)
                 emit commandReceived(*command);
-            else
-                emit failed("Invalid PLC command: " + parseError);
+            else {
+                communicationError("Invalid PLC command: " + parseError);
+                return;
+            }
         }
     }
 
@@ -198,8 +247,8 @@ namespace pva
             qDebug().noquote() << "PLC TX queued hex:" << packet.toHex(' ');
             if (resultSocket_->write(packet) != packet.size())
             {
-                emit failed("Cannot flush queued PLC response: " + resultSocket_->errorString());
-                break;
+                communicationError("Cannot flush queued PLC response: " + resultSocket_->errorString());
+                return;
             }
         }
         resultSocket_->flush();
@@ -211,6 +260,7 @@ namespace pva
         if (connected == lastConnectionState_)
             return;
         lastConnectionState_ = connected;
+        emit logMessage(connected ? "PLC dual connection established" : "PLC dual connection lost");
         emit connectionChanged(connected);
     }
 }

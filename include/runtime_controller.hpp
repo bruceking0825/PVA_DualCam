@@ -9,6 +9,7 @@
 #include "daily_log.hpp"
 #include <QHash>
 #include <QQueue>
+#include <QElapsedTimer>
 #include <array>
 #include <memory>
 #include <optional>
@@ -45,6 +46,7 @@ namespace pva
         void reloadConfig(const MeasurementConfig &config);
     public slots:
         void initialize();
+        void shutdown();
         void selectStage(MeasurementStage stage);
         void acceptResult(const pva::MeasurementResult &result);
         void submitOfflineFrame();
@@ -53,6 +55,7 @@ namespace pva
         void onFacetFrame(int requestId, const cv::Mat &image);
         void onOnlineCameraStarted(quint64 session = 0);
         void onOnlineCameraStopped(quint64 session = 0);
+        void onOnlineCameraStopFailed(quint64 requestId, const QString &message);
         void onOnlineCameraFailed(const QString &message, quint64 session = 0);
         void onOnlineCaptureFailed(const QString &userId, const QString &message, quint64 session = 0);
         void onFacetTriggerFailed(int requestId, const QString &message);
@@ -65,12 +68,11 @@ namespace pva
         void status(const QString &message, bool ok);
         void logReady(const QString &line, bool merged);
         void facetteReady(int index, const cv::Mat &image);
-        void cameraConnectionChanged(int camera, bool connected);
         void plcConnectionChanged(bool connected);
         void frameDeltaChanged(double deltaMs);
         void payloadReady(const QByteArray &payload);
         void onlineCameraStartRequested(quint64 session);
-        void onlineCameraStopRequested();
+        void onlineCameraStopRequested(quint64 requestId);
         void onlineCameraTriggerRequested(quint64 generation);
         void onlineFacetTriggerRequested(int requestId);
         void onlineStageChanged(int stage);
@@ -90,6 +92,16 @@ namespace pva
         ImageStorage *images_{};
         QTimer *offlineTimer_{};
         QTimer *facetTimeoutTimer_{};
+        QTimer *acquisitionTimer_{};
+        QString acquisitionCommand_;
+        QElapsedTimer acquisitionClock_;
+        std::optional<bool> restartAfterCameraStop_;
+        quint64 nextStopRequestId_{}, stopRequestId_{};
+        bool awaitingCameraStop_{false}, cleanupRetryRequested_{false};
+        void handleAcquisitionCommand(const SherlockCommand &command);
+        void completeAcquisition(bool enabled);
+        void failAcquisition(const QString &message);
+        void retryCameraClose();
         QStringList imagePaths_;
         int imageIndex_{-1};
         MeasurementStage stage_{MeasurementStage::Melt};
@@ -111,7 +123,7 @@ namespace pva
     private:
         void log(const QString &message);
         QString plcStatePath() const;
-        bool persistPlcState(QString *error = nullptr) const;
+        void persistPlcState();
         void restorePlcState();
         void applyPlcConfigOverrides();
         void setStatus(const QString &message, bool ok);

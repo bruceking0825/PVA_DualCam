@@ -40,45 +40,6 @@ class Ui_PageParameters(object):
 
         self.horizontalLayout_7.addWidget(self.tabWidget)
 
-        self.verticalLayout_21 = QVBoxLayout()
-        self.verticalLayout_21.setSpacing(12)
-        self.verticalLayout_21.setObjectName(u"verticalLayout_21")
-        self.verticalSpacer_3 = QSpacerItem(20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
-
-        self.verticalLayout_21.addItem(self.verticalSpacer_3)
-
-        self.btn_add = QPushButton(PageParameters)
-        self.btn_add.setObjectName(u"btn_add")
-
-        self.verticalLayout_21.addWidget(self.btn_add)
-
-        self.btn_insert = QPushButton(PageParameters)
-        self.btn_insert.setObjectName(u"btn_insert")
-
-        self.verticalLayout_21.addWidget(self.btn_insert)
-
-        self.btn_up = QPushButton(PageParameters)
-        self.btn_up.setObjectName(u"btn_up")
-
-        self.verticalLayout_21.addWidget(self.btn_up)
-
-        self.btn_down = QPushButton(PageParameters)
-        self.btn_down.setObjectName(u"btn_down")
-
-        self.verticalLayout_21.addWidget(self.btn_down)
-
-        self.btn_delete = QPushButton(PageParameters)
-        self.btn_delete.setObjectName(u"btn_delete")
-
-        self.verticalLayout_21.addWidget(self.btn_delete)
-
-        self.verticalSpacer_2 = QSpacerItem(20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
-
-        self.verticalLayout_21.addItem(self.verticalSpacer_2)
-
-
-        self.horizontalLayout_7.addLayout(self.verticalLayout_21)
-
 
         self.verticalLayout_22.addLayout(self.horizontalLayout_7)
 
@@ -120,11 +81,6 @@ class Ui_PageParameters(object):
 
     def retranslateUi(self, PageParameters):
         PageParameters.setWindowTitle(QCoreApplication.translate("PageParameters", u"Form", None))
-        self.btn_add.setText(QCoreApplication.translate("PageParameters", u"Add", None))
-        self.btn_insert.setText(QCoreApplication.translate("PageParameters", u"Insert", None))
-        self.btn_up.setText(QCoreApplication.translate("PageParameters", u"Up", None))
-        self.btn_down.setText(QCoreApplication.translate("PageParameters", u"Down", None))
-        self.btn_delete.setText(QCoreApplication.translate("PageParameters", u"Delete", None))
         self.btn_load_parm.setText(QCoreApplication.translate("PageParameters", u"Load", None))
         self.btn_save_parm.setText(QCoreApplication.translate("PageParameters", u"Save", None))
         self.btn_cancel_parm.setText(QCoreApplication.translate("PageParameters", u"Cancel", None))

@@ -1,6 +1,7 @@
 #include "measurement_worker.hpp"
 #include "state_store.hpp"
 #include <QMutexLocker>
+#include <QElapsedTimer>
 #include "offline_image_source.hpp"
 
 namespace pva
@@ -54,17 +55,41 @@ namespace pva
     void MeasurementWorker::run()
     {
         OfflineImageSource offline;
+        std::optional<MeasurementState> pendingState;
+        QElapsedTimer saveClock;
+        const auto flushState = [&] {
+            if (!pendingState) return;
+            QString error;
+            if (StateStore(statePath_).save(*pendingState, &error))
+                pendingState.reset();
+            else
+                emit persistenceFailed("State save failed: " + error);
+            saveClock.restart();
+        };
         while (true)
         {
+            if (pendingState && saveClock.elapsed() >= 3000)
+                flushState();
             std::optional<Pending> job;
             std::optional<MeasurementConfig> updatedConfig;
             std::optional<MeasurementRois> updatedRois;
             {
                 QMutexLocker lock(&mutex_);
-                while (!stopping_ && !pending_)
-                    condition_.wait(&mutex_);
+                while (!stopping_ && !pending_) {
+                    if (pendingState) {
+                        const auto remaining = 3000 - saveClock.elapsed();
+                        if (remaining <= 0) break;
+                        condition_.wait(&mutex_, static_cast<unsigned long>(remaining));
+                    } else
+                        condition_.wait(&mutex_);
+                }
                 if (stopping_)
+                {
+                    lock.unlock();
+                    flushState();
                     return;
+                }
+                if (!pending_) continue;
                 job = std::move(pending_);
                 pending_.reset();
                 updatedConfig = std::move(pendingConfig_);
@@ -96,9 +121,8 @@ namespace pva
                 emit resultReady(result);
                 if (result.valid && !statePath_.isEmpty())
                 {
-                    QString error;
-                    if (!StateStore(statePath_).save(engine_.state(), &error))
-                        emit persistenceFailed("State save failed: " + error);
+                    if (!pendingState) saveClock.start();
+                    pendingState = engine_.state();
                 }
             }
             catch (const std::exception &e)

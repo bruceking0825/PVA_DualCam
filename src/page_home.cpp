@@ -1,6 +1,7 @@
 #include "page_home.hpp"
 #include "ui_PageHome.h"
 #include "app_signals.hpp"
+#include "camera_service.hpp"
 #include <QTimer>
 #include <QButtonGroup>
 #include <QSignalBlocker>
@@ -56,8 +57,17 @@ namespace pva
     void PageHome::bindSignals()
     {
         connect(&runtime_, &RuntimeController::stateChanged, this, [this](const RuntimeSnapshot &s) {
+            const bool overlayChanged = snapshot_.stage != s.stage ||
+                snapshot_.rois.melt != s.rois.melt || snapshot_.rois.dip != s.rois.dip ||
+                snapshot_.rois.diameter != s.rois.diameter ||
+                snapshot_.config.measurement.autoExposureRoiCamera1 != s.config.measurement.autoExposureRoiCamera1 ||
+                snapshot_.config.measurement.autoExposureRoiCamera2 != s.config.measurement.autoExposureRoiCamera2 ||
+                snapshot_.config.measurement.diaRectHeightPx != s.config.measurement.diaRectHeightPx;
             snapshot_ = s;
             if (s.state != RunState::Running || (latestResult_ && latestResult_->generation != s.generation)) { latestResult_.reset(); frameDirty_ = false; }
+            if (overlayChanged && displayedResult_) paintResult(*displayedResult_);
+            updateViewInfo(1);
+            updateViewInfo(2);
             QSignalBlocker blocker(ui_->btnOnline);
             ui_->btnOnline->setChecked(s.online);
             ui_->btnOnline->setText(s.online ? "Online" : "Offline");
@@ -77,9 +87,6 @@ namespace pva
             facetteImages_[i-1] = image;
             facetteDirty_[i-1] = true;
         });
-        connect(&runtime_, &RuntimeController::cameraConnectionChanged, this, [this](int i, bool on) {
-            setConnectionLed(i == 1 ? ui_->lblCamera1Status : ui_->lblCamera2Status, on);
-        });
         connect(&runtime_, &RuntimeController::plcConnectionChanged, this, [this](bool on) { setConnectionLed(ui_->lblPlcStatus, on); });
         connect(&runtime_, &RuntimeController::frameDeltaChanged, this, [this](double ms) {
             ui_->lblFrameDelta->setText(QString("Frame delta: %1 ms").arg(ms, 0, 'f', 1));
@@ -88,8 +95,16 @@ namespace pva
     void PageHome::onReady()
     {
         ui_->txtLog->setMaximumBlockCount(2000);
+        setConnectionLed(ui_->lblCamera1Status, false);
+        setConnectionLed(ui_->lblCamera2Status, false);
+        setConnectionLed(ui_->lblPlcStatus, false);
         for (auto *view : {ui_->facetView1, ui_->facetView2, ui_->facetView3, ui_->facetView4}) view->setText("Facette");
         refreshControls();
+    }
+    void PageHome::onCameraState(const CameraSnapshot &snapshot)
+    {
+        setConnectionLed(ui_->lblCamera1Status, snapshot.healthyIds.contains(CameraRole::Cam1));
+        setConnectionLed(ui_->lblCamera2Status, snapshot.healthyIds.contains(CameraRole::Cam2));
     }
     void PageHome::reloadConfig(const MeasurementConfig &config)
     {
@@ -153,6 +168,7 @@ namespace pva
         if (auto result = runtime_.takeLatestResult()) showResult(*result);
         if (!latestResult_) return;
         if (frameDirty_) {
+            displayedResult_ = *latestResult_;
             paintResult(*latestResult_);
             frameDirty_ = false;
         }
@@ -232,23 +248,23 @@ namespace pva
                                      : ":/images/images/images/ledHigh.png"));
     }
 
-    void PageHome::addAutoExposureRoi(std::vector<OverlayElement> &elements, const cv::Rect &roi, const cv::Size &size) const
+    void PageHome::addAutoExposureRoi(std::vector<OverlayElement> &elements, const cv::Rect &roi, const cv::Size &size, bool fromPlc) const
     {
         const cv::Rect clipped = roi & cv::Rect(0, 0, size.width, size.height);
         if (clipped.empty())
             return;
         elements.push_back({OverlayType::Polyline,
                             {{double(clipped.x), double(clipped.y)}, {double(clipped.x + clipped.width), double(clipped.y)}, {double(clipped.x + clipped.width), double(clipped.y + clipped.height)}, {double(clipped.x), double(clipped.y + clipped.height)}},
-                            {255, 0, 0},
+                            fromPlc ? cv::Scalar(0, 255, 0) : cv::Scalar(255, 0, 0),
                             2,
                             true});
     }
 
-    double PageHome::roiMean(const cv::Mat &image, const cv::Rect &roi)
+    std::optional<double> PageHome::roiMean(const cv::Mat &image, const cv::Rect &roi)
     {
         const cv::Rect clipped = roi & cv::Rect(0, 0, image.cols, image.rows);
         if (clipped.empty())
-            return 0.0;
+            return {};
         cv::Mat gray;
         const cv::Mat selected = image(clipped);
         if (selected.channels() == 1)
@@ -267,7 +283,7 @@ namespace pva
         const QString exposure = snapshot_.online && info.exposureUs
                                      ? QString::number(*info.exposureUs / 1000.0, 'f', 2)
                                      : "--";
-        const QString mean = snapshot_.online && info.roiMean
+        const QString mean = info.roiMean
                                  ? QString::number(*info.roiMean, 'f', 1)
                                  : "--";
         auto *label = viewId == 1 ? ui_->lblCam1Info : ui_->lblCam2Info;
@@ -291,14 +307,23 @@ namespace pva
     {
         auto overlay1 = r.overlay1;
         auto overlay2 = r.overlay2;
-        if (snapshot_.online && snapshot_.config.camera.autoExposureEnabled)
+        viewInfo_[0].roiMean.reset();
+        viewInfo_[1].roiMean.reset();
+        if (snapshot_.stage == MeasurementStage::Melt || snapshot_.stage == MeasurementStage::Dip ||
+            snapshot_.stage == MeasurementStage::Neck)
         {
-            addAutoExposureRoi(overlay1, snapshot_.config.measurement.autoExposureRoiCamera1, r.preview1.size());
-            addAutoExposureRoi(overlay2, snapshot_.config.measurement.autoExposureRoiCamera2, r.preview2.size());
-            viewInfo_[0].roiMean = roiMean(r.preview1, snapshot_.config.measurement.autoExposureRoiCamera1);
-            viewInfo_[1].roiMean = roiMean(r.preview2, snapshot_.config.measurement.autoExposureRoiCamera2);
+            bool fromPlc1 = false, fromPlc2 = false;
+            const auto roi1 = effectiveAutoExposureRoi(snapshot_.rois, 1,
+                snapshot_.config.measurement.autoExposureRoiCamera1, r.preview1.size(), &fromPlc1);
+            const auto roi2 = effectiveAutoExposureRoi(snapshot_.rois, 2,
+                snapshot_.config.measurement.autoExposureRoiCamera2, r.preview2.size(), &fromPlc2);
+            addAutoExposureRoi(overlay1, roi1, r.preview1.size(), fromPlc1);
+            addAutoExposureRoi(overlay2, roi2, r.preview2.size(), fromPlc2);
+            viewInfo_[0].roiMean = roiMean(r.preview1, roi1);
+            viewInfo_[1].roiMean = roiMean(r.preview2, roi2);
         }
-        appendPlcRoiOverlays(snapshot_.rois, snapshot_.stage, snapshot_.config.measurement.diaRectHeightPx,
+        if (snapshot_.stage != MeasurementStage::Melt)
+            appendPlcRoiOverlays(snapshot_.rois, snapshot_.stage, snapshot_.config.measurement.diaRectHeightPx,
                              overlay1, overlay2);
         ui_->cam1GraphicsView->showImage(r.preview1, true);
         ui_->cam2GraphicsView->showImage(r.preview2, true);

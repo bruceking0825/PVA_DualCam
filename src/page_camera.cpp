@@ -230,8 +230,8 @@ namespace pva
         ui_->combTrigSource->addItem("Software", 0);
         ui_->combTrigSource->addItem("Line1", 1);
         ui_->combTrigEdge->clear();
-        ui_->combTrigEdge->addItem("FallingEdge", 0);
-        ui_->combTrigEdge->addItem("RisingEdge", 1);
+        ui_->combTrigEdge->addItem("Falling", 0);
+        ui_->combTrigEdge->addItem("Rising", 1);
     }
 
     void PageCamera::bindEvents()

@@ -230,7 +230,7 @@ namespace pva
     {
         if (!QDir().mkpath(QFileInfo(path_).absolutePath()))
         {
-            if (error) *error = "Cannot create PLC state directory";
+            if (error) *error = QFileInfo(path_).absoluteFilePath() + ": create directory failed";
             return false;
         }
         QJsonObject parameters;
@@ -250,13 +250,14 @@ namespace pva
             {"parameters", parameters}
         };
         QSaveFile file(path_);
-        if (!file.open(QIODevice::WriteOnly) ||
-            file.write(QJsonDocument(root).toJson(QJsonDocument::Indented)) < 0 ||
-            !file.commit())
-        {
-            if (error) *error = file.errorString();
+        const auto fail = [&](const QString &step) {
+            if (error) *error = QFileInfo(path_).absoluteFilePath() + ": " + step + ": " + file.errorString();
             return false;
-        }
+        };
+        if (!file.open(QIODevice::WriteOnly)) return fail("open temporary file failed");
+        const auto data = QJsonDocument(root).toJson(QJsonDocument::Indented);
+        if (file.write(data) != data.size()) return fail("write failed");
+        if (!file.commit()) return fail("commit/replace failed");
         return true;
     }
 }

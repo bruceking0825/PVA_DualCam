@@ -10,15 +10,18 @@ class PlcSession final : public QObject {
     Q_OBJECT
 public:
     explicit PlcSession(QObject *parent = nullptr, int timeoutMs = 5000);
+    ~PlcSession() override;
     MeasurementStage restoreSettings(const QString &path);
-    bool saveStage(MeasurementStage stage, QString *error = nullptr) const;
+    void requestStateSave(MeasurementStage stage);
+    void flushState();
     bool handleControlCommand(const SherlockCommand &command, MeasurementStage stage, MeasurementConfig config);
     void applyConfigOverrides(MeasurementConfig &config) const;
     void replayExposures();
     bool acquisitionEnabled() const { return settings_.acquisitionEnabled; }
+    void setAcquisitionEnabled(bool enabled, MeasurementStage stage);
     bool pointFitSelected() const { return settings_.pointFitSelected; }
     const MeasurementRois &rois() const { return rois_; }
-    void setStatePath(QString path) { statePath_ = std::move(path); }
+    void setStatePath(QString path);
     bool start(QString *error = nullptr);
     void stop();
     bool busy() const { return !command_.isEmpty(); }
@@ -40,6 +43,8 @@ private:
     QString statePath_;
     SherlockTcpServer server_;
     QTimer timeout_;
+    QTimer saveTimer_;
+    std::optional<PlcRuntimeState> pendingState_;
     QString command_;
     quint64 generation_{};
     bool listening_{};

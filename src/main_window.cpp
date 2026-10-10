@@ -82,6 +82,7 @@ namespace pva
         home_ = new PageHome(configManager.config(), services_->runtime(), ui_->stackedWidget);
         camera_ = new PageCamera(services_->cameras(), ui_->stackedWidget);
         connect(&services_->cameras(), &CameraService::cameraExposureChanged, home_, &PageHome::onCameraExposure);
+        connect(&services_->cameras(), &CameraService::stateChanged, home_, &PageHome::onCameraState);
         services_->start();
         parameters_ = new PageParameters(configPath_, ui_->stackedWidget);
         ui_->stackedWidget->addWidget(home_);

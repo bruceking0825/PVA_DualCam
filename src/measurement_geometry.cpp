@@ -15,14 +15,31 @@ namespace {
     }
 }
 namespace pva {
-    std::optional<GrayStats> meltRoiStats(const cv::Mat &image,
-                                            const std::array<double, 6> &v, int camera)
+    cv::Rect meltRoiRect(const std::array<double, 6> &v, int camera, cv::Size size)
     {
         const double cx = v[0] + (camera == 2 ? v[4] : 0.0);
         const double cy = v[1] + (camera == 2 ? v[5] : 0.0);
         const int left = cvRound(cx - v[2] / 2.0), right = cvRound(cx + v[2] / 2.0);
         const int top = cvRound(cy - v[3] / 2.0), bottom = cvRound(cy + v[3] / 2.0);
-        return imageStats(image, cv::Rect(left, top, right - left, bottom - top));
+        return cv::Rect(left, top, right - left, bottom - top) & cv::Rect(0, 0, size.width, size.height);
+    }
+    cv::Rect effectiveAutoExposureRoi(const MeasurementRois &rois, int camera,
+                                     cv::Rect fallback, cv::Size size, bool *fromPlc)
+    {
+        if (fromPlc) *fromPlc = false;
+        if (rois.melt) {
+            const auto roi = meltRoiRect(*rois.melt, camera, size);
+            if (!roi.empty()) {
+                if (fromPlc) *fromPlc = true;
+                return roi;
+            }
+        }
+        return fallback & cv::Rect(0, 0, size.width, size.height);
+    }
+    std::optional<GrayStats> meltRoiStats(const cv::Mat &image,
+                                        const std::array<double, 6> &v, int camera)
+    {
+        return imageStats(image, meltRoiRect(v, camera, image.size()));
     }
 
     std::optional<double> dipLineMean(const cv::Mat &image,

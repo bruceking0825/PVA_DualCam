@@ -2,15 +2,18 @@
 #include "camera_manager.hpp"
 #include "config.hpp"
 #include "models.hpp"
+#include "measurement_geometry.hpp"
 #include <QHash>
 #include <QQueue>
 #include <QTimer>
 #include <QMutex>
+#include <QSet>
 namespace pva {
 class DalsaCamera;
 struct CameraSnapshot
 {
     QStringList ids;
+    QStringList healthyIds;
     QString selected;
     bool open{}, streaming{}, production{};
     double exposure{}, gain{};
@@ -24,6 +27,7 @@ public:
     explicit CameraService(MeasurementConfig config, QObject *parent = nullptr);
     ~CameraService() override;
     cv::Mat takePreviewFrame();
+    void setMeasurementRois(const MeasurementRois &rois) { measurementRois_ = rois; }
 public slots:
     void initialize();
     void reloadConfig(const MeasurementConfig &config);
@@ -42,7 +46,7 @@ public slots:
     void applyTriggerSource(int requested);
     void applyTriggerEdge(int requested);
     void startOnlineCameras(quint64 session);
-    void stopOnlineCameras();
+    void stopOnlineCameras(quint64 requestId);
     void triggerOnlineCameras(quint64 generation);
     void triggerOnlineFacet(int requestId);
     void applyPlcExposure(const QString &userId, double exposureUs);
@@ -53,6 +57,7 @@ signals:
     void statusChanged(bool ok, const QString &message);
     void onlineCameraStarted(quint64 session);
     void onlineCameraStopped(quint64 session);
+    void onlineCameraStopFailed(quint64 requestId, const QString &message);
     void onlineCameraFailed(const QString &message, quint64 session);
     void onlineFacetTriggerFailed(int requestId, const QString &message);
     void onlineCaptureFailed(const QString &userId, const QString &message, quint64 session);
@@ -60,6 +65,8 @@ signals:
     void facetFrameCaptured(int requestId, const cv::Mat &image);
     void cameraExposureChanged(const QString &userId, double exposureUs);
 private:
+    friend struct CameraServiceTestAccess;
+    std::optional<double> autoExposureMean(const QString &userId, const cv::Mat &frame) const;
     void onFrame(const QString &userId, const cv::Mat &frame, qint64 timestampNs);
     void onCaptureFailed(const QString &userId, const QString &message);
     DalsaCamera *camera(const QString &id) const;
@@ -68,6 +75,7 @@ private:
     double loadRememberedExposure(const QString &id, double fallback) const;
     void saveRememberedExposures() const;
     void publishState();
+    void markCameraFault(const QString &id, const QString &message);
     void setStatus(bool ok, const QString &message) { emit statusChanged(ok, message); }
     struct CaptureRequest { int facetId{}; quint64 generation{}; };
     QQueue<CaptureRequest> captureQueue_;
@@ -79,12 +87,14 @@ private:
     QMutex previewMutex_;
     cv::Mat previewFrame_;
     MeasurementConfig config_;
+    MeasurementRois measurementRois_;
     std::unique_ptr<CameraManager> cameraManager_;
     DalsaCamera *current_{};
     QString streamOwner_;
     MeasurementStage onlineStage_{MeasurementStage::Melt};
     QHash<QString, qint64> lastExposureAdjustNs_, lastExposurePublishNs_;
     QHash<QString, double> plcExposureOverrides_;
+    QSet<QString> faultedIds_;
     qint64 lastManualPreviewNs_{};
 };
 }

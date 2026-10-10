@@ -2,74 +2,82 @@
 #include "measurement_payload.hpp"
 #include "camera_manager.hpp"
 #include <algorithm>
-namespace pva {
-PlcSession::PlcSession(QObject *parent, int timeoutMs) : QObject(parent), server_(this), timeout_(this)
+namespace pva
 {
-    timeout_.setSingleShot(true); timeout_.setInterval(timeoutMs);
-    connect(&server_, &SherlockTcpServer::commandReceived, this, &PlcSession::commandReceived);
-    connect(&server_, &SherlockTcpServer::connectionChanged, this, &PlcSession::connectionChanged);
-    connect(&server_, &SherlockTcpServer::failed, this, &PlcSession::logMessage);
-    connect(&timeout_, &QTimer::timeout, this, [this] {
+    PlcSession::PlcSession(QObject *parent, int timeoutMs) : QObject(parent), server_(this), timeout_(this), saveTimer_(this)
+    {
+        saveTimer_.setSingleShot(true);
+        saveTimer_.setInterval(3000);
+        saveTimer_.setTimerType(Qt::PreciseTimer);
+        connect(&saveTimer_, &QTimer::timeout, this, &PlcSession::flushState);
+        timeout_.setSingleShot(true);
+        timeout_.setInterval(timeoutMs);
+        connect(&server_, &SherlockTcpServer::commandReceived, this, &PlcSession::commandReceived);
+        connect(&server_, &SherlockTcpServer::connectionChanged, this, &PlcSession::connectionChanged);
+        connect(&server_, &SherlockTcpServer::failed, this, &PlcSession::logMessage);
+        connect(&server_, &SherlockTcpServer::logMessage, this, &PlcSession::logMessage);
+        connect(&timeout_, &QTimer::timeout, this, [this]
+                {
         if (!busy()) return;
-        cancel(); send("exe_err=Commn err"); emit timedOut();
-    });
-}
-bool PlcSession::start(QString *error) { if (listening_) return true; listening_ = server_.start(error); return listening_; }
-void PlcSession::stop() { cancel(); server_.stop(); listening_ = false; }
-bool PlcSession::begin(const QString &command, quint64 generation)
-{
-    if (busy()) return false;
-    command_ = command; generation_ = generation; timeout_.start(); return true;
-}
-void PlcSession::cancel() { command_.clear(); timeout_.stop(); }
-void PlcSession::send(const QByteArray &payload)
-{
-    emit payloadReady(payload);
-    if (!listening_) return;
-    QString error;
-    if (server_.sendPayload(payload, &error)) emit logMessage("PLC <- " + QString::fromLatin1(payload));
-    else if (!error.isEmpty()) emit logMessage(error);
-}
-void PlcSession::complete(const MeasurementResult &result)
-{
-    if (!busy() || result.generation != generation_) return;
-    const auto name = command_ == "dip_msr" ? "dip" : command_ == "mlt_msr" ? "mlt" : "dia";
-    cancel();
-    send(result.valid ? SherlockProtocol::scaledPayload(name, measurementPayloadValues(result)) : QByteArray("exe_err=Commn err"));
-}
+        cancel(); send("exe_err=Commn err"); emit timedOut(); });
+    }
+    PlcSession::~PlcSession()
+    {
+        flushState();
+        saveTimer_.stop();
+    }
+    bool PlcSession::start(QString *error)
+    {
+        if (listening_)
+            return true;
+        listening_ = server_.start(error);
+        return listening_;
+    }
+    void PlcSession::stop()
+    {
+        flushState();
+        saveTimer_.stop();
+        cancel();
+        server_.stop();
+        listening_ = false;
+    }
+    bool PlcSession::begin(const QString &command, quint64 generation)
+    {
+        if (busy())
+            return false;
+        command_ = command;
+        generation_ = generation;
+        timeout_.start();
+        return true;
+    }
+    void PlcSession::cancel()
+    {
+        command_.clear();
+        timeout_.stop();
+    }
+    void PlcSession::send(const QByteArray &payload)
+    {
+        emit payloadReady(payload);
+        if (!listening_)
+            return;
+        QString error;
+        if (server_.sendPayload(payload, &error))
+            emit logMessage("PLC <- " + QString::fromLatin1(payload));
+        else if (!error.isEmpty())
+            emit logMessage(error);
+    }
+    void PlcSession::complete(const MeasurementResult &result)
+    {
+        if (!busy() || result.generation != generation_)
+            return;
+        const auto name = command_ == "dip_msr" ? "dip" : command_ == "mlt_msr" ? "mlt"
+                                                                                : "dia";
+        cancel();
+        send(result.valid ? SherlockProtocol::scaledPayload(name, measurementPayloadValues(result)) : QByteArray("exe_err=Commn err"));
+    }
     bool PlcSession::handleControlCommand(const SherlockCommand &command, MeasurementStage stage_, MeasurementConfig config_)
     {
         const QString &name = command.name;
-        if (name == "acq_on_")
-        {
-            const bool previous = settings_.acquisitionEnabled;
-            settings_.acquisitionEnabled = true;
-            QString error;
-            if (!saveStage(stage_, &error))
-            {
-                settings_.acquisitionEnabled = previous;
-                send("err_exc=state save failed");
-                emit logMessage("PLC state save failed: " + error);
-                return true;
-            }
-            send("acq_on_=ok");
-            return true;
-        }
-        if (name == "acq_off")
-        {
-            const bool previous = settings_.acquisitionEnabled;
-            settings_.acquisitionEnabled = false;
-            QString error;
-            if (!saveStage(stage_, &error))
-            {
-                settings_.acquisitionEnabled = previous;
-                send("err_exc=state save failed");
-                emit logMessage("PLC state save failed: " + error);
-                return true;
-            }
-            send("acq_off=ok");
-            return true;
-        }
         if (name == "acq_get")
         {
             send("acq_get=" + QByteArray::number(settings_.acquisitionEnabled ? 1 : 0));
@@ -98,16 +106,8 @@ void PlcSession::complete(const MeasurementResult &result)
                 send("err_prm=invalid refresh rate");
                 return true;
             }
-            const double previous = settings_.refreshRate;
             settings_.refreshRate = *value;
-            QString error;
-            if (!saveStage(stage_, &error))
-            {
-                settings_.refreshRate = previous;
-                send("err_exc=state save failed");
-                emit logMessage("PLC state save failed: " + error);
-                return true;
-            }
+            requestStateSave(stage_);
             send("rfr_set=ok");
             return true;
         }
@@ -121,9 +121,6 @@ void PlcSession::complete(const MeasurementResult &result)
                 send("err_prm=" + name.toLatin1() + " requires no parameters");
                 return true;
             }
-            const bool oldRelative = settings_.relativeThreshold;
-            const bool oldPointFit = settings_.pointFitSelected;
-            const auto oldStage = stage_;
             if (isModeCommand)
                 settings_.relativeThreshold = name == "thr_rel";
             else if (name == "cfit_ne" || name == "pfit_sb")
@@ -132,20 +129,11 @@ void PlcSession::complete(const MeasurementResult &result)
                 stage_ = stageForPlcCommand(name, stage_, settings_.pointFitSelected, rois_,
                                             config_.measurement.crownBodyInnerRadiusPx);
             }
-            QString stateError;
-            if (!saveStage(stage_, &stateError))
-            {
-                settings_.relativeThreshold = oldRelative;
-                settings_.pointFitSelected = oldPointFit;
-                stage_ = oldStage;
-                send("err_exc=state save failed");
-                emit logMessage("PLC state save failed: " + stateError);
-                return true;
-            }
+            requestStateSave(stage_);
             emit configurationChanged(stage_);
             if (isModeCommand)
                 emit logMessage(QString("PLC diameter threshold mode: %1")
-                        .arg(settings_.relativeThreshold ? "relative" : "absolute"));
+                                    .arg(settings_.relativeThreshold ? "relative" : "absolute"));
             send(name.toLatin1() + "=ok");
             return true;
         }
@@ -178,9 +166,6 @@ void PlcSession::complete(const MeasurementResult &result)
             send("err_prm=exposure must be positive");
             return true;
         }
-        const auto oldParameters = settings_.parameters;
-        const auto oldRois = rois_;
-        const auto oldStage = stage_;
         if (name == "dia_crd" || name == "mlt_crd" || name == "dip_crd")
         {
             if (!setPlcRoi(rois_, name, *values, &error))
@@ -193,15 +178,7 @@ void PlcSession::complete(const MeasurementResult &result)
         if (name == "dia_crd" || name == "mlt_crd" || name == "dip_crd")
             stage_ = stageForPlcCommand(name, stage_, settings_.pointFitSelected, rois_,
                                         config_.measurement.crownBodyInnerRadiusPx);
-        if (!saveStage(stage_, &error))
-        {
-            settings_.parameters = oldParameters;
-            rois_ = oldRois;
-            stage_ = oldStage;
-            send("err_exc=state save failed");
-            emit logMessage("PLC state save failed: " + error);
-            return true;
-        }
+        requestStateSave(stage_);
 
         if (name == "exptme1" || name == "exptme2")
         {
@@ -238,7 +215,7 @@ void PlcSession::complete(const MeasurementResult &result)
 
     MeasurementStage PlcSession::restoreSettings(const QString &path)
     {
-        statePath_ = path;
+        setStatePath(path);
         PlcRuntimeState saved;
         QString error;
         if (!PlcRuntimeStore(statePath_).load(&saved, &error))
@@ -266,15 +243,44 @@ void PlcSession::complete(const MeasurementResult &result)
         return settings_.stage;
     }
 
-    bool PlcSession::saveStage(MeasurementStage stage, QString *error) const
+    void PlcSession::setAcquisitionEnabled(bool enabled, MeasurementStage stage)
     {
+        settings_.acquisitionEnabled = enabled;
+        requestStateSave(stage);
+    }
+    void PlcSession::requestStateSave(MeasurementStage stage)
+    {
+        // 接受内存快照即成功；异步落盘失败只记录日志，不撤回 PLC 回复。
         auto snapshot = settings_;
         snapshot.stage = stage;
-        return PlcRuntimeStore(statePath_).save(snapshot, error);
+        pendingState_ = std::move(snapshot);
+        if (!saveTimer_.isActive())
+            saveTimer_.start();
+    }
+    void PlcSession::flushState()
+    {
+        saveTimer_.stop();
+        if (!pendingState_) return;
+        QString error;
+        if (PlcRuntimeStore(statePath_).save(*pendingState_, &error))
+            pendingState_.reset();
+        else {
+            emit logMessage("PLC state save failed: " + error);
+            saveTimer_.start();
+        }
+    }
+    void PlcSession::setStatePath(QString path)
+    {
+        if (path == statePath_) return;
+        flushState();
+        saveTimer_.stop();
+        pendingState_.reset();
+        statePath_ = std::move(path);
     }
     void PlcSession::replayExposures()
     {
-        for (const auto &name : {"exptme1", "exptme2"}) {
+        for (const auto &name : {"exptme1", "exptme2"})
+        {
             const auto it = settings_.parameters.constFind(name);
             if (it != settings_.parameters.cend() && it.value().size() == 1)
                 emit cameraExposureRequested(QString::fromLatin1(name) == "exptme1" ? CameraRole::Cam1 : CameraRole::Cam2,

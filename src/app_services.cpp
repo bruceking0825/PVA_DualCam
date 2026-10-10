@@ -2,8 +2,8 @@
 #include "app_signals.hpp"
 #include "config_manager.hpp"
 namespace pva {
-AppServices::AppServices(const MeasurementConfig &config, QObject *parent)
-    : QObject(parent), runtime_(new RuntimeController(config, this)), cameras_(new CameraService(config, this))
+AppServices::AppServices(const MeasurementConfig &config, QObject *parent, bool enableTcp)
+    : QObject(parent), runtime_(new RuntimeController(config, this, enableTcp)), cameras_(new CameraService(config, this))
 {
     qRegisterMetaType<RuntimeSnapshot>("pva::RuntimeSnapshot");
     qRegisterMetaType<CameraSnapshot>("pva::CameraSnapshot");
@@ -18,9 +18,12 @@ AppServices::AppServices(const MeasurementConfig &config, QObject *parent)
     connect(runtime_, &RuntimeController::onlineCameraTriggerRequested, cameras_, &CameraService::triggerOnlineCameras);
     connect(runtime_, &RuntimeController::onlineFacetTriggerRequested, cameras_, &CameraService::triggerOnlineFacet);
     connect(runtime_, &RuntimeController::onlineStageChanged, cameras_, &CameraService::setStage);
+    connect(runtime_, &RuntimeController::stateChanged, cameras_,
+            [this](const RuntimeSnapshot &state) { cameras_->setMeasurementRois(state.rois); });
     connect(runtime_, &RuntimeController::plcCameraExposureRequested, cameras_, &CameraService::applyPlcExposure);
     connect(cameras_, &CameraService::onlineCameraStarted, runtime_, &RuntimeController::onOnlineCameraStarted);
     connect(cameras_, &CameraService::onlineCameraStopped, runtime_, &RuntimeController::onOnlineCameraStopped);
+    connect(cameras_, &CameraService::onlineCameraStopFailed, runtime_, &RuntimeController::onOnlineCameraStopFailed);
     connect(cameras_, &CameraService::onlineCameraFailed, runtime_, &RuntimeController::onOnlineCameraFailed);
     connect(cameras_, &CameraService::onlineCaptureFailed, runtime_, &RuntimeController::onOnlineCaptureFailed);
     connect(cameras_, &CameraService::onlineFacetTriggerFailed, runtime_, &RuntimeController::onFacetTriggerFailed);
@@ -52,7 +55,7 @@ void AppServices::start()
 void AppServices::stop()
 {
     if (!started_) return;
-    QMetaObject::invokeMethod(runtime_, "stopRuntime", Qt::BlockingQueuedConnection);
+    QMetaObject::invokeMethod(runtime_, "shutdown", Qt::BlockingQueuedConnection);
     QMetaObject::invokeMethod(cameras_, "closeAll", Qt::BlockingQueuedConnection);
     runtimeThread_.quit(); cameraThread_.quit();
     runtimeThread_.wait(); cameraThread_.wait();

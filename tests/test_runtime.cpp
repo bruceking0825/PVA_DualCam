@@ -60,7 +60,6 @@ int main(int argc, char **argv) {
     config.runtime.stateFile = dir.filePath("measurement_state.json");
     config.runtime.facetteImageDir = dir.filePath("facettes");
     config.runtime.loopIntervalMs = 50;
-    config.runtime.connectPlcInOffline = false;
     config.measurement.brightnessMin = 1;
     config.measurement.reflectorRoiCamera1 = config.measurement.reflectorRoiCamera2 = cv::Rect(0,0,400,400);
     config.neck.stopSearchRatio = 1;
@@ -85,11 +84,11 @@ int main(int argc, char **argv) {
           "Measurement carries run, request and configuration identity");
     const auto originalVersion = last.task.configurationVersion;
     runtime.onSherlockCommand({"dia_thr", {"2500"}, "dia_thr=2500"});
-    check(std::abs(snapshot.config.neck.gradientThresholdPercentCamera1 - 25.0) < 1e-9,
-          "PLC threshold overrides base configuration");
+    check(snapshot.config.neck.gradientThresholdPercentCamera1 == config.neck.gradientThresholdPercentCamera1,
+          "Disabled PLC threshold override preserves manual configuration");
     runtime.reloadConfig(config);
-    check(std::abs(snapshot.config.neck.gradientThresholdPercentCamera1 - 25.0) < 1e-9,
-          "Base hot reload preserves PLC override priority");
+    check(snapshot.config.neck.gradientThresholdPercentCamera1 == config.neck.gradientThresholdPercentCamera1,
+          "Base hot reload preserves manual threshold");
     check(until([&] { return last.task.configurationVersion > originalVersion; }),
           "Configuration update tags subsequent results");
     const auto stale = last;
@@ -105,6 +104,8 @@ int main(int argc, char **argv) {
     runtime.selectStage(pva::MeasurementStage::Neck);
     QObject::connect(&runtime, &pva::RuntimeController::onlineCameraStartRequested, &app,
                      [&] { runtime.onOnlineCameraStarted(); });
+    QObject::connect(&runtime, &pva::RuntimeController::onlineCameraStopRequested, &app,
+                     [&](quint64 request) { runtime.onOnlineCameraStopped(request); });
     QObject::connect(&runtime, &pva::RuntimeController::onlineCameraTriggerRequested, &app,
                      [&](quint64 generation) {
         QTimer::singleShot(0, &app, [&, generation] {

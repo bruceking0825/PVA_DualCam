@@ -9,7 +9,6 @@ namespace pva
     struct RuntimeSettings
     {
         bool disableCameraForPlcTest{false};
-        bool connectPlcInOffline{false};
         int neckSampleIntervalMs{300};
         int crownSampleIntervalMs{1000};
         int bodySampleIntervalMs{1000};

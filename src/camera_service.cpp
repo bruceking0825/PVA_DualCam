@@ -6,6 +6,7 @@
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
 #include <cmath>
+#include <exception>
 namespace
 {
     QString cameraStatePath(const pva::MeasurementConfig &config)
@@ -28,6 +29,10 @@ CameraService::CameraService(MeasurementConfig config, QObject *parent)
     captureTimeout_->setInterval(5000);
     connect(captureTimeout_, &QTimer::timeout, this, [this] {
         // 超时后关闭本轮采集，阻止迟到帧被归入下一个请求。
+        if (activeCapture_) {
+            if (!gotCam1_) markCameraFault(CameraRole::Cam1, "Capture timed out");
+            if (!gotCam2_) markCameraFault(CameraRole::Cam2, "Capture timed out");
+        }
         closeAll();
         emit onlineCameraFailed("Camera capture timed out", session_);
     });
@@ -51,7 +56,7 @@ void CameraService::reloadConfig(const MeasurementConfig &config)
         QString error;
         if (streamOwner_.isEmpty()) applyConfiguredParameters(*value, config_.camera.offlineCropRoi, false, &error);
         else value->setGain(value->userId() == CameraRole::Cam1 ? config_.camera.gainCamera1 : config_.camera.gainCamera2, &error);
-        if (!error.isEmpty()) setStatus(false, error);
+        if (!error.isEmpty()) markCameraFault(value->userId(), error);
     }
     publishState();
 }
@@ -61,9 +66,12 @@ void CameraService::refreshCameras()
     closeAll();
     current_ = nullptr;
     QString error;
-    if (!cameraManager_->initialize(&error)) { setStatus(false, error); return; }
+    if (!cameraManager_->initialize(&error)) {
+        cameraManager_->reset({}); publishState(); setStatus(false, error); return;
+    }
     const auto ids = DalsaCamera::enumerate(&error);
     cameraManager_->reset(ids);
+    if (error.isEmpty()) faultedIds_.clear();
     if (!ids.isEmpty()) current_ = camera(ids.first());
     publishState();
     setStatus(error.isEmpty(), error.isEmpty() ? QString("%1 camera(s) found").arg(ids.size()) : error);
@@ -77,7 +85,10 @@ void CameraService::selectCamera(const QString &id)
 void CameraService::publishState()
 {
     CameraSnapshot s;
-    for (auto *value : cameraManager_->getAll()) s.ids << value->userId();
+    for (auto *value : cameraManager_->getAll()) {
+        s.ids << value->userId();
+        if (!faultedIds_.contains(value->userId())) s.healthyIds << value->userId();
+    }
     s.production = !streamOwner_.isEmpty();
     if (current_) {
         s.selected = current_->userId();
@@ -91,6 +102,12 @@ void CameraService::publishState()
         }
     }
     emit stateChanged(s);
+}
+void CameraService::markCameraFault(const QString &id, const QString &message)
+{
+    faultedIds_.insert(id);
+    setStatus(false, "Camera " + id + ": " + message);
+    publishState();
 }
     DalsaCamera *CameraService::camera(const QString &userId) const
     {
@@ -122,7 +139,7 @@ void CameraService::publishState()
         if (checked)
         {
             if (!current_->open(&error) || !applyConfiguredParameters(*current_, config_.camera.offlineCropRoi, false, &error))
-                setStatus(false, error);
+                markCameraFault(current_->userId(), error);
         }
         else
             current_->close();
@@ -141,7 +158,7 @@ void CameraService::publishState()
         if (checked)
         {
             if (!current_->startStream(&error))
-                setStatus(false, error);
+                markCameraFault(current_->userId(), error);
         }
         else
             current_->stopStream();
@@ -152,8 +169,9 @@ void CameraService::publishState()
     {
         if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
         QString error;
-        if (!current_ || !current_->softwareTrigger(&error))
-            setStatus(false, error);
+        if (!current_) { setStatus(false, "No camera selected"); return; }
+        if (current_ && !current_->softwareTrigger(&error))
+            markCameraFault(current_->userId(), error);
     }
 
     void CameraService::applyExposure(double requested)
@@ -161,7 +179,7 @@ void CameraService::publishState()
         if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setExposure(requested, &e))
-            setStatus(false, e);
+            markCameraFault(current_->userId(), e);
         publishState();
     }
 
@@ -170,7 +188,7 @@ void CameraService::publishState()
         if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setGain(requested, &e))
-            setStatus(false, e);
+            markCameraFault(current_->userId(), e);
         publishState();
     }
 
@@ -179,7 +197,7 @@ void CameraService::publishState()
         if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setWidth(requested, &e))
-            setStatus(false, e);
+            markCameraFault(current_->userId(), e);
         publishState();
     }
 
@@ -188,7 +206,7 @@ void CameraService::publishState()
         if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setHeight(requested, &e))
-            setStatus(false, e);
+            markCameraFault(current_->userId(), e);
         publishState();
     }
 
@@ -197,7 +215,7 @@ void CameraService::publishState()
         if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setOffsetX(requested, &e))
-            setStatus(false, e);
+            markCameraFault(current_->userId(), e);
         publishState();
     }
 
@@ -206,7 +224,7 @@ void CameraService::publishState()
         if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setOffsetY(requested, &e))
-            setStatus(false, e);
+            markCameraFault(current_->userId(), e);
         publishState();
     }
 
@@ -215,7 +233,7 @@ void CameraService::publishState()
         if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setTriggerMode(requested, &e))
-            setStatus(false, e);
+            markCameraFault(current_->userId(), e);
         publishState();
     }
 
@@ -224,7 +242,7 @@ void CameraService::publishState()
         if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setTriggerSource(requested, &e))
-            setStatus(false, e);
+            markCameraFault(current_->userId(), e);
         publishState();
     }
 
@@ -233,7 +251,7 @@ void CameraService::publishState()
         if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setTriggerEdge(requested, &e))
-            setStatus(false, e);
+            markCameraFault(current_->userId(), e);
         publishState();
     }
 
@@ -256,14 +274,18 @@ void CameraService::publishState()
             if (!value)
             {
                 error = "Camera Device User ID not found: " + userId;
+                markCameraFault(userId, error);
                 break;
             }
             if (!value->open(&error) || !applyConfiguredParameters(*value, config_.camera.onlineCropRoi, true, &error) ||
                 !value->setTriggerSource(0, &error) || !value->setTriggerMode(true, &error) || !value->startStream(&error))
             {
                 if (error.isEmpty()) error = "Cannot configure production camera: " + userId;
+                markCameraFault(userId, error);
                 break;
             }
+            faultedIds_.remove(userId);
+            publishState();
         }
         if (!error.isEmpty())
         {
@@ -279,14 +301,26 @@ void CameraService::publishState()
                             .arg(CameraRole::Cam1, CameraRole::Cam2));
     }
 
-    void CameraService::stopOnlineCameras()
+    void CameraService::stopOnlineCameras(quint64 requestId)
     {
-        if (streamOwner_ != "online")
-            return;
-        saveRememberedExposures();
-        plcExposureOverrides_.clear();
-        closeAll();
-        emit onlineCameraStopped(session_);
+        try {
+            if (streamOwner_ == "online") saveRememberedExposures();
+            plcExposureOverrides_.clear();
+            closeAll();
+            for (const auto &id : CameraRole::Stereo) {
+                auto *value = camera(id);
+                if (value && (value->isOpen() || value->isStreaming())) {
+                    const QString error = "Camera failed to close: " + id;
+                    markCameraFault(id, error);
+                    emit onlineCameraStopFailed(requestId, error);
+                    return;
+                }
+            }
+            // 无在线流也确认此次请求，编号不使用旧生产会话编号。
+            emit onlineCameraStopped(requestId);
+        } catch (const std::exception &error) {
+            emit onlineCameraStopFailed(requestId, QString::fromUtf8(error.what()));
+        }
     }
 
     void CameraService::triggerOnlineCameras(quint64 generation)
@@ -314,6 +348,7 @@ void CameraService::publishState()
             QString error;
             auto *value = camera(id);
             if (!value || !value->softwareTrigger(&error)) {
+                markCameraFault(id, "Capture trigger failed: " + error);
                 closeAll(); emit onlineCameraFailed("Capture trigger failed: " + error, session_); return;
             }
         }
@@ -324,14 +359,14 @@ void CameraService::publishState()
         auto *value = camera(userId);
         if (!value || !value->isOpen())
         {
-            setStatus(false, "PLC exposure target is not open: " + userId);
+            markCameraFault(userId, "PLC exposure target is not open");
             return;
         }
 
         QString error;
         if (!value->setExposure(exposureUs, &error))
         {
-            setStatus(false, QString("Apply PLC exposure to %1 failed: %2").arg(userId, error));
+            markCameraFault(userId, "Apply PLC exposure failed: " + error);
             return;
         }
 
@@ -381,44 +416,53 @@ void CameraService::publishState()
 
     void CameraService::onCaptureFailed(const QString &userId, const QString &message)
     {
-        setStatus(false, "Camera " + userId + ": " + message);
+        markCameraFault(userId, message);
         if (streamOwner_ == "online" && CameraRole::Stereo.contains(userId))
             emit onlineCaptureFailed(userId, message, session_);
     }
 
-    void CameraService::adjustAutoExposure(DalsaCamera &value, const cv::Mat &frame, qint64 timestampNs)
+    std::optional<double> CameraService::autoExposureMean(const QString &userId, const cv::Mat &frame) const
     {
-        if (plcExposureOverrides_.contains(value.userId()))
-            return;
-        if (streamOwner_ != "online" || !config_.camera.autoExposureEnabled ||
-            onlineStage_ != MeasurementStage::Neck)
-            return;
-        const qint64 minimumDelta = qint64(std::max(config_.camera.autoExposureIntervalMs, 50)) * 1000000;
-        if (timestampNs - lastExposureAdjustNs_.value(value.userId(), 0) < minimumDelta)
-            return;
-        if (!CameraRole::Stereo.contains(value.userId()))
-            return;
-        const cv::Rect roi = clippedRoi(value.userId() == CameraRole::Cam1
-                                            ? config_.measurement.autoExposureRoiCamera1
-                                            : config_.measurement.autoExposureRoiCamera2,
-                                        frame.size());
-        if (roi.empty())
-            return;
+        if (frame.empty() || plcExposureOverrides_.contains(userId) ||
+            streamOwner_ != "online" || !config_.camera.autoExposureEnabled ||
+            !CameraRole::Stereo.contains(userId) ||
+            (onlineStage_ != MeasurementStage::Melt && onlineStage_ != MeasurementStage::Dip &&
+             onlineStage_ != MeasurementStage::Neck))
+            return {};
         cv::Mat gray;
         if (frame.channels() == 1)
             gray = frame;
         else
             cv::cvtColor(frame, gray, frame.channels() == 4 ? cv::COLOR_BGRA2GRAY : cv::COLOR_BGR2GRAY);
-        const double mean = cv::mean(gray(roi))[0];
+        const cv::Rect roi = effectiveAutoExposureRoi(measurementRois_, userId == CameraRole::Cam1 ? 1 : 2,
+                                        userId == CameraRole::Cam1
+                                            ? config_.measurement.autoExposureRoiCamera1
+                                            : config_.measurement.autoExposureRoiCamera2,
+                                        gray.size());
+        if (roi.empty()) return {};
+        return cv::mean(gray(roi))[0];
+    }
+
+    void CameraService::adjustAutoExposure(DalsaCamera &value, const cv::Mat &frame, qint64 timestampNs)
+    {
+        const qint64 minimumDelta = qint64(std::max(config_.camera.autoExposureIntervalMs, 50)) * 1000000;
+        if (timestampNs - lastExposureAdjustNs_.value(value.userId(), 0) < minimumDelta)
+            return;
+        const auto mean = autoExposureMean(value.userId(), frame);
+        if (!mean) return;
         const double target = std::max(config_.camera.autoExposureTarget, 1.0);
-        const double error = target - mean;
+        const double error = target - *mean;
         lastExposureAdjustNs_[value.userId()] = timestampNs;
         if (std::abs(error) <= config_.camera.autoExposureDeadband)
             return;
         const double next = std::clamp(value.exposure() * (1.0 + std::max(config_.camera.autoExposureGain, 0.0) * error / target),
                                        std::min(config_.camera.autoExposureMinUs, config_.camera.autoExposureMaxUs),
                                        std::max(config_.camera.autoExposureMinUs, config_.camera.autoExposureMaxUs));
-        value.setExposure(next);
+        QString exposureError;
+        if (!value.setExposure(next, &exposureError)) {
+            markCameraFault(value.userId(), "Auto exposure failed: " + exposureError);
+            return;
+        }
         saveRememberedExposures();
     }
 

@@ -23,21 +23,22 @@ int main(int argc, char **argv)
     config.runtime.offlineImageDir = directory.path();
     config.runtime.stateFile = directory.filePath("state.json");
     config.runtime.facetteImageDir = directory.filePath("facettes");
-    config.runtime.connectPlcInOffline = false;
     config.runtime.loopIntervalMs = 50;
     config.measurement.brightnessMin = 1;
     config.neck.stopSearchRatio = 1;
     config.measurement.reflectorRoiCamera1 = config.measurement.reflectorRoiCamera2 = {0,0,400,400};
-    { pva::AppServices neverStarted(config); }
+    { pva::AppServices neverStarted(config, nullptr, false); }
     for (int cycle = 0; cycle < 3; ++cycle) {
-        pva::AppServices services(config);
+        pva::AppServices services(config, nullptr, false);
         QPointer<pva::RuntimeController> runtime = &services.runtime();
         QPointer<pva::CameraService> cameras = &services.cameras();
         int results = 0;
         QObject::connect(runtime, &pva::RuntimeController::resultReady, &app,
                          [&](const pva::MeasurementResult &result) { if (result.valid) ++results; });
         services.start();
-        QMetaObject::invokeMethod(runtime, [runtime] { runtime->startRuntime(false); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(runtime, [runtime] {
+            runtime->selectStage(pva::MeasurementStage::Neck); runtime->startRuntime(false);
+        }, Qt::QueuedConnection);
         QElapsedTimer clock; clock.start();
         while (!results && clock.elapsed() < 5000) {
             QCoreApplication::processEvents(); QThread::msleep(1);

@@ -12,6 +12,7 @@ namespace Ui { class PageHome; }
 QT_END_NAMESPACE
 namespace pva
 {
+    struct CameraSnapshot;
     // 页面只保存显示快照，不拥有采集、PLC 或测量运行状态。
     class PageHome final : public BasePage
     {
@@ -22,6 +23,7 @@ namespace pva
         void reloadConfig(const MeasurementConfig &config);
     public slots:
         void onCameraExposure(const QString &userId, double exposureUs);
+        void onCameraState(const pva::CameraSnapshot &snapshot);
     private slots:
         void toggleRuntime();
         void toggleOnline(bool online);
@@ -43,8 +45,8 @@ namespace pva
         void applyStageToUi();
         void updateProcessDiagnostics(const MeasurementResult &result);
         void setConnectionLed(QLabel *label, bool connected);
-        void addAutoExposureRoi(std::vector<OverlayElement> &elements, const cv::Rect &roi, const cv::Size &size) const;
-        static double roiMean(const cv::Mat &image, const cv::Rect &roi);
+        void addAutoExposureRoi(std::vector<OverlayElement> &elements, const cv::Rect &roi, const cv::Size &size, bool fromPlc) const;
+        static std::optional<double> roiMean(const cv::Mat &image, const cv::Rect &roi);
         void updateViewInfo(int viewId);
         void paintResult(const MeasurementResult &result);
         std::unique_ptr<Ui::PageHome> ui_;
@@ -53,6 +55,7 @@ namespace pva
         QTimer *renderTimer_{};
         QElapsedTimer diagnosticClock_;
         std::optional<MeasurementResult> latestResult_;
+        std::optional<MeasurementResult> displayedResult_;
         bool frameDirty_{false};
         bool diagnosticDirty_{false};
         std::array<cv::Mat, 4> facetteImages_;
