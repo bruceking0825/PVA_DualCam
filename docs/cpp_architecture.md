@@ -1,54 +1,57 @@
-# C++ 运行架构
+# C++ 代码阅读与运行结构
 
-## 职责与状态归属
+以 2026-10-11 调用链扁平化后的实现为准。先从页面按钮的处理函数阅读，再通过 bindSignals 中的具名连接找到业务入口；不需要搜索字符串槽名。
 
-| 模块 | 唯一持有的状态 | 执行位置 |
-| --- | --- | --- |
-| AppServices | 服务实例、线程生命周期与对象连接 | UI 装配层 |
-| RuntimeController | 运行状态、模式、阶段、批次/任务身份、有效配置、离线索引、配对与 Facette 请求关联 | 运行控制线程 |
-| CameraService / CameraManager | 设备、生产使用权、曝光覆盖、串行触发队列、回调投递批次 | 相机线程；SDK 回调只交接已复制图像 |
-| PlcSession | 待回复命令、超时、PLC 参数/ROI 覆盖、协议状态持久化 | 运行控制线程 |
-| MeasurementWorker / MeasurementEngine | 单待执行任务、测量历史、配置/ROI 快照、离线解码缓存 | 测量工作线程 |
-| ImageStorage | 最多 16 个未完成的 Facette 读写任务 | 单线程后台池 |
-| PageHome / PageCamera | 显示快照、缩放/展开状态、最新预览输入 | UI 线程；Camera 预览算法另用单线程池 |
+## 四条常用调用路径
 
-ConfigManager 仍是 INI 基础配置的唯一来源。RuntimeController 保留基础配置副本，并叠加 PlcSession 中的参数生成有效快照；页面不会反向修改有效配置。新增服务状态应只放在一个所有者内，页面的副本只用于显示。
+箭头标注“排队”的地方会换线程；普通箭头表示同线程调用。
 
-## 流程与身份
+| 操作 | 阅读顺序 |
+| --- | --- |
+| 离线 Run / Stop | PageHome::toggleRuntime → startRequested / stopRequested → **排队到运行线程** → RuntimeController::startRuntime / stopRuntime |
+| 下一张 | PageHome::nextImage → imageStepRequested → **排队到运行线程** → RuntimeController::stepImage → setImageIndex → submitOfflineFrame → MeasurementWorker::submitOffline |
+| PLC 测量 | SherlockTcpServer 解码 → PlcSession::commandReceived → RuntimeController::onSherlockCommand → triggerOnlineCapture → **排队到相机线程** → CameraService::triggerOnlineCameras → pumpCapture → DalsaCamera |
+| 相机调试曝光 | PageCamera::applyExposure 读取输入框 → exposureRequested → **排队到相机线程** → CameraService::applyExposure → DalsaCamera::setExposure |
 
-离线文件或在线帧对 → MeasurementWorker → MeasurementEngine → RuntimeController → PlcSession / 最新显示邮箱。
+测量任务在 MeasurementWorker::run 中执行 MeasurementEngine；结果排队回到 RuntimeController::acceptResult，先调用 PlcSession::complete 回复 PLC，再放入页面读取的显示邮箱。
 
-每次启动递增 runId；PLC 请求或离线任务有 requestId；配置/覆盖变化递增 configurationVersion。generation 用于撤销阶段、选图、配置及请求变化前的任务。结果同时携带来源、阶段和以上身份。旧任务不仅不能回显/回复新请求，也不能提交其候选测量历史。
+SDK 回调由 CameraService::resetDevices 建立的连接直接排队到 CameraService::onFrame；不再经过中间相机管理类。关闭时递增回调批次，丢弃关闭前已排队的帧和错误。
 
-在线启动等待相机服务确认后从 Starting 转为 Running。停止经过 Stopping，撤销任务并停止服务后进入 Stopped；相机失败进入 Faulted。相机生命周期通知带运行批次，关闭设备时使已经排队的旧 SDK 回调失效。只有 RuntimeController 改变运行状态。
+PLC 曝光是另一条直接路径：PlcSession::cameraExposureRequested → **排队到相机线程** → CameraService::applyPlcExposure。连接集中在 AppServices，不经过运行控制器转发。
 
-## 队列与线程约束
+## 到哪里修改功能
 
-- 测量线程保留一个运行任务和一个待执行任务。普通离线预览允许合并；PLC 同时只有一个待回复请求，第二个请求明确返回 busy。
-- CameraService 同时只触发一组双相机测量或一张 Cam2 Facette，等待完成再启动下一个；等待队列上限 16，超时关闭采集链路，避免迟到帧归属错误。
-- ImageStorage 最多接收 16 个任务，满载明确报警；已接收任务不被替换，退出时完成写盘。QSaveFile 保留原子替换行为。
-- SDK 缓冲区在驱动出口复制一次；后续 Mat 按只读、引用计数方式交接。不要在页面或消费者中原地修改共享图像。
-- 运行结果先交给 PLC，再供页面通过线程安全单槽邮箱读取；UI 不接收无限累积的图像事件。图像刷新 67 ms，诊断刷新至少 200 ms，隐藏页不绘图。
-- Camera 预览池同时只有一个任务和一个最新待处理输入；打开图片、图像管线在池中运行。
-- 磁盘状态写入复用 StateStore、CameraStateStore、PlcRuntimeStore、DailyLog；全部位于后台服务或测量线程。PLC 参数持久化成功后才确认，保留原协议语义。
-- 应用退出先停止运行任务，再关闭相机，最后退出并等待服务线程。不要在 UI 回调中直接调用 SDK 或等待测量。
+| 文件 / 对象 | 放置内容 |
+| --- | --- |
+| src/page_home.cpp、src/page_camera.cpp | 按钮、输入值、提示和绘图；bindEvents 绑定控件，bindSignals 绑定业务对象 |
+| src/runtime_controller.cpp | 创建与配置、启停与阶段、离线切图、在线回调、PLC 请求、结果与日志；函数按这些分组排列 |
+| src/camera_service.cpp | 设备容器、SDK 初始化/关闭、手动与生产使用权、曝光、触发队列及帧归属；直接持有 DalsaCamera |
+| src/dalsa_camera.cpp | Sapera SDK 调用与缓冲交接 |
+| src/plc_session.cpp | 网络会话、参数/ROI、待回复测量、超时、PLC 状态保存；measurement_payload.cpp 和 sherlock_protocol.cpp 负责结果字段与编码 |
+| src/measurement_worker.cpp、src/measurement_engine.cpp、src/algorithms/ | 后台测量任务、测量历史和具体检测算法 |
+| src/image_storage.cpp | Facette 后台读写；其它状态继续使用现有 Store |
+| src/app_services.cpp | 创建服务线程、连接服务和配置通知、统一退出；不处理测量请求 |
 
-## 配置与兼容性
+相机角色定义在 models.hpp。RuntimeController::plcSession() 供装配和信号订阅使用；UI 不通过它直接修改 PLC 状态。
 
-PLC 阈值覆盖高于 INI 阈值，基础配置热更新不会清除 PLC 覆盖。在线启动先恢复相机记忆曝光，再重放已持久化的 PLC 曝光；收到 PLC 曝光后，本轮该相机的自动曝光不再覆盖它。自动曝光仍仅用于现有 Idle/Neck 阶段。
+新增功能优先放入上述现有对象。只有出现独立生命周期和实质状态时才考虑新增类，不为转发请求增加包装层。静态布局仍由 Designer .ui 定义。
 
-算法使用 MeasurementRois 和 MeasurementData，不依赖 PLC 文件格式或数字数组下标。measurement_payload.cpp 唯一负责结果字段排列，SherlockProtocol 负责倍率与帧编码。内部检测的搜索坐标转换保持原实现，所有对外几何仍为原始相机图像坐标。
+## 状态与线程边界
 
-Facette 沿用“立即协议确认、失败在本机报警”的既有约定，不新增第二次 PLC 完成报文。停止时尚未采到的 Facette 请求明确记录取消；已进入存储的图片完成写盘。
+- RuntimeController 在运行线程独占运行状态、模式、阶段、选图索引、帧配对和任务身份。页面快照只用于显示。
+- CameraService 在相机线程独占设备和采集队列。生产期间拒绝冲突的手动操作；相机页面是否存在不影响生产采集。
+- PlcSession 与 RuntimeController 同线程；一般业务直接调用。它独占一个待回复测量请求及超时，重复请求明确返回 busy。
+- MeasurementWorker 执行后台解码和计算，只保留一个当前任务和一个最新待执行任务。generation、批次、请求及配置版本继续隔离过期任务与测量历史。
+- ImageStorage 使用有界串行后台池，已接收保存任务退出时完成；满载明确报错。
+- SDK 缓冲出口保留必要复制，之后图像按只读方式传递。跨线程显示邮箱由互斥锁保护。
+- Home 图像刷新约 15 次/秒，诊断最多 5 次/秒；Camera 预览最多 10 次/秒，预览处理在后台池运行。隐藏页面停止绘制。
+- AppServices 退出时先停止运行，再关闭相机，最后退出并等待线程。等待测量收尾在运行线程进行。
 
-## 新功能应放在哪里
+## 当前行为约定
 
-- 新检测阶段/数值：measurement_engine 与 algorithms，并增加测量回归。
-- 新 PLC 命令/映射：PlcSession、measurement_payload、SherlockProtocol，不写进页面或算法。
-- 新相机能力/采集顺序：CameraService；底层 SDK 接口放 DalsaCamera。
-- 新任务调度、超时或运行模式：RuntimeController，并优先添加无界面测试。
-- 新图像来源：离线来源/工作线程或相机服务，最终走同一测量提交链路。
-- 新文件格式/存储：现有 Store 或 ImageStorage，避免在绘图回调里写盘。
-- 静态布局：Designer .ui；页面代码仅绑定控件和显示。
-
-AppSignals 仅保留全局状态提示与退出广播。Home 和 Camera 之间不再通过全局信号互相调用采集逻辑；Camera 页未创建时生产服务仍可独立运行。
+- 离线图像上半张为 Cam1、下半张为 Cam2，不旋转；对外几何为原图坐标。此次不改测量算法、ROI 或梯度百分比判定。
+- 保留当前 acq_on_ / acq_off 的相机确认、取消、5 秒超时、关闭失败重试及 PLC 测试模式逻辑。
+- ConfigManager 是 INI 基础来源；运行控制器生成有效配置。当前 PlcSession 中 dia_thr / diathr2 对算法梯度阈值的覆盖是禁用的，继续使用手动配置。
+- PLC 曝光优先于自动曝光；启动时保留记忆曝光及 PLC 曝光重放。自动曝光仍只用于当前实现中的 Melt / Dip / Neck 阶段。
+- Facette 保留立即协议确认、后续失败在本机报警；Cam2 Facette 与双相机测量在相机队列中串行执行。
+- 测试通过业务对象提交 PLC 命令和配置更新；页面不再提供测试专用的业务转发入口。

@@ -34,6 +34,8 @@ namespace pva
     }
 
 
+    // ---------- 创建与配置 ----------
+
     RuntimeController::RuntimeController(MeasurementConfig config, QObject *parent, bool enableTcp)
         : QObject(parent), baseConfig_(config), config_(std::move(config)), networkEnabled_(enableTcp)
     {
@@ -42,7 +44,7 @@ namespace pva
             if (directory == config_.runtime.facetteImageDir) emit facetteReady(index, image);
         });
         connect(images_, &ImageStorage::saved, this, [this](const QString &path) { log("Facette saved to " + path); });
-        connect(images_, &ImageStorage::failed, this, [this](const QString &message) { log(message); setStatus(message, false); });
+        connect(images_, &ImageStorage::failed, this, [this](const QString &message) { log(message); emit status(message, false); });
         offlineTimer_ = new QTimer(this);
         plc_ = new PlcSession(this);
         acquisitionTimer_ = new QTimer(this);
@@ -65,8 +67,6 @@ namespace pva
         connect(offlineTimer_, &QTimer::timeout, this, &RuntimeController::submitOfflineFrame);
         connect(facetTimeoutTimer_, &QTimer::timeout, this, &RuntimeController::expireFacetRequests);
         connect(plc_, &PlcSession::commandReceived, this, &RuntimeController::onSherlockCommand);
-        connect(plc_, &PlcSession::payloadReady, this, &RuntimeController::payloadReady);
-        connect(plc_, &PlcSession::connectionChanged, this, &RuntimeController::plcConnectionChanged);
         connect(plc_, &PlcSession::logMessage, this, &RuntimeController::log);
         connect(plc_, &PlcSession::configurationChanged, this, [this](MeasurementStage stage) {
             invalidateTasks();
@@ -80,97 +80,32 @@ namespace pva
             emit onlineStageChanged(int(stage_));
             publishState();
         });
-        connect(plc_, &PlcSession::cameraExposureRequested, this, &RuntimeController::plcCameraExposureRequested);
         connect(plc_, &PlcSession::timedOut, this, [this] {
             invalidateTasks();
             onlineFrames_.clear();
             log("PLC measurement timed out after 5000 ms");
         });
     }
+
     RuntimeController::~RuntimeController() { shutdown(); images_->flush(); }
-    std::optional<MeasurementResult> RuntimeController::takeLatestResult()
-    {
-        QMutexLocker lock(&displayMutex_);
-        auto result = std::move(displayResult_);
-        displayResult_.reset();
-        return result;
-    }
-    MeasurementTaskInfo RuntimeController::taskInfo()
-    {
-        return {runId_, plc_->busy() ? currentRequestId_ : ++nextRequestId_, configVersion_,
-                activeOnline_ ? MeasurementSource::Online : MeasurementSource::Offline};
-    }
+
     void RuntimeController::initialize()
     {
         restorePlcState();
         reloadImages();
-        for (int i = 1; i <= 4; ++i) loadFacette(i);
+        for (int i = 1; i <= 4; ++i) images_->load(config_.runtime.facetteImageDir, i);
         startPlc();
         publishState();
     }
+
     void RuntimeController::shutdown()
     {
         restartAfterCameraStop_.reset();
         if (!acquisitionCommand_.isEmpty()) failAcquisition("acquisition cancelled: application shutdown");
         stopRuntime();
-        stopPlc();
+        plc_->stop();
     }
-    void RuntimeController::publishState()
-    {
-        emit stateChanged({state_, activeOnline_, stage_, imagePaths_, imageIndex_, config_, plc_->rois(), generation_});
-    }
-    void RuntimeController::invalidateTasks()
-    {
-        ++generation_;
-        { QMutexLocker lock(&displayMutex_); displayResult_.reset(); }
-        if (worker_) worker_->invalidate(generation_);
-        if (plc_->busy()) {
-            sendPlcPayload("exe_err=Commn err");
-            plc_->cancel();
-        }
-    }
-    void RuntimeController::selectStage(MeasurementStage stage)
-    {
-        stage_ = stage;
-        persistPlcState();
-        invalidateTasks();
-        emit onlineStageChanged(int(stage_));
-        publishState();
-        if (running() && !activeOnline_) submitOfflineFrame();
-    }
-    void RuntimeController::submitImages(const cv::Mat &a, const cv::Mat &b, MeasurementStage stage)
-    {
-        if (!worker_) return;
-        worker_->submit(a, b, stage, generation_, taskInfo());
-    }
-    void RuntimeController::submitOfflineFrame()
-    {
-        if (!running() || !worker_ || imageIndex_ < 0) return;
-        worker_->submitOffline(imagePaths_[imageIndex_], stage_, generation_, taskInfo());
-    }
-    void RuntimeController::acceptResult(const MeasurementResult &r)
-    {
-        if (!running() || r.generation != generation_ || r.stage != stage_ ||
-            r.task.runId != runId_ || r.task.configurationVersion != configVersion_) return;
-        plc_->complete(r);
 
-        { QMutexLocker lock(&displayMutex_); displayResult_ = r; }
-        emit resultReady(r);
-        if (!r.valid) log(QString::fromStdString(r.message));
-        setStatus(QString::fromStdString(r.message), r.valid);
-    }
-    void RuntimeController::loadFacette(int index)
-    {
-        images_->load(config_.runtime.facetteImageDir, index);
-    }
-    void RuntimeController::log(const QString &message)
-    {
-        dailyLog_.setDirectory(QFileInfo(config_.runtime.stateFile).absoluteDir().filePath("Log"));
-        const auto entry = dailyLog_.append(QDateTime::currentDateTime(), message);
-        emit logReady(entry.line, entry.merged);
-        if (!entry.written) emit status("Log write failed: " + entry.error, false);
-    }
-    void RuntimeController::setStatus(const QString &message, bool ok) { emit status(message, ok); }
     void RuntimeController::reloadConfig(const MeasurementConfig &config)
     {
         // 与 Python 版本一致：算法、曝光控制等普通参数直接送入运行中的
@@ -190,7 +125,7 @@ namespace pva
         invalidateTasks();
         if (facetDirectoryChanged)
             for (int index = 1; index <= 4; ++index)
-                loadFacette(index);
+                images_->load(config_.runtime.facetteImageDir, index);
         applyPlcConfigOverrides();
         if (plc_->pointFitSelected() &&
             (stage_ == MeasurementStage::Crown || stage_ == MeasurementStage::Body))
@@ -200,7 +135,7 @@ namespace pva
             if (next != stage_)
             {
                 stage_ = next;
-                persistPlcState();
+                plc_->requestStateSave(stage_);
                 publishState();
                 emit onlineStageChanged(int(stage_));
             }
@@ -225,6 +160,32 @@ namespace pva
         }
     }
 
+    void RuntimeController::restorePlcState()
+    {
+        stage_ = plc_->restoreSettings(plcStatePath());
+        applyPlcConfigOverrides();
+    }
+
+    void RuntimeController::applyPlcConfigOverrides()
+    {
+        config_ = baseConfig_;
+        plc_->applyConfigOverrides(config_);
+    }
+
+    QString RuntimeController::plcStatePath() const
+    {
+        return QFileInfo(config_.runtime.stateFile).absoluteDir().filePath("plc_runtime_state.json");
+    }
+
+
+    // ---------- 运行启停与阶段 ----------
+
+    void RuntimeController::changeMode(bool online)
+    {
+        stopRuntime();
+        if (online) startRuntime(true);
+    }
+
     void RuntimeController::startRuntime(bool online)
     {
         if (awaitingCameraStop_) return;
@@ -240,7 +201,7 @@ namespace pva
         {
             state_ = RunState::Faulted;
             publishState();
-            setStatus(QString("No offline images found: %1").arg(config_.runtime.offlineImageDir), false);
+            emit status(QString("No offline images found: %1").arg(config_.runtime.offlineImageDir), false);
             return;
         }
         const bool plcOnly = online && config_.runtime.disableCameraForPlcTest;
@@ -257,11 +218,11 @@ namespace pva
             connect(worker_.get(), &MeasurementWorker::failed, this, [this](quint64 generation, const QString &m)
                     {
                         if (generation != generation_ || !running()) return;
-                        setStatus(m, false);
+                        emit status(m, false);
                         log(m);
                         if (plc_->busy())
                         {
-                                                sendPlcPayload("exe_err=Commn err");
+                                                plc_->send("exe_err=Commn err");
                             plc_->cancel();
                         } });
             worker_->start();
@@ -339,6 +300,29 @@ namespace pva
             completeAcquisition(false);
     }
 
+    void RuntimeController::selectStage(MeasurementStage stage)
+    {
+        stage_ = stage;
+        plc_->requestStateSave(stage_);
+        invalidateTasks();
+        emit onlineStageChanged(int(stage_));
+        publishState();
+        if (running() && !activeOnline_) submitOfflineFrame();
+    }
+
+    void RuntimeController::invalidateTasks()
+    {
+        ++generation_;
+        { QMutexLocker lock(&displayMutex_); displayResult_.reset(); }
+        if (worker_) worker_->invalidate(generation_);
+        if (plc_->busy()) {
+            plc_->send("exe_err=Commn err");
+            plc_->cancel();
+        }
+    }
+
+    // ---------- 离线切图与提交 ----------
+
     void RuntimeController::reloadImages(bool preserve)
     {
         QString old = imageIndex_ >= 0 && imageIndex_ < imagePaths_.size() ? imagePaths_[imageIndex_] : QString();
@@ -370,6 +354,26 @@ namespace pva
         setImageIndex(imageIndex_ + delta);
     }
 
+    void RuntimeController::submitOfflineFrame()
+    {
+        if (!running() || !worker_ || imageIndex_ < 0) return;
+        worker_->submitOffline(imagePaths_[imageIndex_], stage_, generation_, taskInfo());
+    }
+
+    void RuntimeController::captureOfflineFacette(int index)
+    {
+        if (imageIndex_ < 0 || imageIndex_ >= imagePaths_.size())
+        {
+            const QString detail = QString("Facette%1 offline capture failed: no selected image").arg(index);
+            log(detail);
+            emit status(detail, false);
+            return;
+        }
+        images_->captureOffline(config_.runtime.facetteImageDir, index, imagePaths_[imageIndex_]);
+    }
+
+    // ---------- 在线采集与回调 ----------
+
     void RuntimeController::triggerOnlineCapture()
     {
         if (!running() || !plc_->busy())
@@ -397,63 +401,17 @@ namespace pva
         {
             onlineFrames_.clear();
             const QString message = QString("Online stereo pair dropped: frame delta %1 ms > %2 ms").arg(deltaMs, 0, 'f', 1).arg(config_.runtime.stereoPairMaxDeltaMs);
-            setStatus(message, false);
+            emit status(message, false);
             log(message);
             if (plc_->busy())
             {
-                        sendPlcPayload("exe_err=Acq fails");
+                        plc_->send("exe_err=Acq fails");
                 plc_->cancel();
             }
             return;
         }
         onlineFrames_.clear();
-        submitImages(first.image, second.image, stage_);
-    }
-
-    void RuntimeController::onFacetFrame(int requestId, const cv::Mat &image)
-    {
-        for (int i = 0; i < camera2Requests_.size(); ++i) if (camera2Requests_[i].id == requestId) {
-            const int facet = camera2Requests_[i].facetIndex;
-            camera2Requests_.removeAt(i); images_->save(config_.runtime.facetteImageDir, facet, image); break;
-        }
-        if (camera2Requests_.isEmpty()) facetTimeoutTimer_->stop();
-    }
-    void RuntimeController::onOnlineCaptureFailed(const QString &id, const QString &message, quint64 session)
-    {
-        onOnlineCameraFailed("Camera " + id + ": " + message, session);
-    }
-    void RuntimeController::onFacetTriggerFailed(int requestId, const QString &message)
-    {
-        for (int index = 0; index < camera2Requests_.size(); ++index)
-            if (camera2Requests_.at(index).id == requestId)
-            {
-                const int facetIndex = camera2Requests_.at(index).facetIndex;
-                camera2Requests_.removeAt(index);
-                const QString detail = QString("Facette%1 trigger failed: %2")
-                                           .arg(facetIndex).arg(message);
-                log(detail);
-                setStatus(detail, false);
-                break;
-            }
-        if (camera2Requests_.isEmpty())
-            facetTimeoutTimer_->stop();
-    }
-
-    void RuntimeController::expireFacetRequests()
-    {
-        const qint64 now = QDateTime::currentMSecsSinceEpoch();
-        for (int index = camera2Requests_.size() - 1; index >= 0; --index)
-        {
-            const auto request = camera2Requests_.at(index);
-            if (request.facetIndex == 0 || request.deadlineMs > now)
-                continue;
-            camera2Requests_.removeAt(index);
-            const QString detail = QString("Facette%1 capture timed out").arg(request.facetIndex);
-            log(detail);
-            setStatus(detail, false);
-        }
-        if (camera2Requests_.isEmpty())
-            facetTimeoutTimer_->stop();
+        worker_->submit(first.image, second.image, stage_, generation_, taskInfo());
     }
 
     void RuntimeController::onOnlineCameraStarted(quint64 session)
@@ -482,6 +440,7 @@ namespace pva
         restartAfterCameraStop_.reset();
         if (restart && acquisitionCommand_.isEmpty()) startRuntime(*restart);
     }
+
     void RuntimeController::onOnlineCameraStopFailed(quint64 requestId, const QString &message)
     {
         if (!awaitingCameraStop_ || requestId != stopRequestId_) return;
@@ -500,55 +459,18 @@ namespace pva
         if (acquisitionCommand_ == "acq_on_") failAcquisition("Online camera failed: " + message);
         if (plc_->busy())
         {
-                sendPlcPayload("exe_err=Acq fails");
+                plc_->send("exe_err=Acq fails");
             plc_->cancel();
         }
         stopRuntime();
         state_ = RunState::Faulted;
-        setStatus("Online camera failed: " + message, false);
+        emit status("Online camera failed: " + message, false);
         publishState();
     }
 
-    void RuntimeController::startPlc()
+    void RuntimeController::onOnlineCaptureFailed(const QString &id, const QString &message, quint64 session)
     {
-        if (!networkEnabled_) return;
-        QString error;
-        if (!plc_->start(&error)) {
-            const QString message = "Sherlock service start failed: " + error;
-            log(message); setStatus(message, false); emit plcConnectionChanged(false);
-        }
-    }
-    void RuntimeController::stopPlc() { plc_->stop(); emit plcConnectionChanged(false); }
-    void RuntimeController::sendPlcPayload(const QByteArray &payload) { plc_->send(payload); }
-
-    void RuntimeController::completeAcquisition(bool enabled)
-    {
-        if (acquisitionCommand_.isEmpty()) return;
-        if (acquisitionClock_.elapsed() >= 5000) {
-            failAcquisition("acquisition switch timed out after 5000 ms");
-            if (enabled) stopRuntime();
-            return;
-        }
-        const QByteArray reply = acquisitionCommand_.toLatin1() + "=ok";
-        acquisitionCommand_.clear();
-        acquisitionTimer_->stop();
-        restartAfterCameraStop_.reset();
-        plc_->setAcquisitionEnabled(enabled, stage_);
-        log(enabled ? "PLC acquisition enabled: Online ready" : "PLC acquisition disabled: Offline stopped");
-        sendPlcPayload(reply);
-    }
-
-    void RuntimeController::failAcquisition(const QString &message)
-    {
-        acquisitionTimer_->stop();
-        restartAfterCameraStop_.reset();
-        if (!acquisitionCommand_.isEmpty()) {
-            acquisitionCommand_.clear();
-            sendPlcPayload("err_exc=" + message.toLatin1());
-        }
-        plc_->setAcquisitionEnabled(false, stage_);
-        log(message);
-        setStatus(message, false);
+        onOnlineCameraFailed("Camera " + id + ": " + message, session);
     }
 
     void RuntimeController::retryCameraClose()
@@ -560,41 +482,59 @@ namespace pva
         emit onlineCameraStopRequested(stopRequestId_);
     }
 
-    void RuntimeController::handleAcquisitionCommand(const SherlockCommand &command)
+    void RuntimeController::onFacetFrame(int requestId, const cv::Mat &image)
     {
-        const QString &name = command.name;
-        if (!command.parameters.isEmpty()) {
-            sendPlcPayload("err_prm=" + name.toLatin1() + " requires no parameters");
-            return;
+        for (int i = 0; i < camera2Requests_.size(); ++i) if (camera2Requests_[i].id == requestId) {
+            const int facet = camera2Requests_[i].facetIndex;
+            camera2Requests_.removeAt(i); images_->save(config_.runtime.facetteImageDir, facet, image); break;
         }
-        if (name == "acq_off") restartAfterCameraStop_.reset();
-        // 停止可以取消待确认的启动；其它切换中指令不覆盖原请求。
-        if (name == "acq_off" && acquisitionCommand_ == "acq_on_")
-            failAcquisition("acquisition cancelled");
-        else if (!acquisitionCommand_.isEmpty() || awaitingCameraStop_) {
-            sendPlcPayload("err_exc=runtime switching");
-            return;
+        if (camera2Requests_.isEmpty()) facetTimeoutTimer_->stop();
+    }
+
+    void RuntimeController::onFacetTriggerFailed(int requestId, const QString &message)
+    {
+        for (int index = 0; index < camera2Requests_.size(); ++index)
+            if (camera2Requests_.at(index).id == requestId)
+            {
+                const int facetIndex = camera2Requests_.at(index).facetIndex;
+                camera2Requests_.removeAt(index);
+                const QString detail = QString("Facette%1 trigger failed: %2")
+                                           .arg(facetIndex).arg(message);
+                log(detail);
+                emit status(detail, false);
+                break;
+            }
+        if (camera2Requests_.isEmpty())
+            facetTimeoutTimer_->stop();
+    }
+
+    void RuntimeController::expireFacetRequests()
+    {
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        for (int index = camera2Requests_.size() - 1; index >= 0; --index)
+        {
+            const auto request = camera2Requests_.at(index);
+            if (request.facetIndex == 0 || request.deadlineMs > now)
+                continue;
+            camera2Requests_.removeAt(index);
+            const QString detail = QString("Facette%1 capture timed out").arg(request.facetIndex);
+            log(detail);
+            emit status(detail, false);
         }
-        if (name == "acq_on_" && activeOnline_ && running()) {
-            plc_->setAcquisitionEnabled(true, stage_);
-            sendPlcPayload("acq_on_=ok");
-            return;
+        if (camera2Requests_.isEmpty())
+            facetTimeoutTimer_->stop();
+    }
+
+    // ---------- PLC 请求处理 ----------
+
+    void RuntimeController::startPlc()
+    {
+        if (!networkEnabled_) return;
+        QString error;
+        if (!plc_->start(&error)) {
+            const QString message = "Sherlock service start failed: " + error;
+            log(message); emit status(message, false);
         }
-        if (name == "acq_off" && !activeOnline_ && state_ == RunState::Stopped && !worker_) {
-            plc_->setAcquisitionEnabled(false, stage_);
-            sendPlcPayload("acq_off=ok");
-            return;
-        }
-        // 已有手动启动可由 PLC 接管等待确认，不重复打开相机。
-        acquisitionClock_.start();
-        if (name == "acq_on_" && !(activeOnline_ && state_ == RunState::Starting))
-            stopRuntime();
-        acquisitionCommand_ = name;
-        acquisitionTimer_->start(int(std::max<qint64>(1, 5000 - acquisitionClock_.elapsed())));
-        if (name == "acq_on_") {
-            if (state_ != RunState::Starting) startRuntime(true);
-        } else
-            stopRuntime();
     }
 
     void RuntimeController::onSherlockCommand(const SherlockCommand &command)
@@ -608,7 +548,7 @@ namespace pva
         if ((!acquisitionCommand_.isEmpty() || awaitingCameraStop_) &&
             (name == "dia_msr" || name == "dia_rec" || name == "dip_msr" || name == "mlt_msr" ||
              name == "pic_fac1" || name == "pic_fac2" || name == "pic_fac3" || name == "pic_fac4")) {
-            sendPlcPayload("err_exc=runtime switching");
+            plc_->send("err_exc=runtime switching");
             return;
         }
 
@@ -617,12 +557,12 @@ namespace pva
         {
             if (!command.parameters.isEmpty())
             {
-                sendPlcPayload("err_prm=" + name.toLatin1() + " requires no parameters");
+                plc_->send("err_prm=" + name.toLatin1() + " requires no parameters");
                 return;
             }
             const int facetIndex = name.back().digitValue();
             // 旧 PLC 协议立即确认命令；拍照或写盘失败仅在本机报警。
-            sendPlcPayload(name.toLatin1() + "=ok");
+            plc_->send(name.toLatin1() + "=ok");
             if (activeOnline_ && running())
             {
                 if (camera2Requests_.size() >= 16) { log("Facette capture rejected: queue full"); return; }
@@ -645,23 +585,23 @@ namespace pva
 
         if (name != "dia_msr" && name != "dia_rec" && name != "dip_msr" && name != "mlt_msr")
         {
-            sendPlcPayload("err_unk=" + name.toLatin1());
+            plc_->send("err_unk=" + name.toLatin1());
             return;
         }
-        if (!plc_->acquisitionEnabled() || !running() /*|| !activeOnline_*/ || !worker_)
+        if (!plc_->acquisitionEnabled() || !running() || !worker_)
         {
-            sendPlcPayload("err_lck=Measurement are disabled");
+            plc_->send("err_lck=Measurement are disabled");
             return;
         }
         if (plc_->busy())
         {
-            sendPlcPayload("exe_err=measurement busy");
+            plc_->send("exe_err=measurement busy");
             return;
         }
 
         stage_ = stageForPlcCommand(name, stage_, plc_->pointFitSelected(), plc_->rois(),
                                     config_.measurement.crownBodyInnerRadiusPx);
-        persistPlcState();
+        plc_->requestStateSave(stage_);
         invalidateTasks();
         currentRequestId_ = ++nextRequestId_;
         plc_->begin(name, generation_);
@@ -670,33 +610,113 @@ namespace pva
         triggerOnlineCapture();
     }
 
-    QString RuntimeController::plcStatePath() const
+    void RuntimeController::handleAcquisitionCommand(const SherlockCommand &command)
     {
-        return QFileInfo(config_.runtime.stateFile).absoluteDir().filePath("plc_runtime_state.json");
-    }
-
-    void RuntimeController::persistPlcState() { plc_->requestStateSave(stage_); }
-    void RuntimeController::applyPlcConfigOverrides()
-    {
-        config_ = baseConfig_;
-        plc_->applyConfigOverrides(config_);
-    }
-    void RuntimeController::restorePlcState()
-    {
-        stage_ = plc_->restoreSettings(plcStatePath());
-        applyPlcConfigOverrides();
-    }
-
-    void RuntimeController::captureOfflineFacette(int index)
-    {
-        if (imageIndex_ < 0 || imageIndex_ >= imagePaths_.size())
-        {
-            const QString detail = QString("Facette%1 offline capture failed: no selected image").arg(index);
-            log(detail);
-            setStatus(detail, false);
+        const QString &name = command.name;
+        if (!command.parameters.isEmpty()) {
+            plc_->send("err_prm=" + name.toLatin1() + " requires no parameters");
             return;
         }
-        images_->captureOffline(config_.runtime.facetteImageDir, index, imagePaths_[imageIndex_]);
+        if (name == "acq_off") restartAfterCameraStop_.reset();
+        // 停止可以取消待确认的启动；其它切换中指令不覆盖原请求。
+        if (name == "acq_off" && acquisitionCommand_ == "acq_on_")
+            failAcquisition("acquisition cancelled");
+        else if (!acquisitionCommand_.isEmpty() || awaitingCameraStop_) {
+            plc_->send("err_exc=runtime switching");
+            return;
+        }
+        if (name == "acq_on_" && activeOnline_ && running()) {
+            plc_->setAcquisitionEnabled(true, stage_);
+            plc_->send("acq_on_=ok");
+            return;
+        }
+        if (name == "acq_off" && !activeOnline_ && state_ == RunState::Stopped && !worker_) {
+            plc_->setAcquisitionEnabled(false, stage_);
+            plc_->send("acq_off=ok");
+            return;
+        }
+        // 已有手动启动可由 PLC 接管等待确认，不重复打开相机。
+        acquisitionClock_.start();
+        if (name == "acq_on_" && !(activeOnline_ && state_ == RunState::Starting))
+            stopRuntime();
+        acquisitionCommand_ = name;
+        acquisitionTimer_->start(int(std::max<qint64>(1, 5000 - acquisitionClock_.elapsed())));
+        if (name == "acq_on_") {
+            if (state_ != RunState::Starting) startRuntime(true);
+        } else
+            stopRuntime();
     }
+
+    void RuntimeController::completeAcquisition(bool enabled)
+    {
+        if (acquisitionCommand_.isEmpty()) return;
+        if (acquisitionClock_.elapsed() >= 5000) {
+            failAcquisition("acquisition switch timed out after 5000 ms");
+            if (enabled) stopRuntime();
+            return;
+        }
+        const QByteArray reply = acquisitionCommand_.toLatin1() + "=ok";
+        acquisitionCommand_.clear();
+        acquisitionTimer_->stop();
+        restartAfterCameraStop_.reset();
+        plc_->setAcquisitionEnabled(enabled, stage_);
+        log(enabled ? "PLC acquisition enabled: Online ready" : "PLC acquisition disabled: Offline stopped");
+        plc_->send(reply);
+    }
+
+    void RuntimeController::failAcquisition(const QString &message)
+    {
+        acquisitionTimer_->stop();
+        restartAfterCameraStop_.reset();
+        if (!acquisitionCommand_.isEmpty()) {
+            acquisitionCommand_.clear();
+            plc_->send("err_exc=" + message.toLatin1());
+        }
+        plc_->setAcquisitionEnabled(false, stage_);
+        log(message);
+        emit status(message, false);
+    }
+
+    // ---------- 结果、状态与日志 ----------
+
+    MeasurementTaskInfo RuntimeController::taskInfo()
+    {
+        return {runId_, plc_->busy() ? currentRequestId_ : ++nextRequestId_, configVersion_,
+                activeOnline_ ? MeasurementSource::Online : MeasurementSource::Offline};
+    }
+
+    void RuntimeController::acceptResult(const MeasurementResult &r)
+    {
+        if (!running() || r.generation != generation_ || r.stage != stage_ ||
+            r.task.runId != runId_ || r.task.configurationVersion != configVersion_) return;
+        plc_->complete(r);
+
+        { QMutexLocker lock(&displayMutex_); displayResult_ = r; }
+        emit resultReady(r);
+        if (!r.valid) log(QString::fromStdString(r.message));
+        emit status(QString::fromStdString(r.message), r.valid);
+    }
+
+    std::optional<MeasurementResult> RuntimeController::takeLatestResult()
+    {
+        QMutexLocker lock(&displayMutex_);
+        auto result = std::move(displayResult_);
+        displayResult_.reset();
+        return result;
+    }
+
+    void RuntimeController::publishState()
+    {
+        emit stateChanged({state_, activeOnline_, stage_, imagePaths_, imageIndex_, config_, plc_->rois(), generation_});
+    }
+
+    void RuntimeController::log(const QString &message)
+    {
+        dailyLog_.setDirectory(QFileInfo(config_.runtime.stateFile).absoluteDir().filePath("Log"));
+        const auto entry = dailyLog_.append(QDateTime::currentDateTime(), message);
+        emit logReady(entry.line, entry.merged);
+        if (!entry.written) emit status("Log write failed: " + entry.error, false);
+    }
+
 
 }

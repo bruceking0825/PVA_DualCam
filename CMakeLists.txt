@@ -154,8 +154,6 @@ target_link_libraries(pva_runtime PUBLIC pva_measurement pva_sherlock_protocol $
 add_library(pva_camera
     src/camera_service.cpp
     include/camera_service.hpp
-    src/camera_manager.cpp
-    include/camera_manager.hpp
     src/camera_state_store.cpp
     include/camera_state_store.hpp
     src/dalsa_camera.cpp
@@ -302,6 +300,16 @@ if(BUILD_TESTING)
         resources.qrc
     )
     add_executable(facette_page_tests tests/test_facette_page.cpp ${PVA_HOME_TEST_SOURCES})
+    add_executable(page_command_tests tests/test_page_commands.cpp ${PVA_HOME_TEST_SOURCES}
+        src/page_camera.cpp include/page_camera.hpp ui/PageCamera.ui
+        src/app_services.cpp include/app_services.hpp)
+    set_property(TARGET page_command_tests PROPERTY AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/ui")
+    target_link_libraries(page_command_tests PRIVATE pva_runtime pva_camera ${PVA_QT_PACKAGE}::Widgets)
+    if(MSVC)
+        target_link_options(page_command_tests PRIVATE /MANIFEST:NO /INCREMENTAL:NO)
+    endif()
+    add_test(NAME page_command_tests COMMAND page_command_tests)
+    set_tests_properties(page_command_tests PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_executable(runtime_ui_benchmark tests/runtime_ui_benchmark.cpp ${PVA_HOME_TEST_SOURCES})
     set_property(TARGET runtime_ui_benchmark PROPERTY AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/ui")
     target_link_libraries(runtime_ui_benchmark PRIVATE pva_runtime ${PVA_QT_PACKAGE}::Widgets)
@@ -332,7 +340,7 @@ if(BUILD_TESTING)
     add_test(NAME parameters_page_tests COMMAND parameters_page_tests)
     set_tests_properties(parameters_page_tests PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     if(WIN32)
-        set_tests_properties(pva_measurement_tests runtime_tests service_lifecycle_tests auto_exposure_tests state_save_tests acquisition_switch_tests PROPERTIES
+        set_tests_properties(pva_measurement_tests runtime_tests service_lifecycle_tests auto_exposure_tests state_save_tests acquisition_switch_tests connection_health_tests parameters_page_tests page_command_tests PROPERTIES
             ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:${PVA_QT_PACKAGE}::Core>;PATH=path_list_prepend:${OpenCV_DIR}/../bin")
         set_tests_properties(sherlock_protocol_tests PROPERTIES

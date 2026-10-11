@@ -2,7 +2,6 @@
 #include <QObject>
 #include "sherlock_protocol.hpp"
 #include "plc_session.hpp"
-#include "camera_manager.hpp"
 #include "config.hpp"
 #include "measurement_worker.hpp"
 #include "plc_runtime.hpp"
@@ -19,9 +18,7 @@ class QTimer;
 
 namespace pva
 {
-    class SherlockTcpServer;
     class ImageStorage;
-    struct SherlockCommand;
 
     enum class RunState { Stopped, Starting, Running, Stopping, Faulted };
     struct RuntimeSnapshot
@@ -43,13 +40,22 @@ namespace pva
         explicit RuntimeController(MeasurementConfig config, QObject *parent = nullptr, bool enableTcp = true);
         ~RuntimeController() override;
         std::optional<MeasurementResult> takeLatestResult();
-        void reloadConfig(const MeasurementConfig &config);
+        PlcSession &plcSession() { return *plc_; }
     public slots:
+        // 页面/装配层入口：这些方法在运行线程执行。
         void initialize();
         void shutdown();
+        void reloadConfig(const MeasurementConfig &config);
+        void startRuntime(bool online);
+        void stopRuntime();
+        void changeMode(bool online);
         void selectStage(MeasurementStage stage);
-        void acceptResult(const pva::MeasurementResult &result);
+        // 离线切图。
+        void setImageIndex(int index);
+        void stepImage(int delta);
         void submitOfflineFrame();
+
+        // 在线相机事件。
         void triggerOnlineCapture();
         void onCameraFrame(const QString &userId, const cv::Mat &image, qint64 timestampNs, quint64 generation);
         void onFacetFrame(int requestId, const cv::Mat &image);
@@ -60,6 +66,8 @@ namespace pva
         void onOnlineCaptureFailed(const QString &userId, const QString &message, quint64 session = 0);
         void onFacetTriggerFailed(int requestId, const QString &message);
         void expireFacetRequests();
+        // PLC 请求与测量结果。
+        void acceptResult(const pva::MeasurementResult &result);
         void onSherlockCommand(const pva::SherlockCommand &command);
 
     signals:
@@ -68,20 +76,30 @@ namespace pva
         void status(const QString &message, bool ok);
         void logReady(const QString &line, bool merged);
         void facetteReady(int index, const cv::Mat &image);
-        void plcConnectionChanged(bool connected);
         void frameDeltaChanged(double deltaMs);
-        void payloadReady(const QByteArray &payload);
         void onlineCameraStartRequested(quint64 session);
         void onlineCameraStopRequested(quint64 requestId);
         void onlineCameraTriggerRequested(quint64 generation);
         void onlineFacetTriggerRequested(int requestId);
         void onlineStageChanged(int stage);
-        void plcCameraExposureRequested(const QString &userId, double exposureUs);
     private:
         void publishState();
         void invalidateTasks();
-        void submitImages(const cv::Mat &a, const cv::Mat &b, MeasurementStage stage);
         MeasurementTaskInfo taskInfo();
+        bool running() const { return state_ == RunState::Running; }
+        void reloadImages(bool preserve = false);
+        void captureOfflineFacette(int index);
+        void retryCameraClose();
+        void startPlc();
+        void handleAcquisitionCommand(const SherlockCommand &command);
+        void completeAcquisition(bool enabled);
+        void failAcquisition(const QString &message);
+        QString plcStatePath() const;
+        void restorePlcState();
+        void applyPlcConfigOverrides();
+        void log(const QString &message);
+
+        // 运行状态只在控制线程修改；显示邮箱使用互斥锁跨线程读取。
         MeasurementConfig baseConfig_;
         MeasurementConfig config_;
         QMutex displayMutex_;
@@ -98,17 +116,12 @@ namespace pva
         std::optional<bool> restartAfterCameraStop_;
         quint64 nextStopRequestId_{}, stopRequestId_{};
         bool awaitingCameraStop_{false}, cleanupRetryRequested_{false};
-        void handleAcquisitionCommand(const SherlockCommand &command);
-        void completeAcquisition(bool enabled);
-        void failAcquisition(const QString &message);
-        void retryCameraClose();
         QStringList imagePaths_;
         int imageIndex_{-1};
         MeasurementStage stage_{MeasurementStage::Melt};
         RunState state_{RunState::Stopped};
         quint64 generation_{1};
         bool networkEnabled_{true};
-        bool running() const { return state_ == RunState::Running; }
         bool activeOnline_{false};
         DailyLog dailyLog_;
         struct OnlineFrame { qint64 timestampNs{}; cv::Mat image; };
@@ -116,26 +129,6 @@ namespace pva
         struct Camera2Request { int id{}; int facetIndex{}; qint64 deadlineMs{}; };
         QQueue<Camera2Request> camera2Requests_;
         int nextFacetRequestId_{1};
-        void reloadImages(bool preserve = false);
-    public slots:
-        void setImageIndex(int index);
-        void stepImage(int delta);
-    private:
-        void log(const QString &message);
-        QString plcStatePath() const;
-        void persistPlcState();
-        void restorePlcState();
-        void applyPlcConfigOverrides();
-        void setStatus(const QString &message, bool ok);
-        void loadFacette(int index);
-        void captureOfflineFacette(int index);
-    public slots:
-        void startRuntime(bool online);
-        void stopRuntime();
-    private:
-        void startPlc();
-        void stopPlc();
-        void sendPlcPayload(const QByteArray &payload);
     };
 }
 

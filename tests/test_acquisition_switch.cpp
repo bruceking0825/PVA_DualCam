@@ -40,7 +40,7 @@ struct Fixture {
         pva::PlcRuntimeStore(directory.filePath("plc_runtime_state.json")).save(saved);
         runtime = std::make_unique<pva::RuntimeController>(config, nullptr, false);
         QObject::connect(runtime.get(), &pva::RuntimeController::stateChanged, runtime.get(), [&](const auto &s) { state = s; });
-        QObject::connect(runtime.get(), &pva::RuntimeController::payloadReady, runtime.get(), [&](const auto &r) { replies.append(r); });
+        QObject::connect(&runtime->plcSession(), &pva::PlcSession::payloadReady, runtime.get(), [&](const auto &r) { replies.append(r); });
         QObject::connect(runtime.get(), &pva::RuntimeController::onlineCameraStartRequested, runtime.get(), [&](quint64 id) { starts.append(id); });
         QObject::connect(runtime.get(), &pva::RuntimeController::onlineCameraStopRequested, runtime.get(), [&](quint64 id) { stops.append(id); });
         QObject::connect(runtime.get(), &pva::RuntimeController::onlineCameraTriggerRequested, runtime.get(), [&](quint64) { ++triggers; });

@@ -1,4 +1,5 @@
 #include "camera_service.hpp"
+#include "dalsa_camera.hpp"
 #include "sherlock_tcp_server.hpp"
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -8,6 +9,13 @@
 #include <functional>
 #include <iostream>
 
+namespace pva {
+// 只注入设备和 SDK 信号；使用生产代码的入队、批次隔离和故障处理。
+struct CameraServiceTestAccess {
+    static void reset(CameraService &service, const QStringList &ids) { service.resetDevices(ids); }
+    static DalsaCamera *device(CameraService &service, const QString &id) { return service.camera(id); }
+};
+}
 namespace {
 int failures{};
 void check(bool ok, const char *message) {
@@ -25,19 +33,30 @@ int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
     // 不打开硬件，以 SDK 故障信号模拟单设备错误。
     pva::CameraService cameras(pva::MeasurementConfig{});
-    auto *manager = cameras.findChild<pva::CameraManager *>();
+    using Access = pva::CameraServiceTestAccess;
     pva::CameraSnapshot cameraState;
     QObject::connect(&cameras, &pva::CameraService::stateChanged, &app,
         [&](const auto &state) { cameraState = state; });
-    check(manager != nullptr, "Camera manager available");
-    if (manager) {
-        manager->reset({pva::CameraRole::Cam1});
+    {
+        Access::reset(cameras, {pva::CameraRole::Cam1});
         cameras.selectCamera(pva::CameraRole::Cam1);
         check(cameraState.healthyIds == QStringList{pva::CameraRole::Cam1}, "Enumerated camera is healthy without streaming");
-        manager->reset(pva::CameraRole::Stereo);
+        Access::reset(cameras, pva::CameraRole::Stereo);
         cameras.selectCamera(pva::CameraRole::Cam1);
-        manager->captureFailed(pva::CameraRole::Cam1, "simulated capture error");
-        check(!cameraState.healthyIds.contains(pva::CameraRole::Cam1) &&
+        auto *device = Access::device(cameras, pva::CameraRole::Cam1);
+        cv::Mat frame(8, 8, CV_8U, cv::Scalar(42));
+        device->frameReady(pva::CameraRole::Cam1, frame, 1000000000);
+        device->captureFailed(pva::CameraRole::Cam1, "stale capture error");
+        cameras.closeAll();
+        QCoreApplication::processEvents();
+        check(cameras.takePreviewFrame().empty() && cameraState.healthyIds.size() == 2,
+              "Close invalidates queued SDK frames and errors");
+        device->frameReady(pva::CameraRole::Cam1, frame, 2000000000);
+        cv::Mat preview;
+        check(until([&] { if (preview.empty()) preview = cameras.takePreviewFrame(); return !preview.empty(); }) &&
+              preview.at<uchar>(0, 0) == 42, "New epoch accepts SDK frames");
+        device->captureFailed(pva::CameraRole::Cam1, "simulated capture error");
+        check(until([&] { return !cameraState.healthyIds.contains(pva::CameraRole::Cam1); }) &&
             cameraState.healthyIds.contains(pva::CameraRole::Cam2), "Only failed camera loses health");
         cameras.closeAll();
         check(cameraState.healthyIds == QStringList{pva::CameraRole::Cam2}, "Normal close preserves health and latched fault");

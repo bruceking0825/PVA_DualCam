@@ -56,6 +56,13 @@ namespace pva
     }
     void PageHome::bindSignals()
     {
+        qRegisterMetaType<MeasurementStage>("pva::MeasurementStage");
+        connect(this, &PageHome::startRequested, &runtime_, &RuntimeController::startRuntime, Qt::QueuedConnection);
+        connect(this, &PageHome::stopRequested, &runtime_, &RuntimeController::stopRuntime, Qt::QueuedConnection);
+        connect(this, &PageHome::modeChangeRequested, &runtime_, &RuntimeController::changeMode, Qt::QueuedConnection);
+        connect(this, &PageHome::stageSelected, &runtime_, &RuntimeController::selectStage, Qt::QueuedConnection);
+        connect(this, &PageHome::imageSelected, &runtime_, &RuntimeController::setImageIndex, Qt::QueuedConnection);
+        connect(this, &PageHome::imageStepRequested, &runtime_, &RuntimeController::stepImage, Qt::QueuedConnection);
         connect(&runtime_, &RuntimeController::stateChanged, this, [this](const RuntimeSnapshot &s) {
             const bool overlayChanged = snapshot_.stage != s.stage ||
                 snapshot_.rois.melt != s.rois.melt || snapshot_.rois.dip != s.rois.dip ||
@@ -87,7 +94,7 @@ namespace pva
             facetteImages_[i-1] = image;
             facetteDirty_[i-1] = true;
         });
-        connect(&runtime_, &RuntimeController::plcConnectionChanged, this, [this](bool on) { setConnectionLed(ui_->lblPlcStatus, on); });
+        connect(&runtime_.plcSession(), &PlcSession::connectionChanged, this, [this](bool on) { setConnectionLed(ui_->lblPlcStatus, on); });
         connect(&runtime_, &RuntimeController::frameDeltaChanged, this, [this](double ms) {
             ui_->lblFrameDelta->setText(QString("Frame delta: %1 ms").arg(ms, 0, 'f', 1));
         });
@@ -106,19 +113,12 @@ namespace pva
         setConnectionLed(ui_->lblCamera1Status, snapshot.healthyIds.contains(CameraRole::Cam1));
         setConnectionLed(ui_->lblCamera2Status, snapshot.healthyIds.contains(CameraRole::Cam2));
     }
-    void PageHome::reloadConfig(const MeasurementConfig &config)
-    {
-        auto *runtime = &runtime_;
-        QMetaObject::invokeMethod(runtime, [runtime, config] { runtime->reloadConfig(config); }, Qt::QueuedConnection);
-    }
     void PageHome::toggleRuntime()
     {
         const bool stop = snapshot_.state == RunState::Running;
         const bool online = ui_->btnOnline->isChecked();
-        auto *runtime = &runtime_;
-        QMetaObject::invokeMethod(runtime, [runtime, stop, online] {
-            if (stop) runtime->stopRuntime(); else runtime->startRuntime(online);
-        }, Qt::QueuedConnection);
+        if (stop) emit stopRequested();
+        else emit startRequested(online);
     }
     void PageHome::toggleOnline(bool online)
     {
@@ -126,10 +126,7 @@ namespace pva
                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
             QSignalBlocker blocker(ui_->btnOnline); ui_->btnOnline->setChecked(!online); return;
         }
-        auto *runtime = &runtime_;
-        QMetaObject::invokeMethod(runtime, [runtime, online] {
-            runtime->stopRuntime(); if (online) runtime->startRuntime(true);
-        }, Qt::QueuedConnection);
+        emit modeChangeRequested(online);
     }
     void PageHome::selectStage()
     {
@@ -138,19 +135,13 @@ namespace pva
         const std::array<MeasurementStage, 5> stages{MeasurementStage::Melt, MeasurementStage::Dip,
             MeasurementStage::Neck, MeasurementStage::Crown, MeasurementStage::Body};
         for (size_t i = 0; i < buttons.size(); ++i) if (sender() == buttons[i]) {
-            auto *runtime = &runtime_;
-            QMetaObject::invokeMethod(runtime, [runtime, stage = stages[i]] { runtime->selectStage(stage); }, Qt::QueuedConnection);
+            emit stageSelected(stages[i]);
         }
     }
-    void PageHome::firstImage() { QMetaObject::invokeMethod(&runtime_, "setImageIndex", Qt::QueuedConnection, Q_ARG(int, 0)); }
-    void PageHome::previousImage() { QMetaObject::invokeMethod(&runtime_, "stepImage", Qt::QueuedConnection, Q_ARG(int, -1)); }
-    void PageHome::nextImage() { QMetaObject::invokeMethod(&runtime_, "stepImage", Qt::QueuedConnection, Q_ARG(int, 1)); }
-    void PageHome::lastImage() { QMetaObject::invokeMethod(&runtime_, "setImageIndex", Qt::QueuedConnection, Q_ARG(int, int(snapshot_.images.size()) - 1)); }
-    void PageHome::onSherlockCommand(const SherlockCommand &command)
-    {
-        auto *runtime = &runtime_;
-        QMetaObject::invokeMethod(runtime, [runtime, command] { runtime->onSherlockCommand(command); }, Qt::QueuedConnection);
-    }
+    void PageHome::firstImage() { emit imageSelected(0); }
+    void PageHome::previousImage() { emit imageStepRequested(-1); }
+    void PageHome::nextImage() { emit imageStepRequested(1); }
+    void PageHome::lastImage() { emit imageSelected(int(snapshot_.images.size()) - 1); }
     void PageHome::showResult(const MeasurementResult &result)
     {
         if (result.generation != snapshot_.generation || snapshot_.state != RunState::Running) return;

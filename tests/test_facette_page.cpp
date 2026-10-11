@@ -100,9 +100,7 @@ int main(int argc, char **argv)
           "Facette views begin with filename placeholders");
 
     pva::SherlockCommand command{"pic_fac1", {}, "pic_fac1"};
-    check(QMetaObject::invokeMethod(&page, "onSherlockCommand", Qt::DirectConnection,
-                                    Q_ARG(SherlockCommand, command)),
-          "Offline Facette command reaches page");
+    runtime.onSherlockCommand(command);
     QCoreApplication::processEvents();
     const QString savedPath = QDir(outputDirectory).filePath("Facette1.bmp");
     check(until([&] { return storageUpdates >= 5; }), "Facette save completes in background");
@@ -114,9 +112,7 @@ int main(int argc, char **argv)
 
     pair.rowRange(4, 8).setTo(70);
     cv::imwrite(QFile::encodeName(pairPath).constData(), pair);
-    check(QMetaObject::invokeMethod(&page, "onSherlockCommand", Qt::DirectConnection,
-                                    Q_ARG(SherlockCommand, command)),
-          "Repeat Facette command reaches page");
+    runtime.onSherlockCommand(command);
     QCoreApplication::processEvents();
     check(until([&] { return storageUpdates >= 6; }), "Repeated Facette save completes");
     saved = cv::imread(QFile::encodeName(savedPath).constData(), cv::IMREAD_GRAYSCALE);
@@ -124,7 +120,7 @@ int main(int argc, char **argv)
           "Repeated Facette command atomically overwrites BMP");
 
     config.runtime.facetteImageDir = temporary.filePath("other-facettes");
-    page.reloadConfig(config);
+    runtime.reloadConfig(config);
     QCoreApplication::processEvents();
     check(until([&] { return storageUpdates >= 10; }), "Changed directory loads complete");
     check(until([&] { return !hasPicture(firstView); }), "Visible page renders cleared Facette");

@@ -20,98 +20,130 @@ namespace
 }
 
 
-namespace pva {
-CameraService::CameraService(MeasurementConfig config, QObject *parent)
-    : QObject(parent), config_(std::move(config)), cameraManager_(std::make_unique<CameraManager>(this))
+namespace pva
 {
-    captureTimeout_ = new QTimer(this);
-    captureTimeout_->setSingleShot(true);
-    captureTimeout_->setInterval(5000);
-    connect(captureTimeout_, &QTimer::timeout, this, [this] {
-        // 超时后关闭本轮采集，阻止迟到帧被归入下一个请求。
-        if (activeCapture_) {
-            if (!gotCam1_) markCameraFault(CameraRole::Cam1, "Capture timed out");
-            if (!gotCam2_) markCameraFault(CameraRole::Cam2, "Capture timed out");
-        }
+    CameraService::CameraService(MeasurementConfig config, QObject *parent)
+        : QObject(parent), config_(std::move(config))
+    {
+        captureTimeout_ = new QTimer(this);
+        captureTimeout_->setSingleShot(true);
+        captureTimeout_->setInterval(5000);
+        connect(captureTimeout_, &QTimer::timeout, this, [this] {
+            // 超时后关闭本轮采集，阻止迟到帧被归入下一个请求。
+            if (activeCapture_) {
+                if (!gotCam1_) markCameraFault(CameraRole::Cam1, "Capture timed out");
+                if (!gotCam2_) markCameraFault(CameraRole::Cam2, "Capture timed out");
+            }
+            closeAll();
+            emit onlineCameraFailed("Camera capture timed out", session_);
+        });
+    }
+    CameraService::~CameraService()
+    {
         closeAll();
-        emit onlineCameraFailed("Camera capture timed out", session_);
-    });
-    connect(cameraManager_.get(), &CameraManager::frameReady, this, &CameraService::onFrame);
-    connect(cameraManager_.get(), &CameraManager::captureFailed, this, &CameraService::onCaptureFailed);
-}
-CameraService::~CameraService() { closeAll(); }
-cv::Mat CameraService::takePreviewFrame()
-{
-    QMutexLocker lock(&previewMutex_);
-    cv::Mat result = std::move(previewFrame_);
-    previewFrame_.release();
-    return result;
-}
-void CameraService::initialize() { refreshCameras(); }
-void CameraService::reloadConfig(const MeasurementConfig &config)
-{
-    config_ = config;
-    lastExposureAdjustNs_.clear();
-    for (auto *value : cameraManager_->getAll()) if (value->isOpen()) {
-        QString error;
-        if (streamOwner_.isEmpty()) applyConfiguredParameters(*value, config_.camera.offlineCropRoi, false, &error);
-        else value->setGain(value->userId() == CameraRole::Cam1 ? config_.camera.gainCamera1 : config_.camera.gainCamera2, &error);
-        if (!error.isEmpty()) markCameraFault(value->userId(), error);
+        if (sdkInitialized_) DalsaCamera::shutdown();
     }
-    publishState();
-}
-void CameraService::refreshCameras()
-{
-    if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
-    closeAll();
-    current_ = nullptr;
-    QString error;
-    if (!cameraManager_->initialize(&error)) {
-        cameraManager_->reset({}); publishState(); setStatus(false, error); return;
-    }
-    const auto ids = DalsaCamera::enumerate(&error);
-    cameraManager_->reset(ids);
-    if (error.isEmpty()) faultedIds_.clear();
-    if (!ids.isEmpty()) current_ = camera(ids.first());
-    publishState();
-    setStatus(error.isEmpty(), error.isEmpty() ? QString("%1 camera(s) found").arg(ids.size()) : error);
-}
-void CameraService::selectCamera(const QString &id)
-{
-    if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
-    current_ = camera(id);
-    publishState();
-}
-void CameraService::publishState()
-{
-    CameraSnapshot s;
-    for (auto *value : cameraManager_->getAll()) {
-        s.ids << value->userId();
-        if (!faultedIds_.contains(value->userId())) s.healthyIds << value->userId();
-    }
-    s.production = !streamOwner_.isEmpty();
-    if (current_) {
-        s.selected = current_->userId();
-        s.open = current_->isOpen();
-        s.streaming = current_->isStreaming();
-        if (s.open) {
-            s.exposure = current_->exposure(); s.gain = current_->gain();
-            s.width = current_->width(); s.height = current_->height();
-            s.offsetX = current_->offsetX(); s.offsetY = current_->offsetY();
-            s.triggerMode = current_->triggerMode(); s.triggerSource = current_->triggerSource(); s.triggerEdge = current_->triggerEdge();
+
+    void CameraService::resetDevices(const QStringList &ids)
+    {
+        closeAll();
+        current_ = nullptr;
+        cameras_.clear();
+        for (const auto &rawId : ids) {
+            const auto id = rawId.trimmed();
+            if (id.isEmpty() || cameras_.contains(id)) continue;
+            auto device = std::make_unique<DalsaCamera>(id);
+            connect(device.get(), &DalsaCamera::frameReady, this,
+                [this](const QString &id, const cv::Mat &frame, qint64 timestamp) {
+                    const auto epoch = deliveryEpoch_.load();
+                    QMetaObject::invokeMethod(this, [this, epoch, id, frame, timestamp] {
+                        if (epoch == deliveryEpoch_.load()) onFrame(id, frame, timestamp);
+                    }, Qt::QueuedConnection);
+                }, Qt::DirectConnection);
+            connect(device.get(), &DalsaCamera::captureFailed, this,
+                [this](const QString &id, const QString &error) {
+                    const auto epoch = deliveryEpoch_.load();
+                    QMetaObject::invokeMethod(this, [this, epoch, id, error] {
+                        if (epoch == deliveryEpoch_.load()) onCaptureFailed(id, error);
+                    }, Qt::QueuedConnection);
+                }, Qt::DirectConnection);
+            cameras_.emplace(id, std::move(device));
         }
     }
-    emit stateChanged(s);
-}
-void CameraService::markCameraFault(const QString &id, const QString &message)
-{
-    faultedIds_.insert(id);
-    setStatus(false, "Camera " + id + ": " + message);
-    publishState();
-}
+    cv::Mat CameraService::takePreviewFrame()
+    {
+        QMutexLocker lock(&previewMutex_);
+        cv::Mat result = std::move(previewFrame_);
+        previewFrame_.release();
+        return result;
+    }
+    void CameraService::initialize() { refreshCameras(); }
+    void CameraService::reloadConfig(const MeasurementConfig &config)
+    {
+        config_ = config;
+        lastExposureAdjustNs_.clear();
+        for (const auto &[id, value] : cameras_) if (value->isOpen()) {
+            QString error;
+            if (streamOwner_.isEmpty()) applyConfiguredParameters(*value, config_.camera.offlineCropRoi, false, &error);
+            else value->setGain(value->userId() == CameraRole::Cam1 ? config_.camera.gainCamera1 : config_.camera.gainCamera2, &error);
+            if (!error.isEmpty()) markCameraFault(value->userId(), error);
+        }
+        publishState();
+    }
+    void CameraService::refreshCameras()
+    {
+        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
+        closeAll();
+        current_ = nullptr;
+        QString error;
+        if (!sdkInitialized_) sdkInitialized_ = DalsaCamera::initialize(&error);
+        if (!sdkInitialized_) {
+            resetDevices({}); publishState(); emit statusChanged(false, error); return;
+        }
+        const auto ids = DalsaCamera::enumerate(&error);
+        resetDevices(ids);
+        if (error.isEmpty()) faultedIds_.clear();
+        if (!ids.isEmpty()) current_ = camera(ids.first());
+        publishState();
+        emit statusChanged(error.isEmpty(), error.isEmpty() ? QString("%1 camera(s) found").arg(ids.size()) : error);
+    }
+    void CameraService::selectCamera(const QString &id)
+    {
+        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
+        current_ = camera(id);
+        publishState();
+    }
+    void CameraService::publishState()
+    {
+        CameraSnapshot s;
+        for (const auto &[id, value] : cameras_) {
+            s.ids << value->userId();
+            if (!faultedIds_.contains(value->userId())) s.healthyIds << value->userId();
+        }
+        s.production = !streamOwner_.isEmpty();
+        if (current_) {
+            s.selected = current_->userId();
+            s.open = current_->isOpen();
+            s.streaming = current_->isStreaming();
+            if (s.open) {
+                s.exposure = current_->exposure(); s.gain = current_->gain();
+                s.width = current_->width(); s.height = current_->height();
+                s.offsetX = current_->offsetX(); s.offsetY = current_->offsetY();
+                s.triggerMode = current_->triggerMode(); s.triggerSource = current_->triggerSource(); s.triggerEdge = current_->triggerEdge();
+            }
+        }
+        emit stateChanged(s);
+    }
+    void CameraService::markCameraFault(const QString &id, const QString &message)
+    {
+        faultedIds_.insert(id);
+        emit statusChanged(false, "Camera " + id + ": " + message);
+        publishState();
+    }
     DalsaCamera *CameraService::camera(const QString &userId) const
     {
-        return cameraManager_->get(userId);
+        const auto found = cameras_.find(userId);
+        return found == cameras_.end() ? nullptr : found->second.get();
     }
 
     bool CameraService::applyConfiguredParameters(DalsaCamera &value, const cv::Rect &roi, bool online, QString *error)
@@ -131,7 +163,7 @@ void CameraService::markCameraFault(const QString &id, const QString &message)
     {
         if (!current_ || !streamOwner_.isEmpty())
         {
-            setStatus(false, !streamOwner_.isEmpty() ? "Cameras are in production use" : "No camera selected");
+            emit statusChanged(false, !streamOwner_.isEmpty() ? "Cameras are in production use" : "No camera selected");
             publishState();
             return;
         }
@@ -150,7 +182,7 @@ void CameraService::markCameraFault(const QString &id, const QString &message)
     {
         if (!current_ || !streamOwner_.isEmpty())
         {
-            setStatus(false, !streamOwner_.isEmpty() ? "Cameras are in production use" : "No camera selected");
+            emit statusChanged(false, !streamOwner_.isEmpty() ? "Cameras are in production use" : "No camera selected");
             publishState();
             return;
         }
@@ -167,16 +199,16 @@ void CameraService::markCameraFault(const QString &id, const QString &message)
 
     void CameraService::softwareTrigger()
     {
-        if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
         QString error;
-        if (!current_) { setStatus(false, "No camera selected"); return; }
+        if (!current_) { emit statusChanged(false, "No camera selected"); return; }
         if (current_ && !current_->softwareTrigger(&error))
             markCameraFault(current_->userId(), error);
     }
 
     void CameraService::applyExposure(double requested)
     {
-        if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setExposure(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -185,7 +217,7 @@ void CameraService::markCameraFault(const QString &id, const QString &message)
 
     void CameraService::applyGain(double requested)
     {
-        if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setGain(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -194,7 +226,7 @@ void CameraService::markCameraFault(const QString &id, const QString &message)
 
     void CameraService::applyWidth(double requested)
     {
-        if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setWidth(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -203,7 +235,7 @@ void CameraService::markCameraFault(const QString &id, const QString &message)
 
     void CameraService::applyHeight(double requested)
     {
-        if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setHeight(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -212,7 +244,7 @@ void CameraService::markCameraFault(const QString &id, const QString &message)
 
     void CameraService::applyOffsetX(double requested)
     {
-        if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setOffsetX(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -221,7 +253,7 @@ void CameraService::markCameraFault(const QString &id, const QString &message)
 
     void CameraService::applyOffsetY(double requested)
     {
-        if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setOffsetY(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -230,7 +262,7 @@ void CameraService::markCameraFault(const QString &id, const QString &message)
 
     void CameraService::applyTriggerMode(int requested)
     {
-        if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setTriggerMode(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -239,7 +271,7 @@ void CameraService::markCameraFault(const QString &id, const QString &message)
 
     void CameraService::applyTriggerSource(int requested)
     {
-        if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setTriggerSource(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -248,7 +280,7 @@ void CameraService::markCameraFault(const QString &id, const QString &message)
 
     void CameraService::applyTriggerEdge(int requested)
     {
-        if (!streamOwner_.isEmpty()) { setStatus(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
         QString e;
         if (current_ && !current_->setTriggerEdge(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -290,14 +322,14 @@ void CameraService::markCameraFault(const QString &id, const QString &message)
         if (!error.isEmpty())
         {
             closeAll();
-            setStatus(false, error);
+            emit statusChanged(false, error);
             emit onlineCameraFailed(error, session_);
             return;
         }
         streamOwner_ = "online";
         publishState();
         emit onlineCameraStarted(session_);
-        setStatus(true, QString("Online cameras started: %1, %2")
+        emit statusChanged(true, QString("Online cameras started: %1, %2")
                             .arg(CameraRole::Cam1, CameraRole::Cam2));
     }
 
@@ -493,7 +525,9 @@ void CameraService::markCameraFault(const QString &id, const QString &message)
     {
         captureTimeout_->stop();
         captureQueue_.clear(); activeCapture_.reset();
-        cameraManager_->closeAll();
+        for (const auto &[id, device] : cameras_) device->close();
+        // SDK 已停止回调；关闭前已排队的帧和错误不能进入下一次采集。
+        ++deliveryEpoch_;
         streamOwner_.clear();
         publishState();
     }

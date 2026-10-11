@@ -185,6 +185,20 @@ namespace pva
     }
     void PageCamera::bindSignals()
     {
+        connect(this, &PageCamera::refreshRequested, &service_, &CameraService::refreshCameras, Qt::QueuedConnection);
+        connect(this, &PageCamera::cameraSelected, &service_, &CameraService::selectCamera, Qt::QueuedConnection);
+        connect(this, &PageCamera::cameraToggleRequested, &service_, &CameraService::toggleCamera, Qt::QueuedConnection);
+        connect(this, &PageCamera::streamToggleRequested, &service_, &CameraService::toggleStream, Qt::QueuedConnection);
+        connect(this, &PageCamera::triggerRequested, &service_, &CameraService::softwareTrigger, Qt::QueuedConnection);
+        connect(this, &PageCamera::exposureRequested, &service_, &CameraService::applyExposure, Qt::QueuedConnection);
+        connect(this, &PageCamera::gainRequested, &service_, &CameraService::applyGain, Qt::QueuedConnection);
+        connect(this, &PageCamera::widthRequested, &service_, &CameraService::applyWidth, Qt::QueuedConnection);
+        connect(this, &PageCamera::heightRequested, &service_, &CameraService::applyHeight, Qt::QueuedConnection);
+        connect(this, &PageCamera::offsetXRequested, &service_, &CameraService::applyOffsetX, Qt::QueuedConnection);
+        connect(this, &PageCamera::offsetYRequested, &service_, &CameraService::applyOffsetY, Qt::QueuedConnection);
+        connect(this, &PageCamera::triggerModeRequested, &service_, &CameraService::applyTriggerMode, Qt::QueuedConnection);
+        connect(this, &PageCamera::triggerSourceRequested, &service_, &CameraService::applyTriggerSource, Qt::QueuedConnection);
+        connect(this, &PageCamera::triggerEdgeRequested, &service_, &CameraService::applyTriggerEdge, Qt::QueuedConnection);
         connect(&service_, &CameraService::stateChanged, this, [this](const CameraSnapshot &s)
                 {
             snapshot_ = s;
@@ -243,12 +257,12 @@ namespace pva
         connect(ui_->transGraphicsView, &CustomGraphicsView::pixelInfoChanged, this,
                 [this](int, int x, int y, int gray)
                 { ui_->lblTransformedInfo->setText(QString("View 2 - Pos: (%1, %2) | Value: %3").arg(x).arg(y).arg(gray)); });
-        connect(ui_->btnRefresh, &QPushButton::clicked, this, &PageCamera::refreshCameras);
+        connect(ui_->btnRefresh, &QPushButton::clicked, this, &PageCamera::refreshRequested);
         connect(ui_->combCameraList, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, &PageCamera::selectCamera);
-        connect(ui_->btnCamON, &QPushButton::toggled, this, &PageCamera::toggleCamera);
-        connect(ui_->btnStartSnap, &QPushButton::toggled, this, &PageCamera::toggleStream);
-        connect(ui_->btnSoftTrigger, &QPushButton::clicked, this, &PageCamera::softwareTrigger);
+        connect(ui_->btnCamON, &QPushButton::toggled, this, &PageCamera::cameraToggleRequested);
+        connect(ui_->btnStartSnap, &QPushButton::toggled, this, &PageCamera::streamToggleRequested);
+        connect(ui_->btnSoftTrigger, &QPushButton::clicked, this, &PageCamera::triggerRequested);
         connect(ui_->edtExposure, &QLineEdit::returnPressed, this, &PageCamera::applyExposure);
         connect(ui_->edtGain, &QLineEdit::returnPressed, this, &PageCamera::applyGain);
         connect(ui_->edtWidth, &QLineEdit::returnPressed, this, &PageCamera::applyWidth);
@@ -427,19 +441,15 @@ namespace pva
         ui_->edtOffsetY->setText(QString::number(snapshot_.offsetY));
         ui_->lblOffsetY->setText(QString("OffsetY(%1)").arg(snapshot_.offsetY));
     }
-    void PageCamera::refreshCameras() { QMetaObject::invokeMethod(&service_, "refreshCameras", Qt::QueuedConnection); }
-    void PageCamera::softwareTrigger() { QMetaObject::invokeMethod(&service_, "softwareTrigger", Qt::QueuedConnection); }
-    void PageCamera::selectCamera(int index) { QMetaObject::invokeMethod(&service_, "selectCamera", Qt::QueuedConnection, Q_ARG(QString, ui_->combCameraList->itemData(index).toString())); }
-    void PageCamera::toggleCamera(bool value) { QMetaObject::invokeMethod(&service_, "toggleCamera", Qt::QueuedConnection, Q_ARG(bool, value)); }
-    void PageCamera::toggleStream(bool value) { QMetaObject::invokeMethod(&service_, "toggleStream", Qt::QueuedConnection, Q_ARG(bool, value)); }
-    void PageCamera::applyExposure() { QMetaObject::invokeMethod(&service_, "applyExposure", Qt::QueuedConnection, Q_ARG(double, ui_->edtExposure->text().toDouble())); }
-    void PageCamera::applyGain() { QMetaObject::invokeMethod(&service_, "applyGain", Qt::QueuedConnection, Q_ARG(double, ui_->edtGain->text().toDouble())); }
-    void PageCamera::applyWidth() { QMetaObject::invokeMethod(&service_, "applyWidth", Qt::QueuedConnection, Q_ARG(double, ui_->edtWidth->text().toDouble())); }
-    void PageCamera::applyHeight() { QMetaObject::invokeMethod(&service_, "applyHeight", Qt::QueuedConnection, Q_ARG(double, ui_->edtHeight->text().toDouble())); }
-    void PageCamera::applyOffsetX() { QMetaObject::invokeMethod(&service_, "applyOffsetX", Qt::QueuedConnection, Q_ARG(double, ui_->edtOffsetX->text().toDouble())); }
-    void PageCamera::applyOffsetY() { QMetaObject::invokeMethod(&service_, "applyOffsetY", Qt::QueuedConnection, Q_ARG(double, ui_->edtOffsetY->text().toDouble())); }
-    void PageCamera::applyTriggerMode(int) { QMetaObject::invokeMethod(&service_, "applyTriggerMode", Qt::QueuedConnection, Q_ARG(int, ui_->combTrigMode->currentData().toInt())); }
-    void PageCamera::applyTriggerSource(int) { QMetaObject::invokeMethod(&service_, "applyTriggerSource", Qt::QueuedConnection, Q_ARG(int, ui_->combTrigSource->currentData().toInt())); }
-    void PageCamera::applyTriggerEdge(int) { QMetaObject::invokeMethod(&service_, "applyTriggerEdge", Qt::QueuedConnection, Q_ARG(int, ui_->combTrigEdge->currentData().toInt())); }
+    void PageCamera::selectCamera(int index) { emit cameraSelected(ui_->combCameraList->itemData(index).toString()); }
+    void PageCamera::applyExposure() { emit exposureRequested(ui_->edtExposure->text().toDouble()); }
+    void PageCamera::applyGain() { emit gainRequested(ui_->edtGain->text().toDouble()); }
+    void PageCamera::applyWidth() { emit widthRequested(ui_->edtWidth->text().toDouble()); }
+    void PageCamera::applyHeight() { emit heightRequested(ui_->edtHeight->text().toDouble()); }
+    void PageCamera::applyOffsetX() { emit offsetXRequested(ui_->edtOffsetX->text().toDouble()); }
+    void PageCamera::applyOffsetY() { emit offsetYRequested(ui_->edtOffsetY->text().toDouble()); }
+    void PageCamera::applyTriggerMode(int) { emit triggerModeRequested(ui_->combTrigMode->currentData().toInt()); }
+    void PageCamera::applyTriggerSource(int) { emit triggerSourceRequested(ui_->combTrigSource->currentData().toInt()); }
+    void PageCamera::applyTriggerEdge(int) { emit triggerEdgeRequested(ui_->combTrigEdge->currentData().toInt()); }
 
 }

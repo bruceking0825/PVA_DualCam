@@ -20,7 +20,14 @@ namespace pva
     public:
         PageHome(MeasurementConfig config, RuntimeController &runtime, QWidget *parent = nullptr);
         ~PageHome() override;
-        void reloadConfig(const MeasurementConfig &config);
+    signals:
+        // 用户操作在 bindSignals 中排队交给运行线程。
+        void startRequested(bool online);
+        void stopRequested();
+        void modeChangeRequested(bool online);
+        void stageSelected(pva::MeasurementStage stage);
+        void imageSelected(int index);
+        void imageStepRequested(int delta);
     public slots:
         void onCameraExposure(const QString &userId, double exposureUs);
         void onCameraState(const pva::CameraSnapshot &snapshot);
@@ -33,7 +40,6 @@ namespace pva
         void nextImage();
         void lastImage();
         void showResult(const MeasurementResult &result);
-        void onSherlockCommand(const SherlockCommand &command);
         void renderLatest();
     private:
         void initializeState() override;

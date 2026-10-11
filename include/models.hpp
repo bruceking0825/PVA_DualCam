@@ -8,9 +8,17 @@
 #include <opencv2/core.hpp>
 #include <QMetaType>
 #include <QVariant>
+#include <QStringList>
 
 namespace pva
 {
+    // 相机角色是共用数据，不依赖设备服务或 SDK。
+    namespace CameraRole
+    {
+        inline const QString Cam1 = QStringLiteral("cam1");
+        inline const QString Cam2 = QStringLiteral("cam2");
+        inline const QStringList Stereo{Cam1, Cam2};
+    }
 
     enum class MeasurementStage : int
     {        Melt = 1,
@@ -93,3 +101,4 @@ namespace pva
 } // namespace pva
 
 Q_DECLARE_METATYPE(pva::MeasurementResult)
+Q_DECLARE_METATYPE(pva::MeasurementStage)

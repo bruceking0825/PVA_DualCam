@@ -2,6 +2,7 @@
 #include "offline_image_source.hpp"
 #include "image_storage.hpp"
 #include "dalsa_camera.hpp"
+#include "camera_service.hpp"
 #include <QCoreApplication>
 #include <QTemporaryDir>
 #include <QElapsedTimer>
@@ -32,17 +33,6 @@ int main(int argc, char **argv) {
     QTemporaryDir dir;
     if (!dir.isValid()) return 1;
     cv::Mat cam(400, 400, CV_8U, cv::Scalar(20));
-    pva::CameraManager cameraDelivery;
-    cameraDelivery.reset(pva::CameraRole::Stereo);
-    int delivered = 0;
-    QObject::connect(&cameraDelivery, &pva::CameraManager::frameReady, &app,
-                     [&](const QString &, const cv::Mat &, qint64) { ++delivered; });
-    cameraDelivery.get(pva::CameraRole::Cam1)->frameReady(pva::CameraRole::Cam1, cam, 1);
-    cameraDelivery.closeAll();
-    QCoreApplication::processEvents();
-    check(delivered == 0, "Camera close invalidates already queued SDK frames");
-    cameraDelivery.get(pva::CameraRole::Cam1)->frameReady(pva::CameraRole::Cam1, cam, 2);
-    check(until([&] { return delivered == 1; }), "New camera epoch accepts new frames");
     cv::ellipse(cam, {250, 200}, {40, 80}, 0, 0, 360, cv::Scalar(220), 5);
     cv::Mat composite; cv::vconcat(cam, cam, composite);
     const auto path = dir.filePath("pair.bmp");
@@ -70,7 +60,7 @@ int main(int argc, char **argv) {
     QList<QByteArray> replies;
     QObject::connect(&runtime, &pva::RuntimeController::stateChanged, &app, [&](const auto &s) { snapshot = s; });
     QObject::connect(&runtime, &pva::RuntimeController::resultReady, &app, [&](const auto &r) { ++results; last = r; });
-    QObject::connect(&runtime, &pva::RuntimeController::payloadReady, &app, [&](const auto &r) { replies.append(r); });
+    QObject::connect(&runtime.plcSession(), &pva::PlcSession::payloadReady, &app, [&](const auto &r) { replies.append(r); });
     runtime.initialize();
     runtime.selectStage(pva::MeasurementStage::Neck);
     runtime.stepImage(1);

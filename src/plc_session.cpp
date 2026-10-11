@@ -1,6 +1,5 @@
 #include "plc_session.hpp"
 #include "measurement_payload.hpp"
-#include "camera_manager.hpp"
 #include <algorithm>
 namespace pva
 {

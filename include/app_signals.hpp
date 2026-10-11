@@ -1,5 +1,4 @@
 #pragma once
-#include "camera_manager.hpp"
 #include <QObject>
 #include <opencv2/core.hpp>
 

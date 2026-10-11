@@ -32,6 +32,8 @@ Qt、OpenCV、编译器和 Sapera 必须采用一致的 x86/x64 架构。在线�
 
 详细职责、线程边界、兼容约束与后续扩展入口见 [架构说明](docs/cpp_architecture.md)。
 
+查找功能时，从页面的 `bindEvents` 找到按钮处理函数，再在 `bindSignals` 查看具名业务连接。架构说明列出 Run、切图、PLC 测量和相机调试的具体函数路径。相机服务直接持有设备；PLC 曝光直接连接相机服务。
+
 ## 协议与功能边界
 
 程序作为 Sherlock 兼容 TCP 服务端：5000 接收命令，5001 返回结果。保留既有帧编码、字段顺序、倍率、错误格式和 90 字节报文兼容处理。
@@ -43,6 +45,8 @@ Neck 直径由 Cam1 决定；Cam2 提供参考结果。保留 Crown/Body、Endco
 ## 验证
 
 `runtime_tests` 不创建 QWidget，覆盖离线测量、模拟在线配对、过期结果、参数覆盖、PLC 超时、Facette 交错、存储队列及停止恢复。`service_lifecycle_tests` 验证无页面的应用装配和退出。其余测试覆盖算法、协议和 Facette 显示。
+
+`page_command_tests` 通过真实按钮验证页面到后台线程的连接；`connection_health_tests` 验证相机回调批次隔离和连接状态。当前 Debug/Release 均通过 11 项测试，环境与未验证项见 [验证记录](docs/cpp_refactor_validation.md)。
 
 Release 连续运行测试（依赖 DLL 同样需要在 PATH 中）：
 
