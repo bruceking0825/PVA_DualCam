@@ -33,6 +33,9 @@ int main()
     check(SherlockProtocol::scaledPayload("dia", {1.25, 2.5, 3.75}) ==
               QByteArray("dia=125;250;375"),
           "Ordered measurement values receive PLC x100 scaling");
+    check(SherlockProtocol::scaledPayload("dia", {5, 5, 120, 130, 12.345, 200, 2, 45.678, 210, 3, 200, 190, 230, 200}) ==
+              QByteArray("dia=500;500;12000;13000;1235;20000;200;4568;21000;300;20000;19000;23000;20000"),
+          "Fourteen diameter fields preserve order and round rectangle statistics with x100 scaling");
 
     const auto roiCommand = SherlockProtocol::parseCommand(
         "dia_crd=100;200;300;400;500;600;700;800\r\n", &error);

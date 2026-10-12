@@ -32,7 +32,8 @@ int main(int argc, char **argv) {
     QTemporaryDir directory;
     if (!directory.isValid()) return 1;
     pva::MeasurementConfig config;
-    config.runtime.stateFile = directory.filePath("measurement_state.json");
+   config.runtime.stateFile = directory.filePath("measurement_state.json");
+    config.runtime.measurementImageDir = directory.filePath("measurement_images");
     config.runtime.offlineImageDir = directory.path();
     config.runtime.facetteImageDir = directory.filePath("facettes");
     config.measurement.autoExposureRoiCamera1 = {0, 0, 4, 4};

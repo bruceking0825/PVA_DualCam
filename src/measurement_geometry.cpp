@@ -1,5 +1,6 @@
 #include "measurement_geometry.hpp"
 #include <algorithm>
+#include <cmath>
 namespace {
     std::optional<pva::GrayStats> imageStats(const cv::Mat &image, cv::Rect roi)
     {
@@ -15,6 +16,21 @@ namespace {
     }
 }
 namespace pva {
+    cv::Rect diameterRoiRect(const std::array<double, 8> &v, double height, int camera, cv::Size size)
+    {
+        if (size.empty() || !std::isfinite(height) || height <= 0 ||
+            !std::all_of(v.begin(), v.end(), [](double value) { return std::isfinite(value); }) ||
+            v[4] < 0 || v[5] <= v[4]) return {};
+        const double cx = v[0] + (camera == 2 ? v[6] : 0.0);
+        const double cy = v[1] + (camera == 2 ? v[7] : 0.0);
+        // Clamp before conversion to avoid overflow for off-image PLC coordinates.
+        const int left = cvRound(std::clamp(cx - v[5], 0.0, double(size.width)));
+        const int right = cvRound(std::clamp(cx - v[4], 0.0, double(size.width)));
+        const int top = cvRound(std::clamp(cy - height / 2.0, 0.0, double(size.height)));
+        const int bottom = cvRound(std::clamp(cy + height / 2.0, 0.0, double(size.height)));
+        if (right <= left || bottom <= top) return {};
+        return {left, top, right - left, bottom - top};
+    }
     cv::Rect meltRoiRect(const std::array<double, 6> &v, int camera, cv::Size size)
     {
         const double cx = v[0] + (camera == 2 ? v[4] : 0.0);

@@ -239,7 +239,7 @@ namespace pva
         if (result.preview1.empty() || result.preview2.empty())
         {
             result.message = "Camera image is empty";
-            result.diagnostics["cycle_ms"] = 0.0;
+            result.diagnostics["processing_time_ms"] = 0.0;
             return result;
         }
         addRoiOverlay(config_.measurement.reflectorRoiCamera1, result.preview1.size(), result.overlay1);
@@ -255,7 +255,7 @@ namespace pva
         {
             result.message = "Brightness is outside configured limits";
             result.values = state_.values;
-            result.diagnostics["cycle_ms"] = std::chrono::duration<double, std::milli>(
+            result.diagnostics["processing_time_ms"] = std::chrono::duration<double, std::milli>(
                                                  std::chrono::steady_clock::now() - started)
                                                  .count();
             return result;
@@ -265,10 +265,30 @@ namespace pva
         {
             const double previousDiameter = state_.values.diameterMm.value_or(0.0);
             result.data.hasDiameter = true;
-            result.data.cameras[0] = {previousDiameter, 0.0, cv::mean(result.preview1)[0], light1, minimum1,
+            result.data.cameras[0] = {previousDiameter, 0.0, 0.0, 0.0, 0.0,
                                       {result.preview1.cols * 0.5, result.preview1.rows * 0.5}};
-            result.data.cameras[1] = {previousDiameter, 0.0, cv::mean(result.preview2)[0], light2, minimum2,
+            result.data.cameras[1] = {previousDiameter, 0.0, 0.0, 0.0, 0.0,
                                       {result.preview2.cols * 0.5, result.preview2.rows * 0.5}};
+            for (int camera = 0; camera < 2; ++camera) {
+                const auto &image = camera == 0 ? result.preview1 : result.preview2;
+                auto &data = result.data.cameras[camera];
+                int pixelCount = 0;
+                if (rois_.diameter) {
+                    const auto roi = diameterRoiRect(*rois_.diameter, config_.measurement.diaRectHeightPx,
+                                                     camera + 1, image.size());
+                    pixelCount = roi.area();
+                    if (pixelCount > 0) {
+                        const auto pixels = image(roi);
+                        data.average = cv::mean(pixels)[0];
+                        cv::minMaxLoc(pixels, &data.minimum, &data.maximum);
+                    }
+                }
+                const std::string suffix = "_camera" + std::to_string(camera + 1);
+                result.diagnostics["diameter_roi_mean" + suffix] = data.average;
+                result.diagnostics["diameter_roi_maximum" + suffix] = data.maximum;
+                result.diagnostics["diameter_roi_minimum" + suffix] = data.minimum;
+                result.diagnostics["diameter_roi_pixel_count" + suffix] = pixelCount;
+            }
         }
         std::pair<bool, std::string> outcome;
         if (stage == MeasurementStage::Melt)
@@ -288,7 +308,7 @@ namespace pva
         if (!result.valid)
             result.data = {};
         result.values = state_.values;
-        result.diagnostics["cycle_ms"] = std::chrono::duration<double, std::milli>(
+        result.diagnostics["processing_time_ms"] = std::chrono::duration<double, std::milli>(
                                              std::chrono::steady_clock::now() - started)
                                              .count();
         return result;

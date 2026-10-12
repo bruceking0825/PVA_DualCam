@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -80,6 +81,7 @@ namespace pva
     {
         quint64 runId{}, requestId{}, configurationVersion{};
         MeasurementSource source{MeasurementSource::Offline};
+        std::optional<std::chrono::steady_clock::time_point> triggerStarted;
     };
 
     struct MeasurementResult

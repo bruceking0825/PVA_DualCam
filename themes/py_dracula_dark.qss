@@ -571,19 +571,19 @@ Button */
 #PageHome #rightPanel QPushButton {
 	min-height: 28px;
 }
+#PageHome #rightPanel QPushButton#btnStageMelt:checked,
+#PageHome #rightPanel QPushButton#btnStageDip:checked,
 #PageHome #rightPanel QPushButton#btnStageNeck:checked,
 #PageHome #rightPanel QPushButton#btnStageCrown:checked,
-#PageHome #rightPanel QPushButton#btnStageBody:checked,
-#PageHome #rightPanel QPushButton#btnStageEndcone:checked {
+#PageHome #rightPanel QPushButton#btnStageBody:checked {
 	background-color: rgb(54, 138, 90);
 	border-color: rgb(78, 170, 112);
 }
-#PageHome #rightPanel QPushButton#btnStageIdle:checked,
+#PageHome #rightPanel QPushButton#btnStageMelt:checked:disabled,
+#PageHome #rightPanel QPushButton#btnStageDip:checked:disabled,
 #PageHome #rightPanel QPushButton#btnStageNeck:checked:disabled,
 #PageHome #rightPanel QPushButton#btnStageCrown:checked:disabled,
 #PageHome #rightPanel QPushButton#btnStageBody:checked:disabled,
-#PageHome #rightPanel QPushButton#btnStageEndcone:checked:disabled,
-#PageHome #rightPanel QPushButton#btnStageIdle:checked:disabled,
 #PageHome #rightPanel QPushButton#btnOnline:checked {
 	background-color: rgb(54, 138, 90);
 	border-color: rgb(78, 170, 112);

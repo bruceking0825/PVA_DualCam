@@ -529,6 +529,16 @@ Button */
 	border: 2px solid #ff79c6;
 }
 
+#PageHome #rightPanel QPushButton#btnStageMelt:checked,
+#PageHome #rightPanel QPushButton#btnStageDip:checked,
+#PageHome #rightPanel QPushButton#btnStageNeck:checked,
+#PageHome #rightPanel QPushButton#btnStageCrown:checked,
+#PageHome #rightPanel QPushButton#btnStageBody:checked {
+	background-color: rgb(54, 138, 90);
+	border-color: rgb(78, 170, 112);
+	color: white;
+}
+
 #PageHome #rightPanel QPushButton#btnStart[runtimeState="running"],
 #PageHome #rightPanel QPushButton#btnStart[runtimeState="running"]:disabled {
 	background-color: rgb(54, 138, 90);

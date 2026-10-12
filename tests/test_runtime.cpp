@@ -47,7 +47,8 @@ int main(int argc, char **argv) {
 
     pva::MeasurementConfig config;
     config.runtime.offlineImageDir = dir.path();
-    config.runtime.stateFile = dir.filePath("measurement_state.json");
+   config.runtime.stateFile = dir.filePath("measurement_state.json");
+    config.runtime.measurementImageDir = dir.filePath("measurement_images");
     config.runtime.facetteImageDir = dir.filePath("facettes");
     config.runtime.loopIntervalMs = 50;
     config.measurement.brightnessMin = 1;
@@ -70,6 +71,12 @@ int main(int argc, char **argv) {
     runtime.startRuntime(false);
     check(until([&]{return results > 0;}), "Headless offline runtime produces results");
     check(last.valid, "Headless offline neck measurement is valid");
+    check(last.diagnostics.contains("processing_time_ms") &&
+          !last.diagnostics.contains("trigger_to_result_time_ms") && !last.task.triggerStarted,
+          "Offline measures processing time only");
+    check(until([&] { return QFile::exists(QDir(config.runtime.measurementImageDir).filePath("image1.bmp")) &&
+                            QFile::exists(QDir(config.runtime.measurementImageDir).filePath("image2.bmp")); }),
+          "Headless accepted results save both images without a page refresh");
     check(last.task.runId != 0 && last.task.requestId != 0 && last.task.configurationVersion != 0,
           "Measurement carries run, request and configuration identity");
     const auto originalVersion = last.task.configurationVersion;
@@ -91,16 +98,21 @@ int main(int argc, char **argv) {
     check(results == before, "Stopped runtime rejects queued results");
 
     // 模拟在线相机，不创建任何 QWidget，也不访问硬件或占用 PLC 端口。
+    config.runtime.continuousSaveEnabled = true;
+    config.runtime.continuousSaveDir = dir.filePath("online_history");
+    runtime.reloadConfig(config);
     runtime.selectStage(pva::MeasurementStage::Neck);
     QObject::connect(&runtime, &pva::RuntimeController::onlineCameraStartRequested, &app,
                      [&] { runtime.onOnlineCameraStarted(); });
     QObject::connect(&runtime, &pva::RuntimeController::onlineCameraStopRequested, &app,
                      [&](quint64 request) { runtime.onOnlineCameraStopped(request); });
+    bool blankFrames = false;
     QObject::connect(&runtime, &pva::RuntimeController::onlineCameraTriggerRequested, &app,
                      [&](quint64 generation) {
-        QTimer::singleShot(0, &app, [&, generation] {
-            runtime.onCameraFrame(pva::CameraRole::Cam2, cam, 1000000, generation);
-            runtime.onCameraFrame(pva::CameraRole::Cam1, cam, 1000001, generation);
+        const cv::Mat frame = blankFrames ? cv::Mat(cam.size(), CV_8U, cv::Scalar(0)) : cam;
+        QTimer::singleShot(30, &app, [&, generation, frame] {
+            runtime.onCameraFrame(pva::CameraRole::Cam2, frame, 1000000, generation);
+            runtime.onCameraFrame(pva::CameraRole::Cam1, frame, 1000001, generation);
         });
     });
     runtime.startRuntime(true);
@@ -116,6 +128,26 @@ int main(int argc, char **argv) {
     check(until([&] { for (const auto &r : replies) if (r.startsWith("dia=")) return true; return false; }),
           "Simulated online pair produces PLC diameter reply");
     check(until([&] { return facets == 1; }), "Interleaved Facette finishes independently of measurement");
+    check(last.task.triggerStarted && last.diagnostics.contains("trigger_to_result_time_ms") &&
+          last.diagnostics.at("trigger_to_result_time_ms").toDouble() >= 25.0 &&
+          last.diagnostics.at("trigger_to_result_time_ms").toDouble() >= last.diagnostics.at("processing_time_ms").toDouble(),
+          "Trigger-to-result time includes delayed capture and processing");
+    check(until([&] { return QDir(config.runtime.continuousSaveDir).entryList({"*.png"}, QDir::Files).size() == 1; }),
+          "Online PLC measurement also saves a combined PNG");
+    config.runtime.continuousSaveEnabled = false;
+    runtime.reloadConfig(config);
+    blankFrames = true;
+    const int beforeFailedMeasurement = results;
+    runtime.onSherlockCommand({"dia_msr", {}, "dia_msr"});
+    check(until([&] { return results > beforeFailedMeasurement; }) && !last.valid &&
+          last.diagnostics.contains("trigger_to_result_time_ms"), "Failed detection also reports trigger-to-result time");
+    const auto failedTrigger = last.task.triggerStarted;
+    blankFrames = false;
+    const int beforeNextMeasurement = results;
+    runtime.onSherlockCommand({"dia_msr", {}, "dia_msr"});
+    check(until([&] { return results > beforeNextMeasurement; }) && last.valid &&
+          last.task.triggerStarted && failedTrigger && *last.task.triggerStarted > *failedTrigger,
+          "Consecutive measurement starts its own trigger clock");
     runtime.onOnlineCaptureFailed(pva::CameraRole::Cam1, "simulated failure");
     check(snapshot.state == pva::RunState::Faulted, "Camera failure moves runtime to Faulted");
     runtime.startRuntime(false);
@@ -136,6 +168,33 @@ int main(int argc, char **argv) {
     check(session.busy() && payloads == 0, "Old generation cannot complete current PLC request");
     check(until([&] {return timeouts == 1;}), "PLC timeout releases pending request");
     check(!session.busy() && payloads == 1, "Timeout sends exactly one reply");
+    {
+        pva::MeasurementWorker timingWorker{pva::MeasurementEngine(config)};
+        std::optional<pva::MeasurementResult> measured;
+        QObject::connect(&timingWorker, &pva::MeasurementWorker::resultReady, &app,
+                         [&](const auto &result) { measured = result; });
+        pva::MeasurementTaskInfo task;
+        task.source = pva::MeasurementSource::Online;
+        task.triggerStarted = std::chrono::steady_clock::now();
+        timingWorker.submit(cam, cam, pva::MeasurementStage::Melt, 1, task);
+        QThread::msleep(40); // queued task waits before measurement thread starts
+        timingWorker.start();
+        check(until([&] { return measured.has_value(); }) &&
+              measured->diagnostics.at("trigger_to_result_time_ms").toDouble() >= 35.0,
+              "Trigger-to-result timing includes measurement queue wait");
+        measured.reset(); task.triggerStarted.reset();
+        timingWorker.submit(cam, cam, pva::MeasurementStage::Melt, 2, task);
+        check(until([&] { return measured.has_value(); }) &&
+              !measured->diagnostics.contains("trigger_to_result_time_ms"),
+              "Online task without trigger time reports no fabricated duration");
+        measured.reset(); task.source = pva::MeasurementSource::Offline;
+        task.triggerStarted = std::chrono::steady_clock::now();
+        timingWorker.submit(cam, cam, pva::MeasurementStage::Melt, 3, task);
+        check(until([&] { return measured.has_value(); }) &&
+              !measured->diagnostics.contains("trigger_to_result_time_ms"),
+              "Offline ignores stale optional trigger timestamp");
+        timingWorker.stop(); timingWorker.wait();
+    }
     pva::ImageStorage storage;
     int rejected = 0, savedImages = 0;
     QObject::connect(&storage, &pva::ImageStorage::failed, &app, [&](const QString &) { ++rejected; });
@@ -144,5 +203,56 @@ int main(int argc, char **argv) {
     check(rejected == 4, "Full storage queue explicitly rejects excess requests");
     storage.flush();
     check(savedImages == 16, "Accepted storage requests drain on shutdown");
+    {
+        auto historyConfig = config;
+        historyConfig.runtime.continuousSaveDir = dir.filePath("history");
+        historyConfig.runtime.measurementImageDir = dir.filePath("history_bmp");
+        historyConfig.runtime.stateFile = dir.filePath("history_state.json");
+        historyConfig.runtime.loopIntervalMs = 50;
+        pva::RuntimeController history(historyConfig, nullptr, false);
+        int historyResults = 0;
+        QObject::connect(&history, &pva::RuntimeController::resultReady, &app, [&](const auto &) { ++historyResults; });
+        const auto count = [&] { return QDir(historyConfig.runtime.continuousSaveDir).entryList({"*.png"}, QDir::Files).size(); };
+        history.initialize(); history.startRuntime(false);
+        check(until([&] { return historyResults > 0; }) && count() == 0, "Continuous save is off by default");
+        historyConfig.runtime.continuousSaveEnabled = true;
+        history.reloadConfig(historyConfig);
+        check(until([&] { return count() == 1; }), "Enabling continuous save immediately saves next result");
+        QElapsedTimer rate; rate.start();
+        until([&] { return rate.elapsed() >= 550; });
+        check(count() == 1, "Repeated results within one second do not create more PNGs");
+        check(until([&] { return count() >= 2; }), "Later result saves when interval has elapsed");
+        historyConfig.runtime.continuousSaveIntervalS = 60;
+        historyConfig.runtime.continuousSaveDir = dir.filePath("history_changed");
+        history.reloadConfig(historyConfig);
+        check(until([&] { return count() == 1; }), "Path and interval changes reset throttle for next result");
+        historyConfig.runtime.continuousSaveEnabled = false;
+        history.reloadConfig(historyConfig);
+        rate.restart(); until([&] { return rate.elapsed() >= 1100; });
+        check(count() == 1, "Disabling continuous save prevents further PNGs");
+        const auto invalidDirectory = dir.filePath("history_blocked");
+        QFile invalidFile(invalidDirectory);
+        check(invalidFile.open(QIODevice::WriteOnly), "Create failed history directory fixture");
+        invalidFile.close();
+        int historyErrors = 0;
+        QObject::connect(&history, &pva::RuntimeController::logReady, &app, [&](const QString &line, bool) {
+            if (line.contains("Cannot create continuous image directory")) ++historyErrors;
+        });
+        historyConfig.runtime.continuousSaveEnabled = true;
+        historyConfig.runtime.continuousSaveIntervalS = 1;
+        historyConfig.runtime.continuousSaveDir = invalidDirectory;
+        history.reloadConfig(historyConfig);
+        check(until([&] { return historyErrors == 1; }), "Failed continuous save records error");
+        rate.restart(); until([&] { return rate.elapsed() >= 550; });
+        check(historyErrors == 1, "Failed saves are also limited to configured interval");
+        check(until([&] { return historyErrors >= 2; }), "Failure retries on next result after interval");
+        history.stopRuntime();
+        historyConfig.runtime.continuousSaveEnabled = true;
+        historyConfig.runtime.continuousSaveDir = dir.filePath("history_stopped");
+        history.reloadConfig(historyConfig);
+        rate.restart(); until([&] { return rate.elapsed() >= 1100; });
+        check(count() == 0, "No new measurement means no repeated stale PNG");
+        history.shutdown();
+    }
     return failures ? 1 : 0;
 }

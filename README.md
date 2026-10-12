@@ -56,3 +56,34 @@ $env:QT_QPA_PLATFORM = "offscreen"
 ```
 
 测试仅使用临时合成图像和状态文件，报告 10 ms 界面定时器的延迟 P95、结果数及 Windows 工作集。它不能替代真实设备、真实图像和人工拖动/缩放/切页验收。验收记录见 [重构验证记录](docs/cpp_refactor_validation.md)。
+
+## 32 位 Release 打包
+
+先在 x86 MSVC 开发者终端构建最新代码：
+
+~~~powershell
+cmake --build build-win32-release --target pva_dualcam_cpp
+~~~
+
+双击根目录 package_win32.cmd，或执行：
+
+~~~powershell
+.\package_win32.cmd -NoPause
+# 只检查输入，不复制文件
+.\package_win32.cmd -ValidateOnly -NoPause
+# 指定其他已编译的 32 位 Release 目录
+.\package_win32.cmd -BuildDirectory E:\path\to\release -NoPause
+~~~
+
+输出为 dist/PVA_DualCam_x86_时间戳_随机后缀/，包含 EXE、Qt 插件、OpenCV DLL、配置和主题。脚本读取 CMake 缓存中的依赖路径，并检查 EXE 和 DLL 均为 x86；不会重新编译，不复制现有测量状态和生产图片。包内已包含 x86 Visual C++ 运行库，并提供 start.cmd 固定启动目录；Windows 10/11 无需另装 VC 运行库。在线相机需安装对应架构的 Sapera 运行库和采集卡驱动。部署前检查 cnf.ini 中的路径和相机配置。
+
+
+### 一键编译并打包
+
+双击根目录 build_package_win32.cmd，自动初始化 x86 MSVC 14.29、配置 Release、编译最新主程序，然后调用打包脚本。任一步失败即停止；成功时显示 dist 下的新部署目录。脚本中的 Qt/OpenCV/Sapera 路径与本机 Win32 构建配置一致。
+
+~~~powershell
+.\build_package_win32.cmd -NoPause
+~~~
+
+生产主机复制整个输出目录，运行 start.cmd。仍需已安装匹配的 Sapera 运行库和采集卡驱动，并检查 cnf.ini 路径。

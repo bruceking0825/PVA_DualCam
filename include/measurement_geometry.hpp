@@ -11,6 +11,7 @@ namespace pva
     };
 
     struct GrayStats { double average{}, maximum{}, minimum{}; };
+    cv::Rect diameterRoiRect(const std::array<double, 8> &values, double height, int camera, cv::Size size);
     cv::Rect meltRoiRect(const std::array<double, 6> &values, int camera, cv::Size size);
     cv::Rect effectiveAutoExposureRoi(const MeasurementRois &rois, int camera,
                                      cv::Rect fallback, cv::Size size, bool *fromPlc = nullptr);

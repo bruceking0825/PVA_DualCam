@@ -29,7 +29,8 @@ int main(int argc, char **argv)
     cv::imwrite(QFile::encodeName(directory.filePath("pair.bmp")).constData(), pair);
     pva::MeasurementConfig config;
     config.runtime.offlineImageDir = directory.path();
-    config.runtime.stateFile = directory.filePath("state.json");
+   config.runtime.stateFile = directory.filePath("state.json");
+    config.runtime.measurementImageDir = directory.filePath("measurement_images");
     config.runtime.facetteImageDir = directory.filePath("facettes");
     config.runtime.loopIntervalMs = 50;
     config.measurement.reflectorRoiCamera1 = config.measurement.reflectorRoiCamera2 = {0,0,1024,1024};

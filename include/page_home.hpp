@@ -51,7 +51,6 @@ namespace pva
         void applyStageToUi();
         void updateProcessDiagnostics(const MeasurementResult &result);
         void setConnectionLed(QLabel *label, bool connected);
-        void addAutoExposureRoi(std::vector<OverlayElement> &elements, const cv::Rect &roi, const cv::Size &size, bool fromPlc) const;
         static std::optional<double> roiMean(const cv::Mat &image, const cv::Rect &roi);
         void updateViewInfo(int viewId);
         void paintResult(const MeasurementResult &result);
@@ -64,6 +63,7 @@ namespace pva
         std::optional<MeasurementResult> displayedResult_;
         bool frameDirty_{false};
         bool diagnosticDirty_{false};
+        bool overlayDirty_{false};
         std::array<cv::Mat, 4> facetteImages_;
         std::array<bool, 4> facetteDirty_{};
         QHash<QString, QTreeWidgetItem *> diagnosticItems_;

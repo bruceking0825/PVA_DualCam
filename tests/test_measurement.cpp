@@ -35,6 +35,26 @@ namespace
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
+    {
+        std::array<double, 8> coordinates{8, 5, 0, 90, 1, 3, 2, -1};
+        check(pva::diameterRoiRect(coordinates, 4, 1, {12, 12}) == cv::Rect(5, 3, 2, 4),
+              "Diameter rectangle follows PLC radius and configured height");
+        check(pva::diameterRoiRect(coordinates, 4, 2, {12, 12}) == cv::Rect(7, 2, 2, 4),
+              "Camera 2 rectangle applies both offsets");
+        coordinates = {8.2, 5.2, 270, 90, 1.1, 3.6, 0, 0};
+        check(pva::diameterRoiRect(coordinates, 3, 1, {12, 12}) == cv::Rect(5, 4, 2, 3),
+              "Diameter rectangle rounds all four edges independently");
+        coordinates = {2, 1, 0, 0, 0, 5, 50, 50};
+        check(pva::diameterRoiRect(coordinates, 4, 1, {12, 12}) == cv::Rect(0, 0, 2, 3) &&
+              pva::diameterRoiRect(coordinates, 4, 2, {12, 12}).empty(),
+              "Rectangle clips to image and ignores sector angles");
+        coordinates = {8, 5, 0, 90, 1.01, 1.02, 0, 0};
+        check(pva::diameterRoiRect(coordinates, 4, 1, {12, 12}).empty(),
+              "Rounded zero-width rectangle has no statistical area");
+        coordinates[0] = std::numeric_limits<double>::max();
+        check(pva::diameterRoiRect(coordinates, 4, 1, {12, 12}).empty(),
+              "Huge off-image coordinates safely produce an empty rectangle");
+    }
     const QString cnf = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QStringLiteral("../src/cnf.ini");
     try
     {
@@ -189,6 +209,20 @@ int main(int argc, char **argv)
               "Invalid persisted stage is rejected");
 
         QTemporaryDir logDir;
+        QTemporaryDir bufferedLogDir;
+        pva::DailyLog bufferedLog;
+        bufferedLog.setDirectory(bufferedLogDir.path());
+        const QDateTime bufferedTime(QDate(2026, 10, 1), QTime(9, 0, 0));
+        for (int i = 0; i < 10; ++i) bufferedLog.enqueue(bufferedTime, "buffered");
+        check(!QFile::exists(bufferedLogDir.filePath("2026-10-01.log")),
+              "Queued log does not write before flush");
+        check(bufferedLog.flush() && !bufferedLog.pending(), "Buffered log flushes");
+        bufferedLog.enqueue(bufferedTime.addSecs(3), "buffered");
+        check(bufferedLog.flush(), "Repeated log merges across flushes");
+        QFile bufferedFile(bufferedLogDir.filePath("2026-10-01.log"));
+        check(bufferedFile.open(QIODevice::ReadOnly) &&
+                  bufferedFile.readAll() == "09:00:03 buffered x 11\n",
+              "Buffered repetitions update a single record");
         pva::DailyLog dailyLog;
         dailyLog.setDirectory(logDir.path());
         const QDateTime firstTime(QDate(2026, 10, 1), QTime(10, 0, 0));
@@ -224,10 +258,19 @@ int main(int argc, char **argv)
         check(QDir::isAbsolutePath(parsed.runtime.facetteImageDir) &&
                   parsed.runtime.facetteImageDir.contains("FACETTES", Qt::CaseInsensitive),
               "Facette output directory loaded from cnf");
+        check(QDir::isAbsolutePath(parsed.runtime.measurementImageDir),
+              "Measurement image output directory loaded from cnf");
         check(QDir(parsed.runtime.offlineImageDir).exists(), "Configured offline directory exists");
 
         pva::ConfigEntryUpdate update;
         QString configError;
+        const pva::RuntimeSettings defaults;
+        check(!defaults.continuousSaveEnabled && defaults.continuousSaveIntervalS == 1 &&
+                  defaults.continuousSaveOverlay && QDir::isAbsolutePath(parsed.runtime.continuousSaveDir),
+              "Continuous saving defaults and configured directory are valid");
+        check(pva::applyConfigEntry(parsed, cnf, "Runtime", "continuous_save_interval_s", "0", &update, &configError) &&
+                  update.recognized && parsed.runtime.continuousSaveIntervalS == 1,
+              "Continuous save interval is clamped to one second");
         check(pva::applyConfigEntry(parsed, cnf, "Camera", "auto_exposure_target", "999",
                                     &update, &configError) &&
                   update.recognized && update.changed && parsed.camera.autoExposureTarget == 254,
@@ -309,7 +352,7 @@ int main(int argc, char **argv)
                 check(result.preview1.cols == composite.cols && result.preview2.cols == composite.cols &&
                           result.preview1.rows == middle && result.preview2.rows == middle,
                       "Offline stereo pair submitted to measurement engine");
-                check(result.diagnostics.contains("cycle_ms"),
+                check(result.diagnostics.contains("processing_time_ms"),
                       "Real offline frame produces Cycle diagnostics");
                 check(result.diagnostics.contains("light_camera1") && result.diagnostics.contains("light_camera2"),
                       "Real offline frame produces Process diagnostics");
@@ -393,7 +436,7 @@ int main(int argc, char **argv)
     check(neckResult.values.diameterMm && std::abs(*neckResult.values.diameterMm - 16.0) < 2.0, "Neck diameter keeps pixels-per-mm calculation");
     check(neckResult.overlay1.size() >= 5 && neckResult.overlay2.size() == 1,
           "Neck overlays Camera 1 detection and only the Camera 2 manual ROI");
-    check(neckResult.diagnostics.contains("cycle_ms") && neckResult.diagnostics.at("cycle_ms").toDouble() >= 0.0,
+    check(neckResult.diagnostics.contains("processing_time_ms") && neckResult.diagnostics.at("processing_time_ms").toDouble() >= 0.0,
           "Cycle diagnostic populated");
     check(neckResult.diagnostics.contains("neck_major_axis_camera1_px"),
           "Neck process diagnostics populated");
@@ -408,12 +451,12 @@ int main(int argc, char **argv)
               pva::measurementPayloadValues(neckResult)[0] ==
                   neckResult.diagnostics.at("neck_major_axis_camera1_px").toDouble() &&
               pva::measurementPayloadValues(neckResult)[1] == pva::measurementPayloadValues(neckResult)[0] &&
-              pva::measurementPayloadValues(neckResult)[4] == cv::mean(neck)[0] &&
-              pva::measurementPayloadValues(neckResult)[5] == 220.0 &&
+              pva::measurementPayloadValues(neckResult)[4] == 0.0 &&
+              pva::measurementPayloadValues(neckResult)[5] == 0.0 &&
               pva::measurementPayloadValues(neckResult)[6] == 0.0 &&
-              pva::measurementPayloadValues(neckResult)[7] == 100.0 &&
-              pva::measurementPayloadValues(neckResult)[8] == 100.0 &&
-              pva::measurementPayloadValues(neckResult)[9] == 100.0 &&
+              pva::measurementPayloadValues(neckResult)[7] == 0.0 &&
+              pva::measurementPayloadValues(neckResult)[8] == 0.0 &&
+              pva::measurementPayloadValues(neckResult)[9] == 0.0 &&
               pva::measurementPayloadValues(neckResult)[10] ==
                   neckResult.diagnostics.at("neck_center_x_camera1_px").toDouble() &&
               pva::measurementPayloadValues(neckResult)[11] ==
@@ -421,6 +464,43 @@ int main(int argc, char **argv)
               pva::measurementPayloadValues(neckResult)[12] == 200.0 &&
               pva::measurementPayloadValues(neckResult)[13] == 200.0,
           "Neck diameter payload uses Camera 1 left ellipse vertex");
+    pva::MeasurementRois diameterRois;
+    diameterRois.diameter = std::array<double, 8>{200, 190, 270, 90, 0, 80, 30, 10};
+    const auto verifyDiameterStats = [&](pva::MeasurementEngine &measurementEngine, const cv::Mat &a,
+                                       const cv::Mat &b, pva::MeasurementStage stage) {
+        measurementEngine.setMeasurementRois(diameterRois);
+        const auto result = measurementEngine.process(a, b, stage);
+        check(result.valid, "Rectangle statistics do not change successful fitting");
+        const auto values = pva::measurementPayloadValues(result);
+        check(values.size() == 14, "Rectangle statistics keep the 14-field diameter reply");
+        for (int camera = 0; camera < 2; ++camera) {
+            const auto &image = camera == 0 ? a : b;
+            const auto roi = pva::diameterRoiRect(*diameterRois.diameter, config.measurement.diaRectHeightPx,
+                                                   camera + 1, image.size());
+            const int count = roi.area();
+            double minimum = 0, maximum = 0;
+            const double average = count ? cv::mean(image(roi))[0] : 0;
+            if (count) cv::minMaxLoc(image(roi), &minimum, &maximum);
+            const int offset = camera == 0 ? 4 : 7;
+            check(values.size() == 14 && std::abs(values[offset] - average) < 1e-9 &&
+                  values[offset + 1] == maximum && values[offset + 2] == minimum,
+                  "PLC gray fields use only the selected rectangle");
+            check(result.diagnostics.at("diameter_roi_pixel_count_camera" + std::to_string(camera + 1)).toInt() == count,
+                  "Process rectangle pixel count matches the statistical area");
+        }
+        return result;
+    };
+    verifyDiameterStats(engine, neck, camera2WithoutMeniscus, pva::MeasurementStage::Neck);
+    cv::Mat rectangleSample = camera2WithoutMeniscus.clone();
+    const auto sampleRoi = pva::diameterRoiRect(*diameterRois.diameter, config.measurement.diaRectHeightPx,
+                                              2, rectangleSample.size());
+    rectangleSample(sampleRoi).setTo(10);
+    rectangleSample.at<uchar>(sampleRoi.y, sampleRoi.x) = 20;
+    rectangleSample.at<uchar>(sampleRoi.y, sampleRoi.x + 1) = 30;
+    const auto sampleResult = verifyDiameterStats(engine, neck, rectangleSample, pva::MeasurementStage::Neck);
+    check(std::abs(sampleResult.data.cameras[1].average - (10.0 + 30.0 / sampleRoi.area())) < 1e-9 &&
+          sampleResult.data.cameras[1].maximum == 30 && sampleResult.data.cameras[1].minimum == 10,
+          "Known rectangle statistics exclude the brighter pixels outside the PLC rectangle");
 
     // 构造带明显内凹缺口的 meniscus，确认拟合点集采用开放的外侧凸弧。
     cv::Mat concaveNeck = cv::Mat::zeros(400, 400, CV_8U);
@@ -540,6 +620,7 @@ int main(int argc, char **argv)
     pva::MeasurementEngine crownEngine(config, crownState);
     auto crownResult = crownEngine.process(meniscus, meniscus, pva::MeasurementStage::Crown);
     check(crownResult.valid, "Crown manual-ROI lower vertex valid");
+    verifyDiameterStats(crownEngine, meniscus, meniscus, pva::MeasurementStage::Crown);
     check(!crownResult.diagnostics.contains("neck_major_axis_camera1_px") &&
               !crownResult.diagnostics.contains("neck_major_axis_camera2_px") &&
               crownResult.values.diameterMm &&
@@ -640,6 +721,21 @@ int main(int argc, char **argv)
     pva::MeasurementEngine bodyEngine(config, crownState);
     auto bodyResult = bodyEngine.process(meniscus, meniscus, pva::MeasurementStage::Body);
     check(bodyResult.valid, "Body manual-ROI lower vertex valid");
+    if (argc > 2 && QString::fromLocal8Bit(argv[2]) == "--benchmark") {
+        bodyEngine.setMeasurementRois(diameterRois);
+        for (int i = 0; i < 5; ++i) bodyEngine.process(meniscus, meniscus, pva::MeasurementStage::Body);
+        double totalMs = 0;
+        for (int i = 0; i < 50; ++i)
+            totalMs += bodyEngine.process(meniscus, meniscus, pva::MeasurementStage::Body)
+                           .diagnostics.at("processing_time_ms").toDouble();
+        std::cout << "Body processing benchmark: " << meniscus.cols << 'x' << meniscus.rows
+                  << ", 50 results, mean " << totalMs / 50.0 << " ms\n";
+    }
+    verifyDiameterStats(bodyEngine, meniscus, meniscus, pva::MeasurementStage::Body);
+    diameterRois.diameter = std::array<double, 8>{200, 190, 0, 360, 0, 80, 10000, 10000};
+    const auto outsideRectangle = verifyDiameterStats(bodyEngine, meniscus, meniscus, pva::MeasurementStage::Body);
+    check(outsideRectangle.data.cameras[1].average == 0 && outsideRectangle.data.cameras[1].maximum == 0 &&
+          outsideRectangle.data.cameras[1].minimum == 0, "Empty Camera 2 rectangle fills three zeros without failing Body");
     check(pva::measurementPayloadValues(bodyResult).size() == 14 &&
               pva::measurementPayloadValues(bodyResult)[2] ==
                   bodyResult.diagnostics.at("body_boundary_camera1_px").toList()[0].toDouble() &&

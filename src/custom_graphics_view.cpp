@@ -1,4 +1,5 @@
 #include "custom_graphics_view.hpp"
+#include "overlay_render.hpp"
 #include <QGraphicsLineItem>
 #include <QGraphicsPathItem>
 #include <QMouseEvent>
@@ -33,7 +34,6 @@ namespace
         const auto format = rgb.channels() == 4 ? QImage::Format_RGBA8888 : QImage::Format_RGB888;
         return QPixmap::fromImage(QImage(rgb.data, rgb.cols, rgb.rows, static_cast<int>(rgb.step), format).copy());
     }
-    QColor color(const cv::Scalar &bgr) { return QColor(cvRound(bgr[2]), cvRound(bgr[1]), cvRound(bgr[0])); }
 }
 
 CustomGraphicsView::CustomGraphicsView(QWidget *parent) : QGraphicsView(parent), scene_(this)
@@ -96,23 +96,15 @@ void CustomGraphicsView::updateOverlays(const std::vector<pva::OverlayElement> &
             overlayItems_.push_back(new QGraphicsPathItem(overlayGroup_));
         auto *item = overlayItems_[used++];
         item->setVisible(true);
-        QPen pen(color(e.colorBgr));
-        pen.setStyle(e.dashed ? Qt::DashLine : Qt::SolidLine);
-        pen.setWidthF(e.width); pen.setCosmetic(true);
-        item->setPen(pen);
-        QPainterPath path;
+        item->setPen(pva::overlayPen(e));
         const bool cross = e.type == pva::OverlayType::Cross;
         item->setFlag(QGraphicsItem::ItemIgnoresTransformations, cross);
         if (cross) {
             item->setPos(e.points[0].x + .5, e.points[0].y + .5);
-            path.moveTo(-3, 0); path.lineTo(3, 0); path.moveTo(0, -3); path.lineTo(0, 3);
         } else {
             item->setPos(0, 0);
-            path.moveTo(e.points[0].x + .5, e.points[0].y + .5);
-            for (size_t i = 1; i < e.points.size(); ++i) path.lineTo(e.points[i].x + .5, e.points[i].y + .5);
-            if (e.closed) path.closeSubpath();
         }
-        item->setPath(path);
+        item->setPath(pva::overlayPath(e));
     }
     for (size_t i = used; i < overlayItems_.size(); ++i) overlayItems_[i]->hide();
 }
@@ -212,6 +204,7 @@ void CustomGraphicsView::wheelEvent(QWheelEvent *e)
         return;
     }
     suppressResizeFit_ = true;
+    zoomClock_.restart();
     scale(factor, factor);
     imageScale_ = transform().m11();
     QTimer::singleShot(0, this, [this]

@@ -8,12 +8,13 @@ namespace pva
 
     struct RuntimeSettings
     {
-        bool disableCameraForPlcTest{false};
-        int neckSampleIntervalMs{300};
-        int crownSampleIntervalMs{1000};
-        int bodySampleIntervalMs{1000};
         QString offlineImageDir{"../live_img"};
         QString facetteImageDir{"D:/data/EKZData/FACETTES"};
+        QString measurementImageDir{"D:/Data/Temp"};
+        bool continuousSaveEnabled{false};
+        int continuousSaveIntervalS{1};
+        bool continuousSaveOverlay{true};
+        QString continuousSaveDir{"D:/Data/Images"};
         int loopIntervalMs{500};
         QString stateFile{"measurement_state.json"};
         int stereoPairMaxDeltaMs{1000};

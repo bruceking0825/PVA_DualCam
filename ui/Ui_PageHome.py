@@ -369,6 +369,11 @@ class Ui_PageHome(object):
 
         self.resultsLayout.addWidget(self.lblCycle)
 
+        self.lblTriggerToResultTime = QLabel(self.tabResults)
+        self.lblTriggerToResultTime.setObjectName(u"lblTriggerToResultTime")
+
+        self.resultsLayout.addWidget(self.lblTriggerToResultTime)
+
         self.lblFrameDelta = QLabel(self.tabResults)
         self.lblFrameDelta.setObjectName(u"lblFrameDelta")
 
@@ -470,7 +475,8 @@ class Ui_PageHome(object):
         self.labelMeasurements.setText(QCoreApplication.translate("PageHome", u"Measurements", None))
         self.labelDiameter.setText(QCoreApplication.translate("PageHome", u"Diameter (mm)", None))
         self.lblDiameter.setText(QCoreApplication.translate("PageHome", u"--", None))
-        self.lblCycle.setText(QCoreApplication.translate("PageHome", u"Cycle: --", None))
+        self.lblCycle.setText(QCoreApplication.translate("PageHome", u"Processing time: --", None))
+        self.lblTriggerToResultTime.setText(QCoreApplication.translate("PageHome", u"Trigger to result time: --", None))
         self.lblFrameDelta.setText(QCoreApplication.translate("PageHome", u"Frame delta: --", None))
         self.lblLastFrame.setText(QCoreApplication.translate("PageHome", u"Last frame: --", None))
         self.detailsTabs.setTabText(self.detailsTabs.indexOf(self.tabResults), QCoreApplication.translate("PageHome", u"Results", None))

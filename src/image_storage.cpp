@@ -1,13 +1,17 @@
 #include "image_storage.hpp"
+#include "overlay_render.hpp"
 #include <QDir>
 #include <QCoreApplication>
 #include <QEvent>
 #include <QFile>
 #include <QRunnable>
 #include <QSaveFile>
+#include <QPainter>
+#include <QLockFile>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <stdexcept>
+#include <algorithm>
 
 namespace pva {
 namespace {
@@ -47,6 +51,86 @@ ImageStorage::~ImageStorage() { pool_.waitForDone(); }
 void ImageStorage::flush() { pool_.waitForDone(); QCoreApplication::sendPostedEvents(this, QEvent::MetaCall); }
 void ImageStorage::load(const QString &directory, int index) { submit(Operation::Load, directory, index); }
 void ImageStorage::save(const QString &directory, int index, const cv::Mat &image) { submit(Operation::Save, directory, index, image); }
+void ImageStorage::saveMeasurement(const MeasurementResult &result, const MeasurementConfig &config,
+                                   const MeasurementRois &rois)
+{
+    const QString directory = config.runtime.measurementImageDir;
+    if (pending_ >= 16) { emit failed(directory + ": measurement image storage rejected: queue full"); return; }
+    ++pending_;
+    auto snapshot = result;
+    if (!snapshot.preview1.empty() && !snapshot.preview1.u) snapshot.preview1 = snapshot.preview1.clone();
+    if (!snapshot.preview2.empty() && !snapshot.preview2.u) snapshot.preview2 = snapshot.preview2.clone();
+    pool_.start(QRunnable::create([this, snapshot, config, rois, directory] {
+        auto overlay1 = snapshot.overlay1, overlay2 = snapshot.overlay2;
+        appendDisplayRois(config, rois, snapshot.stage, snapshot.preview1.size(), snapshot.preview2.size(), overlay1, overlay2);
+        QStringList errors;
+        for (int camera = 1; camera <= 2; ++camera) {
+            const auto path = QDir(directory).filePath(QString("image%1.bmp").arg(camera));
+            try {
+                const auto image = renderOverlayImage(camera == 1 ? snapshot.preview1 : snapshot.preview2,
+                                                       camera == 1 ? overlay1 : overlay2);
+                if (image.isNull()) throw std::runtime_error("Measurement image is empty");
+                if (!QDir().mkpath(directory)) throw std::runtime_error("Cannot create measurement image directory");
+                QSaveFile file(path);
+                if (!file.open(QIODevice::WriteOnly)) throw std::runtime_error(file.errorString().toStdString());
+                if (!image.save(&file, "BMP")) throw std::runtime_error("BMP encoding/write failed");
+                if (!file.commit()) throw std::runtime_error(file.errorString().toStdString());
+            } catch (const std::exception &exception) {
+                errors.append(path + ": " + QString::fromUtf8(exception.what()));
+            }
+        }
+        QMetaObject::invokeMethod(this, [this, errors] {
+            --pending_;
+            for (const auto &error : errors) emit failed(error);
+        }, Qt::QueuedConnection);
+    }));
+}
+void ImageStorage::saveContinuous(const MeasurementResult &result, const MeasurementConfig &config,
+                                  const MeasurementRois &rois, const QDateTime &time)
+{
+    const QString directory = config.runtime.continuousSaveDir;
+    const QString path = QDir(directory).filePath(time.toString("yyyyMMdd_HHmmss") + ".png");
+    if (pending_ >= 16) { emit failed(path + ": continuous storage rejected: queue full"); return; }
+    ++pending_;
+    auto snapshot = result;
+    if (!snapshot.preview1.empty() && !snapshot.preview1.u) snapshot.preview1 = snapshot.preview1.clone();
+    if (!snapshot.preview2.empty() && !snapshot.preview2.u) snapshot.preview2 = snapshot.preview2.clone();
+    pool_.start(QRunnable::create([this, snapshot, config, rois, directory, path] {
+        QString error;
+        try {
+            if (snapshot.preview1.empty() || snapshot.preview2.empty())
+                throw std::runtime_error("Continuous image skipped: one or both camera images are empty");
+            if (QFile::exists(path)) throw std::runtime_error("Continuous image skipped: file already exists");
+            std::vector<OverlayElement> overlay1, overlay2;
+            if (config.runtime.continuousSaveOverlay) {
+                overlay1 = snapshot.overlay1; overlay2 = snapshot.overlay2;
+                appendDisplayRois(config, rois, snapshot.stage, snapshot.preview1.size(), snapshot.preview2.size(), overlay1, overlay2);
+            }
+            const auto first = renderOverlayImage(snapshot.preview1, overlay1);
+            const auto second = renderOverlayImage(snapshot.preview2, overlay2);
+            QImage combined(std::max(first.width(), second.width()), first.height() + second.height(), QImage::Format_RGB888);
+            if (combined.isNull()) throw std::runtime_error("Cannot allocate continuous image");
+            combined.fill(Qt::black);
+            QPainter painter(&combined);
+            painter.drawImage(0, 0, first);
+            painter.drawImage(0, first.height(), second);
+            painter.end();
+            if (!QDir().mkpath(directory)) throw std::runtime_error("Cannot create continuous image directory");
+            QLockFile lock(path + ".lock");
+            if (!lock.tryLock(0)) throw std::runtime_error("Continuous image skipped: file is being saved");
+            if (QFile::exists(path)) throw std::runtime_error("Continuous image skipped: file already exists");
+            QSaveFile file(path);
+            if (!file.open(QIODevice::WriteOnly)) throw std::runtime_error(file.errorString().toStdString());
+            if (!combined.save(&file, "PNG")) throw std::runtime_error("PNG encoding/write failed");
+            if (QFile::exists(path)) throw std::runtime_error("Continuous image skipped: file already exists");
+            if (!file.commit()) throw std::runtime_error(file.errorString().toStdString());
+        } catch (const std::exception &exception) { error = path + ": " + QString::fromUtf8(exception.what()); }
+        QMetaObject::invokeMethod(this, [this, error] {
+            --pending_;
+            if (!error.isEmpty()) emit failed(error);
+        }, Qt::QueuedConnection);
+    }));
+}
 void ImageStorage::captureOffline(const QString &directory, int index, const QString &sourcePath) {
     submit(Operation::Offline, directory, index, {}, sourcePath);
 }

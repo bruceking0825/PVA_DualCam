@@ -31,11 +31,11 @@ struct Fixture {
     QList<QByteArray> replies;
     QList<quint64> starts, stops;
     int triggers{};
-    Fixture(bool plcOnly = false) {
-        config.runtime.stateFile = directory.filePath("measurement_state.json");
+    Fixture() {
+       config.runtime.stateFile = directory.filePath("measurement_state.json");
+        config.runtime.measurementImageDir = directory.filePath("measurement_images");
         config.runtime.offlineImageDir = directory.path();
         config.runtime.facetteImageDir = directory.filePath("facettes");
-        config.runtime.disableCameraForPlcTest = plcOnly;
         pva::PlcRuntimeState saved; saved.acquisitionEnabled = false;
         pva::PlcRuntimeStore(directory.filePath("plc_runtime_state.json")).save(saved);
         runtime = std::make_unique<pva::RuntimeController>(config, nullptr, false);
@@ -157,14 +157,6 @@ int main(int argc, char **argv) {
         f.runtime->onOnlineCameraStopped(timedOutStop);
         check(f.replies.size() == countAfterTimeout && f.state.state == pva::RunState::Stopped,
               "Late stop completes cleanup without ok");
-    }
-    {
-        Fixture f(true);
-        f.command("acq_on_");
-        check(f.replies.back() == "acq_on_=ok" && f.starts.isEmpty() && f.state.online, "PLC test mode starts logically");
-        f.command("acq_off");
-        check(f.replies.back() == "acq_off=ok" && f.stops.isEmpty() && !f.state.online &&
-              f.state.state == pva::RunState::Stopped, "PLC test mode stops logically");
     }
     {
         Fixture f;

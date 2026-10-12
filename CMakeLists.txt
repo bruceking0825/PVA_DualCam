@@ -141,6 +141,8 @@ add_library(pva_runtime
     include/plc_session.hpp
     src/offline_image_source.cpp
     src/image_storage.cpp
+    src/overlay_render.cpp
+    include/overlay_render.hpp
     include/image_storage.hpp
     src/measurement_worker.cpp
     include/measurement_worker.hpp
@@ -149,7 +151,7 @@ add_library(pva_runtime
     src/plc_runtime.cpp
 )
 target_include_directories(pva_runtime PUBLIC include)
-target_link_libraries(pva_runtime PUBLIC pva_measurement pva_sherlock_protocol ${PVA_QT_PACKAGE}::Network)
+target_link_libraries(pva_runtime PUBLIC pva_measurement pva_sherlock_protocol ${PVA_QT_PACKAGE}::Network ${PVA_QT_PACKAGE}::Gui)
 
 add_library(pva_camera
     src/camera_service.cpp
@@ -269,6 +271,13 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME connection_health_tests COMMAND connection_health_tests)
     add_executable(pva_measurement_tests tests/test_measurement.cpp)
+    add_executable(image_storage_tests tests/test_image_storage.cpp)
+    target_link_libraries(image_storage_tests PRIVATE pva_runtime)
+    if(MSVC)
+        target_link_options(image_storage_tests PRIVATE /MANIFEST:NO /INCREMENTAL:NO)
+    endif()
+    add_test(NAME image_storage_tests COMMAND image_storage_tests)
+    set_tests_properties(image_storage_tests PROPERTIES TIMEOUT 30)
     target_link_libraries(pva_measurement_tests PRIVATE pva_runtime)
     if(MSVC)
         target_link_options(pva_measurement_tests PRIVATE /MANIFEST:NO /INCREMENTAL:NO)
@@ -340,7 +349,7 @@ if(BUILD_TESTING)
     add_test(NAME parameters_page_tests COMMAND parameters_page_tests)
     set_tests_properties(parameters_page_tests PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     if(WIN32)
-        set_tests_properties(pva_measurement_tests runtime_tests service_lifecycle_tests auto_exposure_tests state_save_tests acquisition_switch_tests connection_health_tests parameters_page_tests page_command_tests PROPERTIES
+        set_tests_properties(image_storage_tests pva_measurement_tests runtime_tests service_lifecycle_tests auto_exposure_tests state_save_tests acquisition_switch_tests connection_health_tests parameters_page_tests page_command_tests PROPERTIES
             ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:${PVA_QT_PACKAGE}::Core>;PATH=path_list_prepend:${OpenCV_DIR}/../bin")
         set_tests_properties(sherlock_protocol_tests PROPERTIES

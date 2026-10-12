@@ -110,6 +110,10 @@ namespace pva
                 }
                 auto candidate = engine_;
                 auto result = candidate.process(job->camera1, job->camera2, job->stage);
+                const auto completed = std::chrono::steady_clock::now();
+                if (job->task.source == MeasurementSource::Online && job->task.triggerStarted)
+                    result.diagnostics["trigger_to_result_time_ms"] =
+                        std::chrono::duration<double, std::milli>(completed - *job->task.triggerStarted).count();
                 result.generation = job->generation;
                 result.task = job->task;
                 {

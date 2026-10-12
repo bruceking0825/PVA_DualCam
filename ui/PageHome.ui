@@ -583,7 +583,14 @@
            <item>
             <widget class="QLabel" name="lblCycle">
              <property name="text">
-              <string>Cycle: --</string>
+              <string>Processing time: --</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="lblTriggerToResultTime">
+             <property name="text">
+              <string>Trigger to result time: --</string>
              </property>
             </widget>
            </item>

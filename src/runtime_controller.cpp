@@ -22,11 +22,7 @@ namespace pva
 
         bool runtimeSettingsEqual(const RuntimeSettings &left, const RuntimeSettings &right)
         {
-            return left.disableCameraForPlcTest == right.disableCameraForPlcTest &&
-                   left.neckSampleIntervalMs == right.neckSampleIntervalMs &&
-                   left.crownSampleIntervalMs == right.crownSampleIntervalMs &&
-                   left.bodySampleIntervalMs == right.bodySampleIntervalMs &&
-                   left.offlineImageDir == right.offlineImageDir &&
+            return left.offlineImageDir == right.offlineImageDir &&
                    left.loopIntervalMs == right.loopIntervalMs &&
                    left.stateFile == right.stateFile &&
                    left.stereoPairMaxDeltaMs == right.stereoPairMaxDeltaMs;
@@ -40,12 +36,23 @@ namespace pva
         : QObject(parent), baseConfig_(config), config_(std::move(config)), networkEnabled_(enableTcp)
     {
         images_ = new ImageStorage(this);
+        continuousImages_ = new ImageStorage(this);
+        connect(continuousImages_, &ImageStorage::failed, this, [this](const QString &message) { log(message); });
         connect(images_, &ImageStorage::ready, this, [this](const QString &directory, int index, const cv::Mat &image) {
             if (directory == config_.runtime.facetteImageDir) emit facetteReady(index, image);
         });
         connect(images_, &ImageStorage::saved, this, [this](const QString &path) { log("Facette saved to " + path); });
         connect(images_, &ImageStorage::failed, this, [this](const QString &message) { log(message); emit status(message, false); });
         offlineTimer_ = new QTimer(this);
+        logTimer_ = new QTimer(this);
+        logTimer_->setSingleShot(true);
+        logTimer_->setInterval(3000);
+        logTimer_->setTimerType(Qt::PreciseTimer);
+        connect(logTimer_, &QTimer::timeout, this, [this] {
+            QString error;
+            if (!dailyLog_.flush(&error)) emit status("Log write failed: " + error, false);
+            if (dailyLog_.pending()) logTimer_->start();
+        });
         plc_ = new PlcSession(this);
         acquisitionTimer_ = new QTimer(this);
         acquisitionTimer_->setSingleShot(true);
@@ -87,7 +94,7 @@ namespace pva
         });
     }
 
-    RuntimeController::~RuntimeController() { shutdown(); images_->flush(); }
+    RuntimeController::~RuntimeController() { shutdown(); }
 
     void RuntimeController::initialize()
     {
@@ -104,6 +111,11 @@ namespace pva
         if (!acquisitionCommand_.isEmpty()) failAcquisition("acquisition cancelled: application shutdown");
         stopRuntime();
         plc_->stop();
+        images_->flush();
+        continuousImages_->flush();
+        logTimer_->stop();
+        QString logError;
+        if (!dailyLog_.flush(&logError)) emit status("Log write failed: " + logError, false);
     }
 
     void RuntimeController::reloadConfig(const MeasurementConfig &config)
@@ -116,6 +128,10 @@ namespace pva
         const bool online = activeOnline_;
         const bool offlineDirectoryChanged = config_.runtime.offlineImageDir != config.runtime.offlineImageDir;
         const bool facetDirectoryChanged = config_.runtime.facetteImageDir != config.runtime.facetteImageDir;
+        if (config_.runtime.continuousSaveEnabled != config.runtime.continuousSaveEnabled ||
+            config_.runtime.continuousSaveIntervalS != config.runtime.continuousSaveIntervalS ||
+            config_.runtime.continuousSaveDir != config.runtime.continuousSaveDir)
+            continuousSaveClock_.invalidate();
         if (restart)
             stopRuntime();
         baseConfig_ = config;
@@ -204,39 +220,35 @@ namespace pva
             emit status(QString("No offline images found: %1").arg(config_.runtime.offlineImageDir), false);
             return;
         }
-        const bool plcOnly = online && config_.runtime.disableCameraForPlcTest;
-        if (!plcOnly)
-        {
-            QString stateWarning;
-            auto state = StateStore(config_.runtime.stateFile).load(&stateWarning);
-            if (!stateWarning.isEmpty())
-                log("State snapshot ignored: " + stateWarning);
-            worker_ = std::make_unique<MeasurementWorker>(MeasurementEngine(config_, state), config_.runtime.stateFile);
-            worker_->updateMeasurementRois(plc_->rois());
-            connect(worker_.get(), &MeasurementWorker::resultReady, this, &RuntimeController::acceptResult);
-            connect(worker_.get(), &MeasurementWorker::persistenceFailed, this, &RuntimeController::log);
-            connect(worker_.get(), &MeasurementWorker::failed, this, [this](quint64 generation, const QString &m)
+        QString stateWarning;
+        auto state = StateStore(config_.runtime.stateFile).load(&stateWarning);
+        if (!stateWarning.isEmpty())
+            log("State snapshot ignored: " + stateWarning);
+        worker_ = std::make_unique<MeasurementWorker>(MeasurementEngine(config_, state), config_.runtime.stateFile);
+        worker_->updateMeasurementRois(plc_->rois());
+        connect(worker_.get(), &MeasurementWorker::resultReady, this, &RuntimeController::acceptResult);
+        connect(worker_.get(), &MeasurementWorker::persistenceFailed, this, &RuntimeController::log);
+        connect(worker_.get(), &MeasurementWorker::failed, this, [this](quint64 generation, const QString &m)
+                {
+                    if (generation != generation_ || !running()) return;
+                    emit status(m, false);
+                    log(m);
+                    if (plc_->busy())
                     {
-                        if (generation != generation_ || !running()) return;
-                        emit status(m, false);
-                        log(m);
-                        if (plc_->busy())
-                        {
-                                                plc_->send("exe_err=Commn err");
-                            plc_->cancel();
-                        } });
-            worker_->start();
-        }
-        state_ = online && !plcOnly ? RunState::Starting : RunState::Running;
+                        plc_->send("exe_err=Commn err");
+                        plc_->cancel();
+                        triggerStarted_.reset();
+                    } });
+        worker_->start();
+        state_ = online ? RunState::Starting : RunState::Running;
 
 
         if (online)
         {
             emit onlineStageChanged(int(stage_));
             publishState();
-            if (!plcOnly)
-                emit onlineCameraStartRequested(runId_);
-            log(plcOnly ? "Runtime started: PLC test (cameras disabled)" : "Runtime started: online");
+            emit onlineCameraStartRequested(runId_);
+            log("Runtime started: online");
         }
         else
         {
@@ -245,8 +257,6 @@ namespace pva
             log("Runtime started: offline");
         }
         publishState();
-        if (online && plcOnly && acquisitionCommand_ == "acq_on_")
-            completeAcquisition(true);
     }
 
     void RuntimeController::stopRuntime()
@@ -257,8 +267,7 @@ namespace pva
         if (state_ == RunState::Stopped && !worker_ && acquisitionCommand_ != "acq_off")
             return;
         const bool wasOnline = activeOnline_;
-        const bool needsCameraStop = !config_.runtime.disableCameraForPlcTest &&
-                                     (wasOnline || acquisitionCommand_ == "acq_off");
+        const bool needsCameraStop = wasOnline || acquisitionCommand_ == "acq_off";
         state_ = RunState::Stopping;
         invalidateTasks();
         publishState();
@@ -312,6 +321,7 @@ namespace pva
 
     void RuntimeController::invalidateTasks()
     {
+        triggerStarted_.reset();
         ++generation_;
         { QMutexLocker lock(&displayMutex_); displayResult_.reset(); }
         if (worker_) worker_->invalidate(generation_);
@@ -380,6 +390,7 @@ namespace pva
             return;
         if (!activeOnline_) { submitOfflineFrame(); return; }
         onlineFrames_.clear();
+        triggerStarted_ = std::chrono::steady_clock::now();
         emit onlineCameraTriggerRequested(generation_);
     }
 
@@ -407,6 +418,7 @@ namespace pva
             {
                         plc_->send("exe_err=Acq fails");
                 plc_->cancel();
+                triggerStarted_.reset();
             }
             return;
         }
@@ -682,14 +694,26 @@ namespace pva
     MeasurementTaskInfo RuntimeController::taskInfo()
     {
         return {runId_, plc_->busy() ? currentRequestId_ : ++nextRequestId_, configVersion_,
-                activeOnline_ ? MeasurementSource::Online : MeasurementSource::Offline};
+                activeOnline_ ? MeasurementSource::Online : MeasurementSource::Offline,
+                activeOnline_ && plc_->busy() ? triggerStarted_ : std::nullopt};
     }
 
     void RuntimeController::acceptResult(const MeasurementResult &r)
     {
         if (!running() || r.generation != generation_ || r.stage != stage_ ||
             r.task.runId != runId_ || r.task.configurationVersion != configVersion_) return;
+        const auto imageConfig = config_;
+        const auto imageRois = plc_->rois();
+        const auto imageTime = QDateTime::currentDateTime();
+        triggerStarted_.reset();
         plc_->complete(r);
+        images_->saveMeasurement(r, imageConfig, imageRois);
+        if (imageConfig.runtime.continuousSaveEnabled &&
+            (!continuousSaveClock_.isValid() || continuousSaveClock_.elapsed() >=
+             qint64(std::max(1, imageConfig.runtime.continuousSaveIntervalS)) * 1000)) {
+            continuousSaveClock_.start();
+            continuousImages_->saveContinuous(r, imageConfig, imageRois, imageTime);
+        }
 
         { QMutexLocker lock(&displayMutex_); displayResult_ = r; }
         emit resultReady(r);
@@ -713,9 +737,9 @@ namespace pva
     void RuntimeController::log(const QString &message)
     {
         dailyLog_.setDirectory(QFileInfo(config_.runtime.stateFile).absoluteDir().filePath("Log"));
-        const auto entry = dailyLog_.append(QDateTime::currentDateTime(), message);
+        const auto entry = dailyLog_.enqueue(QDateTime::currentDateTime(), message);
         emit logReady(entry.line, entry.merged);
-        if (!entry.written) emit status("Log write failed: " + entry.error, false);
+        if (!logTimer_->isActive()) logTimer_->start();
     }
 
 

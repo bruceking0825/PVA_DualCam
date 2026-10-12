@@ -2,6 +2,7 @@
 #include "ui_PageHome.h"
 #include "app_signals.hpp"
 #include "camera_service.hpp"
+#include "overlay_render.hpp"
 #include <QTimer>
 #include <QButtonGroup>
 #include <QSignalBlocker>
@@ -36,6 +37,13 @@ namespace pva
         connect(ui_->btnPreviousImage, &QPushButton::clicked, this, &PageHome::previousImage);
         connect(ui_->btnNextImage, &QPushButton::clicked, this, &PageHome::nextImage);
         connect(ui_->btnLastImage, &QPushButton::clicked, this, &PageHome::lastImage);
+        connect(ui_->detailsTabs, &QTabWidget::currentChanged, this, [this] {
+            if (ui_->detailsTabs->currentWidget() == ui_->tabProcess) {
+                diagnosticDirty_ = true;
+                diagnosticClock_.invalidate();
+                renderLatest();
+            }
+        });
         connect(ui_->cam1GraphicsView, &CustomGraphicsView::pixelInfoChanged, this,
                 [this](int, int x, int y, int gray)
                 {
@@ -64,7 +72,8 @@ namespace pva
         connect(this, &PageHome::imageSelected, &runtime_, &RuntimeController::setImageIndex, Qt::QueuedConnection);
         connect(this, &PageHome::imageStepRequested, &runtime_, &RuntimeController::stepImage, Qt::QueuedConnection);
         connect(&runtime_, &RuntimeController::stateChanged, this, [this](const RuntimeSnapshot &s) {
-            const bool overlayChanged = snapshot_.stage != s.stage ||
+            const bool modeChanged = snapshot_.online != s.online;
+            const bool overlayChanged = modeChanged || snapshot_.stage != s.stage ||
                 snapshot_.rois.melt != s.rois.melt || snapshot_.rois.dip != s.rois.dip ||
                 snapshot_.rois.diameter != s.rois.diameter ||
                 snapshot_.config.measurement.autoExposureRoiCamera1 != s.config.measurement.autoExposureRoiCamera1 ||
@@ -72,7 +81,20 @@ namespace pva
                 snapshot_.config.measurement.diaRectHeightPx != s.config.measurement.diaRectHeightPx;
             snapshot_ = s;
             if (s.state != RunState::Running || (latestResult_ && latestResult_->generation != s.generation)) { latestResult_.reset(); frameDirty_ = false; }
-            if (overlayChanged && displayedResult_) paintResult(*displayedResult_);
+            if (overlayChanged && displayedResult_) {
+                if (ui_->cam1GraphicsView->isInteracting() || ui_->cam2GraphicsView->isInteracting())
+                    overlayDirty_ = true;
+                else paintResult(*displayedResult_);
+            }
+            if (modeChanged && displayedResult_) {
+                diagnosticDirty_ = true;
+                if (isVisible() && ui_->detailsTabs->currentWidget() == ui_->tabProcess &&
+                    !ui_->cam1GraphicsView->isInteracting() && !ui_->cam2GraphicsView->isInteracting()) {
+                    updateProcessDiagnostics(*displayedResult_);
+                    diagnosticDirty_ = false;
+                    diagnosticClock_.restart();
+                }
+            }
             updateViewInfo(1);
             updateViewInfo(2);
             QSignalBlocker blocker(ui_->btnOnline);
@@ -151,20 +173,26 @@ namespace pva
     {
         if (!isVisible()) return;
         CustomGraphicsView *views[] = {ui_->facetView1, ui_->facetView2, ui_->facetView3, ui_->facetView4};
-        for (int i = 0; i < 4; ++i) if (facetteDirty_[i]) {
+        for (int i = 0; i < 4; ++i) if (facetteDirty_[i] && !views[i]->isInteracting()) {
             if (facetteImages_[i].empty()) views[i]->setText(QString("Facette%1.bmp").arg(i+1));
             else views[i]->showImage(facetteImages_[i]);
             facetteDirty_[i] = false;
         }
         if (auto result = runtime_.takeLatestResult()) showResult(*result);
-        if (!latestResult_) return;
-        if (frameDirty_) {
+        const bool interacting = ui_->cam1GraphicsView->isInteracting() || ui_->cam2GraphicsView->isInteracting();
+        if (!interacting && frameDirty_ && latestResult_) {
             displayedResult_ = *latestResult_;
             paintResult(*latestResult_);
             frameDirty_ = false;
+            overlayDirty_ = false;
+        } else if (!interacting && overlayDirty_ && displayedResult_) {
+            paintResult(*displayedResult_);
+            overlayDirty_ = false;
         }
-        if (diagnosticDirty_ && (!diagnosticClock_.isValid() || diagnosticClock_.elapsed() >= 200)) {
-            updateProcessDiagnostics(*latestResult_);
+        if (!interacting && diagnosticDirty_ && ui_->detailsTabs->currentWidget() == ui_->tabProcess &&
+            (latestResult_ || displayedResult_) &&
+            (!diagnosticClock_.isValid() || diagnosticClock_.elapsed() >= 200)) {
+            updateProcessDiagnostics(latestResult_ ? *latestResult_ : *displayedResult_);
             diagnosticClock_.restart();
             diagnosticDirty_ = false;
         }
@@ -239,18 +267,6 @@ namespace pva
                                      : ":/images/images/images/ledHigh.png"));
     }
 
-    void PageHome::addAutoExposureRoi(std::vector<OverlayElement> &elements, const cv::Rect &roi, const cv::Size &size, bool fromPlc) const
-    {
-        const cv::Rect clipped = roi & cv::Rect(0, 0, size.width, size.height);
-        if (clipped.empty())
-            return;
-        elements.push_back({OverlayType::Polyline,
-                            {{double(clipped.x), double(clipped.y)}, {double(clipped.x + clipped.width), double(clipped.y)}, {double(clipped.x + clipped.width), double(clipped.y + clipped.height)}, {double(clipped.x), double(clipped.y + clipped.height)}},
-                            fromPlc ? cv::Scalar(0, 255, 0) : cv::Scalar(255, 0, 0),
-                            2,
-                            true});
-    }
-
     std::optional<double> PageHome::roiMean(const cv::Mat &image, const cv::Rect &roi)
     {
         const cv::Rect clipped = roi & cv::Rect(0, 0, image.cols, image.rows);
@@ -303,28 +319,28 @@ namespace pva
         if (snapshot_.stage == MeasurementStage::Melt || snapshot_.stage == MeasurementStage::Dip ||
             snapshot_.stage == MeasurementStage::Neck)
         {
-            bool fromPlc1 = false, fromPlc2 = false;
             const auto roi1 = effectiveAutoExposureRoi(snapshot_.rois, 1,
-                snapshot_.config.measurement.autoExposureRoiCamera1, r.preview1.size(), &fromPlc1);
+                snapshot_.config.measurement.autoExposureRoiCamera1, r.preview1.size());
             const auto roi2 = effectiveAutoExposureRoi(snapshot_.rois, 2,
-                snapshot_.config.measurement.autoExposureRoiCamera2, r.preview2.size(), &fromPlc2);
-            addAutoExposureRoi(overlay1, roi1, r.preview1.size(), fromPlc1);
-            addAutoExposureRoi(overlay2, roi2, r.preview2.size(), fromPlc2);
+                snapshot_.config.measurement.autoExposureRoiCamera2, r.preview2.size());
             viewInfo_[0].roiMean = roiMean(r.preview1, roi1);
             viewInfo_[1].roiMean = roiMean(r.preview2, roi2);
         }
-        if (snapshot_.stage != MeasurementStage::Melt)
-            appendPlcRoiOverlays(snapshot_.rois, snapshot_.stage, snapshot_.config.measurement.diaRectHeightPx,
-                             overlay1, overlay2);
+        appendDisplayRois(snapshot_.config, snapshot_.rois, snapshot_.stage,
+                          r.preview1.size(), r.preview2.size(), overlay1, overlay2);
         ui_->cam1GraphicsView->showImage(r.preview1, true);
         ui_->cam2GraphicsView->showImage(r.preview2, true);
         ui_->cam1GraphicsView->updateOverlays(overlay1);
         ui_->cam2GraphicsView->updateOverlays(overlay2);
         ui_->lblDiameter->setText(r.values.diameterMm ? QString::number(*r.values.diameterMm, 'f', 3) : "--");
-        const auto cycle = r.diagnostics.find("cycle_ms");
-        ui_->lblCycle->setText(cycle == r.diagnostics.end()
-                                   ? "Cycle: --"
-                                   : QString("Cycle: %1 ms").arg(cycle->second.toDouble(), 0, 'f', 1));
+        const auto processing = r.diagnostics.find("processing_time_ms");
+        const auto trigger = r.diagnostics.find("trigger_to_result_time_ms");
+        const QString processingText = processing == r.diagnostics.end() ? "--" :
+            QString::number(processing->second.toDouble(), 'f', 1) + " ms";
+        const QString triggerText = !snapshot_.online || r.task.source != MeasurementSource::Online || trigger == r.diagnostics.end() ? "--" :
+            QString::number(trigger->second.toDouble(), 'f', 1) + " ms";
+        ui_->lblCycle->setText("Processing time: " + processingText);
+        ui_->lblTriggerToResultTime->setText("Trigger to result time: " + triggerText);
         ui_->lblLastFrame->setText("Last frame: " + QDateTime::currentDateTime().toString("HH:mm:ss"));
         viewInfo_[0].light = r.diagnostics.contains("light_camera1") ? r.diagnostics.at("light_camera1").toDouble() : 0.0;
         viewInfo_[1].light = r.diagnostics.contains("light_camera2") ? r.diagnostics.at("light_camera2").toDouble() : 0.0;
@@ -386,6 +402,10 @@ namespace pva
         };
         const auto diagnosticLabel = [&result](const std::string &key, QString &unit)
         {
+            if (key == "processing_time_ms" || key == "trigger_to_result_time_ms") {
+                unit = "ms";
+                return QString(key == "processing_time_ms" ? "Processing time" : "Trigger to result time");
+            }
             QString normalized = QString::fromStdString(key);
             for (const auto &[suffix, suffixUnit] : {std::pair<QString, QString>{"_mm", "mm"},
                                                      {"_px", "px"},
@@ -435,12 +455,13 @@ namespace pva
         for (auto *item : diagnosticItems_) item->setHidden(true);
         for (const auto &[key, value] : result.diagnostics)
         {
+            if (key == "trigger_to_result_time_ms" && (!snapshot_.online || result.task.source != MeasurementSource::Online)) continue;
             QTreeWidgetItem *group = algorithm;
             if (key.find("camera1") != std::string::npos)
                 group = camera1;
             else if (key.find("camera2") != std::string::npos)
                 group = camera2;
-            else if (key.find("cycle_") != std::string::npos || key == "source" ||
+            else if (key == "processing_time_ms" || key == "trigger_to_result_time_ms" || key == "source" ||
                      key.find("tracking_active") != std::string::npos)
                 group = runtime;
 

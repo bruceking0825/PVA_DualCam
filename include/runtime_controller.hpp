@@ -105,10 +105,14 @@ namespace pva
         QMutex displayMutex_;
         std::optional<MeasurementResult> displayResult_;
         quint64 runId_{}, nextRequestId_{}, currentRequestId_{}, configVersion_{1};
+        std::optional<std::chrono::steady_clock::time_point> triggerStarted_;
         std::unique_ptr<MeasurementWorker> worker_;
         PlcSession *plc_{};
         ImageStorage *images_{};
+        ImageStorage *continuousImages_{};
+        QElapsedTimer continuousSaveClock_;
         QTimer *offlineTimer_{};
+        QTimer *logTimer_{};
         QTimer *facetTimeoutTimer_{};
         QTimer *acquisitionTimer_{};
         QString acquisitionCommand_;

@@ -189,12 +189,13 @@ namespace
         // The only INI-to-C++ mapping table. Initial loading and live edits
         // share it, so each new typed parameter is registered once.
         static const std::vector<ConfigEntry> entries{
-            setting("Runtime", "disable_camera_for_plc_test", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::disableCameraForPlcTest),
-            setting("Runtime", "neck_sample_interval_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::neckSampleIntervalMs, minimum(50)),
-            setting("Runtime", "crown_sample_interval_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::crownSampleIntervalMs, minimum(50)),
-            setting("Runtime", "body_sample_interval_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::bodySampleIntervalMs, minimum(50)),
             setting("Runtime", "offline_image_dir", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::offlineImageDir, path()),
             setting("Runtime", "facette_image_dir", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::facetteImageDir, path()),
+            setting("Runtime", "measurement_image_dir", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::measurementImageDir, path()),
+            setting("Runtime", "continuous_save_enabled", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::continuousSaveEnabled),
+            setting("Runtime", "continuous_save_interval_s", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::continuousSaveIntervalS, minimum(1)),
+            setting("Runtime", "continuous_save_overlay", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::continuousSaveOverlay),
+            setting("Runtime", "continuous_save_dir", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::continuousSaveDir, path()),
             setting("Runtime", "loop_interval_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::loopIntervalMs, minimum(50)),
             setting("Runtime", "state_file", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::stateFile, path()),
             setting("Runtime", "stereo_pair_max_delta_ms", &pva::MeasurementConfig::runtime, &pva::RuntimeSettings::stereoPairMaxDeltaMs, minimum(1)),

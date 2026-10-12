@@ -37,7 +37,8 @@ int main(int argc, char **argv)
     if (!directory.isValid()) return 1;
     pva::MeasurementConfig config;
     config.runtime.offlineImageDir = directory.path();
-    config.runtime.stateFile = directory.filePath("state.json");
+   config.runtime.stateFile = directory.filePath("state.json");
+    config.runtime.measurementImageDir = directory.filePath("measurement_images");
     config.runtime.facetteImageDir = directory.filePath("facettes");
     cv::Mat pair(80, 40, CV_8U, cv::Scalar(20));
     for (int i = 0; i < 3; ++i)

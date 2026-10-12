@@ -16,11 +16,46 @@ namespace pva
         lastOffset_ = -1;
     }
 
-    DailyLogResult DailyLog::append(const QDateTime &time, const QString &message)
+    DailyLogResult DailyLog::enqueue(const QDateTime &time, const QString &message)
+    {
+        DailyLogResult result;
+        result.merged = queuedDirectory_ == directory_ && queuedDate_ == time.date() && queuedMessage_ == message;
+        queuedCount_ = result.merged ? queuedCount_ + 1 : 1;
+        result.line = time.toString("HH:mm:ss ") + message +
+                      (queuedCount_ > 1 ? QString(" x %1").arg(queuedCount_) : QString());
+        if (result.merged && !pending_.empty()) {
+            pending_.back().time = time;
+            ++pending_.back().count;
+        } else pending_.push_back({directory_, time, message, 1});
+        queuedDirectory_ = directory_;
+        queuedDate_ = time.date();
+        queuedMessage_ = message;
+        return result;
+    }
+
+    bool DailyLog::flush(QString *error)
+    {
+        const QString currentDirectory = directory_;
+        while (!pending_.empty()) {
+            const auto &record = pending_.front();
+            setDirectory(record.directory);
+            const auto result = append(record.time, record.message, record.count);
+            if (!result.written) {
+                if (error) *error = record.directory + ": " + result.error;
+                setDirectory(currentDirectory);
+                return false;
+            }
+            pending_.pop_front();
+        }
+        setDirectory(currentDirectory);
+        return true;
+    }
+
+    DailyLogResult DailyLog::append(const QDateTime &time, const QString &message, int repetitions)
     {
         DailyLogResult result;
         result.merged = lastDate_ == time.date() && lastMessage_ == message;
-        const int count = result.merged ? lastCount_ + 1 : 1;
+        const int count = result.merged ? lastCount_ + repetitions : repetitions;
         result.line = time.toString("HH:mm:ss ") + message +
                       (count > 1 ? QString(" x %1").arg(count) : QString());
         if (!QDir().mkpath(directory_))

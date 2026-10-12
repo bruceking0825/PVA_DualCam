@@ -5,6 +5,7 @@ class QGraphicsPathItem;
 #include <QGraphicsScene>
 #include <QGraphicsView>
 #include <QPoint>
+#include <QElapsedTimer>
 
 class CustomGraphicsView final : public QGraphicsView
 {
@@ -15,6 +16,7 @@ public:
     void setText(const QString &text);
     void showImage(const cv::Mat &image, bool preserveView = false);
     void updateOverlays(const std::vector<pva::OverlayElement> &elements);
+    bool isInteracting() const { return panning_ || (zoomClock_.isValid() && zoomClock_.elapsed() < 200); }
 signals:
     void pixelInfoChanged(int viewId, int x, int y, int gray);
 
@@ -38,6 +40,7 @@ private:
     int viewId_{1};
     bool fitted_{false};
     bool panning_{false};
+    QElapsedTimer zoomClock_;
     bool suppressResizeFit_{false};
     QPoint panStart_;
     double imageScale_{1.0};
