@@ -94,6 +94,8 @@ set(SAPERA_INCLUDE "${SAPERA_ROOT}/Include")
 set(SAPERA_BASIC_INCLUDE "${SAPERA_ROOT}/Classes/Basic")
 set(SAPERA_LIBRARY "${SAPERA_ROOT}/Lib/${PVA_SAPERA_LIBRARY_SUBDIR}/SapClassBasic.lib")
 
+# 现场部署可只使用 SDK 导入库编译；本机运行默认仍要求匹配的运行库。
+option(PVA_SAPERA_TARGET_RUNTIME_AVAILABLE "Target PC has matching Sapera runtime; allow build without local runtime" OFF)
 # The SDK may install both Win32 and Win64 import libraries even when only one
 # runtime architecture is present. Linking that import library produces an EXE
 # which waits at the Windows loader error dialog before main() is reached. Check
@@ -198,6 +200,15 @@ add_executable(pva_dualcam_cpp WIN32
     ui/PageParameters.ui
     resources.qrc
 )
+# 将图标嵌入 Windows PE 资源，资源管理器和快捷方式可直接读取。
+if(WIN32)
+    enable_language(RC)
+    configure_file(tools/app_icon.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app_icon.rc" @ONLY)
+    target_sources(pva_dualcam_cpp PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/app_icon.rc")
+    set_property(SOURCE "${CMAKE_CURRENT_BINARY_DIR}/app_icon.rc" APPEND PROPERTY
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/zh1.ico")
+endif()
+
 set_property(TARGET pva_dualcam_cpp PROPERTY AUTOUIC_SEARCH_PATHS
     "${CMAKE_CURRENT_SOURCE_DIR}/ui")
 target_link_libraries(pva_dualcam_cpp PRIVATE pva_runtime pva_camera
@@ -208,8 +219,11 @@ if(MSVC)
 endif()
 if(EXISTS "${SAPERA_BASIC_INCLUDE}/SapClassBasic.h" AND
    EXISTS "${SAPERA_LIBRARY}" AND
-   (NOT WIN32 OR PVA_SAPERA_RUNTIME_DLLS))
+   (NOT WIN32 OR PVA_SAPERA_RUNTIME_DLLS OR PVA_SAPERA_TARGET_RUNTIME_AVAILABLE))
     message(STATUS "Sapera SDK enabled: ${SAPERA_ROOT} (${PVA_SAPERA_LIBRARY_SUBDIR})")
+    if(WIN32 AND NOT PVA_SAPERA_RUNTIME_DLLS)
+        message(WARNING "Sapera enabled for target deployment only; local runtime is absent")
+    endif()
     target_compile_definitions(pva_camera PRIVATE PVA_HAS_SAPERA=1)
     target_include_directories(pva_camera SYSTEM PRIVATE "${SAPERA_INCLUDE}" "${SAPERA_BASIC_INCLUDE}")
     target_link_libraries(pva_camera PRIVATE "${SAPERA_LIBRARY}")

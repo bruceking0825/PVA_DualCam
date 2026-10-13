@@ -259,18 +259,21 @@ namespace pva
     void PlcSession::flushState()
     {
         saveTimer_.stop();
-        if (!pendingState_) return;
+        if (!pendingState_)
+            return;
         QString error;
         if (PlcRuntimeStore(statePath_).save(*pendingState_, &error))
             pendingState_.reset();
-        else {
+        else
+        {
             emit logMessage("PLC state save failed: " + error);
             saveTimer_.start();
         }
     }
     void PlcSession::setStatePath(QString path)
     {
-        if (path == statePath_) return;
+        if (path == statePath_)
+            return;
         flushState();
         saveTimer_.stop();
         pendingState_.reset();

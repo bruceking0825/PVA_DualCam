@@ -267,4 +267,7 @@
     <file>images/icons/icon_restore.png</file>
     <file>images/icons/icon_settings.png</file>
   </qresource>
+  <qresource prefix="/app">
+    <file alias="zh1.ico">zh1.ico</file>
+  </qresource>
 </RCC>

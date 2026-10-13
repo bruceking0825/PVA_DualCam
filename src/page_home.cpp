@@ -17,7 +17,8 @@ namespace pva
         : BasePage(parent), ui_(std::make_unique<Ui::PageHome>()), runtime_(runtime)
     {
         snapshot_.config = std::move(config);
-        initializePage([this] { ui_->setupUi(this); });
+        initializePage([this]
+                       { ui_->setupUi(this); });
     }
     PageHome::~PageHome() = default;
     void PageHome::initializeState()
@@ -37,13 +38,13 @@ namespace pva
         connect(ui_->btnPreviousImage, &QPushButton::clicked, this, &PageHome::previousImage);
         connect(ui_->btnNextImage, &QPushButton::clicked, this, &PageHome::nextImage);
         connect(ui_->btnLastImage, &QPushButton::clicked, this, &PageHome::lastImage);
-        connect(ui_->detailsTabs, &QTabWidget::currentChanged, this, [this] {
+        connect(ui_->detailsTabs, &QTabWidget::currentChanged, this, [this]
+                {
             if (ui_->detailsTabs->currentWidget() == ui_->tabProcess) {
                 diagnosticDirty_ = true;
                 diagnosticClock_.invalidate();
                 renderLatest();
-            }
-        });
+            } });
         connect(ui_->cam1GraphicsView, &CustomGraphicsView::pixelInfoChanged, this,
                 [this](int, int x, int y, int gray)
                 {
@@ -60,7 +61,6 @@ namespace pva
                     viewInfo_[1].gray = gray;
                     updateViewInfo(2);
                 });
-
     }
     void PageHome::bindSignals()
     {
@@ -71,7 +71,8 @@ namespace pva
         connect(this, &PageHome::stageSelected, &runtime_, &RuntimeController::selectStage, Qt::QueuedConnection);
         connect(this, &PageHome::imageSelected, &runtime_, &RuntimeController::setImageIndex, Qt::QueuedConnection);
         connect(this, &PageHome::imageStepRequested, &runtime_, &RuntimeController::stepImage, Qt::QueuedConnection);
-        connect(&runtime_, &RuntimeController::stateChanged, this, [this](const RuntimeSnapshot &s) {
+        connect(&runtime_, &RuntimeController::stateChanged, this, [this](const RuntimeSnapshot &s)
+                {
             const bool modeChanged = snapshot_.online != s.online;
             const bool overlayChanged = modeChanged || snapshot_.stage != s.stage ||
                 snapshot_.rois.melt != s.rois.melt || snapshot_.rois.dip != s.rois.dip ||
@@ -101,25 +102,24 @@ namespace pva
             ui_->btnOnline->setChecked(s.online);
             ui_->btnOnline->setText(s.online ? "Online" : "Offline");
             refreshControls();
-            applyStageToUi();
-        });
-        connect(&runtime_, &RuntimeController::logReady, this, [this](const QString &line, bool merged) {
+            applyStageToUi(); });
+        connect(&runtime_, &RuntimeController::logReady, this, [this](const QString &line, bool merged)
+                {
             if (merged) {
                 auto cursor = ui_->txtLog->textCursor();
                 cursor.movePosition(QTextCursor::End);
                 cursor.select(QTextCursor::LineUnderCursor);
                 cursor.insertText(line);
-            } else ui_->txtLog->appendPlainText(line);
-        });
-        connect(&runtime_, &RuntimeController::facetteReady, this, [this](int i, const cv::Mat &image) {
+            } else ui_->txtLog->appendPlainText(line); });
+        connect(&runtime_, &RuntimeController::facetteReady, this, [this](int i, const cv::Mat &image)
+                {
             if (i < 1 || i > 4) return;
             facetteImages_[i-1] = image;
-            facetteDirty_[i-1] = true;
-        });
-        connect(&runtime_.plcSession(), &PlcSession::connectionChanged, this, [this](bool on) { setConnectionLed(ui_->lblPlcStatus, on); });
-        connect(&runtime_, &RuntimeController::frameDeltaChanged, this, [this](double ms) {
-            ui_->lblFrameDelta->setText(QString("Frame delta: %1 ms").arg(ms, 0, 'f', 1));
-        });
+            facetteDirty_[i-1] = true; });
+        connect(&runtime_.plcSession(), &PlcSession::connectionChanged, this, [this](bool on)
+                { setConnectionLed(ui_->lblPlcStatus, on); });
+        connect(&runtime_, &RuntimeController::frameDeltaChanged, this, [this](double ms)
+                { ui_->lblFrameDelta->setText(QString("Frame delta: %1 ms").arg(ms, 0, 'f', 1)); });
     }
     void PageHome::onReady()
     {
@@ -127,7 +127,8 @@ namespace pva
         setConnectionLed(ui_->lblCamera1Status, false);
         setConnectionLed(ui_->lblCamera2Status, false);
         setConnectionLed(ui_->lblPlcStatus, false);
-        for (auto *view : {ui_->facetView1, ui_->facetView2, ui_->facetView3, ui_->facetView4}) view->setText("Facette");
+        for (auto *view : {ui_->facetView1, ui_->facetView2, ui_->facetView3, ui_->facetView4})
+            view->setText("Facette");
         refreshControls();
     }
     void PageHome::onCameraState(const CameraSnapshot &snapshot)
@@ -139,26 +140,33 @@ namespace pva
     {
         const bool stop = snapshot_.state == RunState::Running;
         const bool online = ui_->btnOnline->isChecked();
-        if (stop) emit stopRequested();
-        else emit startRequested(online);
+        if (stop)
+            emit stopRequested();
+        else
+            emit startRequested(online);
     }
     void PageHome::toggleOnline(bool online)
     {
         if (QMessageBox::question(this, "Confirm Mode Change", QString("Switch to %1 mode?").arg(online ? "Online" : "Offline"),
-                                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
-            QSignalBlocker blocker(ui_->btnOnline); ui_->btnOnline->setChecked(!online); return;
+                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+        {
+            QSignalBlocker blocker(ui_->btnOnline);
+            ui_->btnOnline->setChecked(!online);
+            return;
         }
         emit modeChangeRequested(online);
     }
     void PageHome::selectStage()
     {
         const std::array<QPushButton *, 5> buttons{ui_->btnStageMelt, ui_->btnStageDip,
-            ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody};
+                                                   ui_->btnStageNeck, ui_->btnStageCrown, ui_->btnStageBody};
         const std::array<MeasurementStage, 5> stages{MeasurementStage::Melt, MeasurementStage::Dip,
-            MeasurementStage::Neck, MeasurementStage::Crown, MeasurementStage::Body};
-        for (size_t i = 0; i < buttons.size(); ++i) if (sender() == buttons[i]) {
-            emit stageSelected(stages[i]);
-        }
+                                                     MeasurementStage::Neck, MeasurementStage::Crown, MeasurementStage::Body};
+        for (size_t i = 0; i < buttons.size(); ++i)
+            if (sender() == buttons[i])
+            {
+                emit stageSelected(stages[i]);
+            }
     }
     void PageHome::firstImage() { emit imageSelected(0); }
     void PageHome::previousImage() { emit imageStepRequested(-1); }
@@ -166,32 +174,45 @@ namespace pva
     void PageHome::lastImage() { emit imageSelected(int(snapshot_.images.size()) - 1); }
     void PageHome::showResult(const MeasurementResult &result)
     {
-        if (result.generation != snapshot_.generation || snapshot_.state != RunState::Running) return;
-        latestResult_ = result; frameDirty_ = true; diagnosticDirty_ = true;
+        if (result.generation != snapshot_.generation || snapshot_.state != RunState::Running)
+            return;
+        latestResult_ = result;
+        frameDirty_ = true;
+        diagnosticDirty_ = true;
     }
     void PageHome::renderLatest()
     {
-        if (!isVisible()) return;
+        if (!isVisible())
+            return;
         CustomGraphicsView *views[] = {ui_->facetView1, ui_->facetView2, ui_->facetView3, ui_->facetView4};
-        for (int i = 0; i < 4; ++i) if (facetteDirty_[i] && !views[i]->isInteracting()) {
-            if (facetteImages_[i].empty()) views[i]->setText(QString("Facette%1.bmp").arg(i+1));
-            else views[i]->showImage(facetteImages_[i]);
-            facetteDirty_[i] = false;
-        }
-        if (auto result = runtime_.takeLatestResult()) showResult(*result);
+        for (int i = 0; i < 4; ++i)
+            if (facetteDirty_[i] && !views[i]->isInteracting())
+            {
+                if (facetteImages_[i].empty())
+                    views[i]->setText(QString("Facette%1.bmp").arg(i + 1));
+                else
+                    views[i]->showImage(facetteImages_[i]);
+                facetteDirty_[i] = false;
+            }
+        if (auto result = runtime_.takeLatestResult())
+            showResult(*result);
         const bool interacting = ui_->cam1GraphicsView->isInteracting() || ui_->cam2GraphicsView->isInteracting();
-        if (!interacting && frameDirty_ && latestResult_) {
+        if (!interacting && frameDirty_ && latestResult_)
+        {
             displayedResult_ = *latestResult_;
             paintResult(*latestResult_);
             frameDirty_ = false;
             overlayDirty_ = false;
-        } else if (!interacting && overlayDirty_ && displayedResult_) {
+        }
+        else if (!interacting && overlayDirty_ && displayedResult_)
+        {
             paintResult(*displayedResult_);
             overlayDirty_ = false;
         }
         if (!interacting && diagnosticDirty_ && ui_->detailsTabs->currentWidget() == ui_->tabProcess &&
             (latestResult_ || displayedResult_) &&
-            (!diagnosticClock_.isValid() || diagnosticClock_.elapsed() >= 200)) {
+            (!diagnosticClock_.isValid() || diagnosticClock_.elapsed() >= 200))
+        {
             updateProcessDiagnostics(latestResult_ ? *latestResult_ : *displayedResult_);
             diagnosticClock_.restart();
             diagnosticDirty_ = false;
@@ -320,9 +341,9 @@ namespace pva
             snapshot_.stage == MeasurementStage::Neck)
         {
             const auto roi1 = effectiveAutoExposureRoi(snapshot_.rois, 1,
-                snapshot_.config.measurement.autoExposureRoiCamera1, r.preview1.size());
+                                                       snapshot_.config.measurement.autoExposureRoiCamera1, r.preview1.size());
             const auto roi2 = effectiveAutoExposureRoi(snapshot_.rois, 2,
-                snapshot_.config.measurement.autoExposureRoiCamera2, r.preview2.size());
+                                                       snapshot_.config.measurement.autoExposureRoiCamera2, r.preview2.size());
             viewInfo_[0].roiMean = roiMean(r.preview1, roi1);
             viewInfo_[1].roiMean = roiMean(r.preview2, roi2);
         }
@@ -335,10 +356,8 @@ namespace pva
         ui_->lblDiameter->setText(r.values.diameterMm ? QString::number(*r.values.diameterMm, 'f', 3) : "--");
         const auto processing = r.diagnostics.find("processing_time_ms");
         const auto trigger = r.diagnostics.find("trigger_to_result_time_ms");
-        const QString processingText = processing == r.diagnostics.end() ? "--" :
-            QString::number(processing->second.toDouble(), 'f', 1) + " ms";
-        const QString triggerText = !snapshot_.online || r.task.source != MeasurementSource::Online || trigger == r.diagnostics.end() ? "--" :
-            QString::number(trigger->second.toDouble(), 'f', 1) + " ms";
+        const QString processingText = processing == r.diagnostics.end() ? "--" : QString::number(processing->second.toDouble(), 'f', 1) + " ms";
+        const QString triggerText = !snapshot_.online || r.task.source != MeasurementSource::Online || trigger == r.diagnostics.end() ? "--" : QString::number(trigger->second.toDouble(), 'f', 1) + " ms";
         ui_->lblCycle->setText("Processing time: " + processingText);
         ui_->lblTriggerToResultTime->setText("Trigger to result time: " + triggerText);
         ui_->lblLastFrame->setText("Last frame: " + QDateTime::currentDateTime().toString("HH:mm:ss"));
@@ -370,10 +389,14 @@ namespace pva
         // 四个顶层分组使用主题强调色，和普通诊断项形成清晰分隔。
         for (auto *group : {camera1, camera2, algorithm, runtime})
             highlightGroup(group);
-        if (first) camera1->setExpanded(true);
-        if (first) camera2->setExpanded(true);
-        if (first) algorithm->setExpanded(true);
-        if (first) runtime->setExpanded(true);
+        if (first)
+            camera1->setExpanded(true);
+        if (first)
+            camera2->setExpanded(true);
+        if (first)
+            algorithm->setExpanded(true);
+        if (first)
+            runtime->setExpanded(true);
 
         const auto formattedValue = [](const QVariant &value)
         {
@@ -402,7 +425,8 @@ namespace pva
         };
         const auto diagnosticLabel = [&result](const std::string &key, QString &unit)
         {
-            if (key == "processing_time_ms" || key == "trigger_to_result_time_ms") {
+            if (key == "processing_time_ms" || key == "trigger_to_result_time_ms")
+            {
                 unit = "ms";
                 return QString(key == "processing_time_ms" ? "Processing time" : "Trigger to result time");
             }
@@ -452,10 +476,12 @@ namespace pva
             return label;
         };
 
-        for (auto *item : diagnosticItems_) item->setHidden(true);
+        for (auto *item : diagnosticItems_)
+            item->setHidden(true);
         for (const auto &[key, value] : result.diagnostics)
         {
-            if (key == "trigger_to_result_time_ms" && (!snapshot_.online || result.task.source != MeasurementSource::Online)) continue;
+            if (key == "trigger_to_result_time_ms" && (!snapshot_.online || result.task.source != MeasurementSource::Online))
+                continue;
             QTreeWidgetItem *group = algorithm;
             if (key.find("camera1") != std::string::npos)
                 group = camera1;
@@ -469,7 +495,11 @@ namespace pva
             const QString label = diagnosticLabel(key, unit);
             const auto itemKey = QString::fromStdString(key);
             auto *item = diagnosticItems_.value(itemKey, nullptr);
-            if (!item) { item = new QTreeWidgetItem(group); diagnosticItems_.insert(itemKey, item); }
+            if (!item)
+            {
+                item = new QTreeWidgetItem(group);
+                diagnosticItems_.insert(itemKey, item);
+            }
             item->setHidden(false);
             item->setText(0, label);
             item->setText(1, formattedValue(value));

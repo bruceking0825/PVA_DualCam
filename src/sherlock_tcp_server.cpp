@@ -15,17 +15,18 @@ namespace pva
         connect(commandServer_, &QTcpServer::newConnection, this, &SherlockTcpServer::acceptCommandConnection);
         connect(resultServer_, &QTcpServer::newConnection, this, &SherlockTcpServer::acceptResultConnection);
         for (auto *server : {commandServer_, resultServer_})
-            connect(server, &QTcpServer::acceptError, this, [this, server](QAbstractSocket::SocketError) {
-                communicationError(QString("Sherlock TCP %1 accept error: %2")
-                    .arg(server->serverPort()).arg(server->errorString()));
-            });
+            connect(server, &QTcpServer::acceptError, this, [this, server](QAbstractSocket::SocketError)
+                    { communicationError(QString("Sherlock TCP %1 accept error: %2")
+                                             .arg(server->serverPort())
+                                             .arg(server->errorString())); });
     }
 
     SherlockTcpServer::~SherlockTcpServer() { stop(); }
 
     bool SherlockTcpServer::start(QString *error)
     {
-        if (commandServer_->isListening() && resultServer_->isListening()) return true;
+        if (commandServer_->isListening() && resultServer_->isListening())
+            return true;
         stop();
         if (!commandServer_->listen(QHostAddress::AnyIPv4, commandPort_))
         {
@@ -45,7 +46,8 @@ namespace pva
             return false;
         }
         emit logMessage(QString("Sherlock service started on TCP %1/%2; waiting for PLC connection")
-            .arg(commandPort()).arg(resultPort()));
+                            .arg(commandPort())
+                            .arg(resultPort()));
         return true;
     }
 
@@ -55,7 +57,8 @@ namespace pva
         commandServer_->close();
         resultServer_->close();
         closeConnections();
-        if (wasListening) emit logMessage("Sherlock service closed");
+        if (wasListening)
+            emit logMessage("Sherlock service closed");
     }
 
     void SherlockTcpServer::closeConnections()
@@ -67,10 +70,12 @@ namespace pva
         commandBuffer_.clear();
         pendingPackets_.clear();
         for (auto socket : {command, result})
-            if (socket) {
+            if (socket)
+            {
                 emit logMessage(QString("PLC TCP %1 disconnected: %2:%3")
-                    .arg(socket->property("serverPort").toUInt())
-                    .arg(socket->property("peerAddress").toString()).arg(socket->property("peerPort").toUInt()));
+                                    .arg(socket->property("serverPort").toUInt())
+                                    .arg(socket->property("peerAddress").toString())
+                                    .arg(socket->property("peerPort").toUInt()));
                 socket->abort();
                 socket->deleteLater();
             }
@@ -151,10 +156,11 @@ namespace pva
         socket->setProperty("peerAddress", socket->peerAddress().toString());
         socket->setProperty("peerPort", socket->peerPort());
         emit logMessage(QString("PLC TCP 5000 connected: %1:%2")
-            .arg(socket->peerAddress().toString()).arg(socket->peerPort()));
-        connect(socket, &QTcpSocket::errorOccurred, this, [this, socket](QAbstractSocket::SocketError) {
-            if (commandSocket_ == socket) communicationError("PLC TCP 5000 error: " + socket->errorString());
-        });
+                            .arg(socket->peerAddress().toString())
+                            .arg(socket->peerPort()));
+        connect(socket, &QTcpSocket::errorOccurred, this, [this, socket](QAbstractSocket::SocketError)
+                {
+            if (commandSocket_ == socket) communicationError("PLC TCP 5000 error: " + socket->errorString()); });
         commandBuffer_.clear();
         connect(socket, &QTcpSocket::readyRead, this, &SherlockTcpServer::readCommands);
         connect(socket, &QTcpSocket::disconnected, this, [this, socket]
@@ -163,8 +169,7 @@ namespace pva
                     {
                         closeConnections();
                     }
-                    socket->deleteLater();
-                });
+                    socket->deleteLater(); });
         updateConnectionState();
     }
 
@@ -177,18 +182,18 @@ namespace pva
         socket->setProperty("peerAddress", socket->peerAddress().toString());
         socket->setProperty("peerPort", socket->peerPort());
         emit logMessage(QString("PLC TCP 5001 connected: %1:%2")
-            .arg(socket->peerAddress().toString()).arg(socket->peerPort()));
-        connect(socket, &QTcpSocket::errorOccurred, this, [this, socket](QAbstractSocket::SocketError) {
-            if (resultSocket_ == socket) communicationError("PLC TCP 5001 error: " + socket->errorString());
-        });
+                            .arg(socket->peerAddress().toString())
+                            .arg(socket->peerPort()));
+        connect(socket, &QTcpSocket::errorOccurred, this, [this, socket](QAbstractSocket::SocketError)
+                {
+            if (resultSocket_ == socket) communicationError("PLC TCP 5001 error: " + socket->errorString()); });
         connect(socket, &QTcpSocket::disconnected, this, [this, socket]
                 {
                     if (resultSocket_ == socket)
                     {
                         closeConnections();
                     }
-                    socket->deleteLater();
-                });
+                    socket->deleteLater(); });
         updateConnectionState();
     }
 
@@ -229,7 +234,8 @@ namespace pva
             const auto command = SherlockProtocol::parseCommand(line, &parseError);
             if (command)
                 emit commandReceived(*command);
-            else {
+            else
+            {
                 communicationError("Invalid PLC command: " + parseError);
                 return;
             }

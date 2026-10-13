@@ -26,7 +26,9 @@ namespace
     {
         out.push_back({OverlayType::Polyline,
                        {{left, top}, {right, top}, {right, bottom}, {left, bottom}},
-                       color, 1, true});
+                       color,
+                       1,
+                       true});
     }
 
 }
@@ -38,10 +40,12 @@ namespace pva
     {
         const auto reject = [error](const QString &message)
         {
-            if (error) *error = message;
+            if (error)
+                *error = message;
             return false;
         };
-        if (!std::all_of(values.begin(), values.end(), [](double n) { return std::isfinite(n); }))
+        if (!std::all_of(values.begin(), values.end(), [](double n)
+                         { return std::isfinite(n); }))
             return reject(name + " contains a non-finite coordinate");
         if (name == "dia_crd")
         {
@@ -49,7 +53,8 @@ namespace pva
                 values[5] <= values[4])
                 return reject("dia_crd requires eight values and outer_radius > inner_radius >= 0");
             double stop = values[3];
-            while (stop < values[2]) stop += 360.0;
+            while (stop < values[2])
+                stop += 360.0;
             if (stop - values[2] <= 0.0 || stop - values[2] > 360.0)
                 return reject("dia_crd angle sweep must be within (0, 360] degrees");
             std::array<double, 8> copy{};
@@ -133,7 +138,8 @@ namespace pva
             {
                 const double cx = v[0] + dx, cy = v[1] + dy;
                 double stop = v[3];
-                while (stop < v[2]) stop += 360.0;
+                while (stop < v[2])
+                    stop += 360.0;
                 const int segments = std::max(12, int(std::ceil((stop - v[2]) / 3.0)));
                 std::vector<cv::Point2d> outline;
                 outline.reserve(size_t(2 * segments + 2));
@@ -167,17 +173,21 @@ namespace pva
             camera1.push_back({OverlayType::Line,
                                {{v[0], v[1] - v[2] / 2.0},
                                 {v[0], v[1] + v[2] / 2.0}},
-                               {255, 0, 255}, 2, false});
+                               {255, 0, 255},
+                               2,
+                               false});
         }
     }
 
     bool PlcRuntimeStore::load(PlcRuntimeState *state, QString *error) const
     {
         QFile file(path_);
-        if (!file.exists()) return true;
+        if (!file.exists())
+            return true;
         if (!file.open(QIODevice::ReadOnly))
         {
-            if (error) *error = file.errorString();
+            if (error)
+                *error = file.errorString();
             return false;
         }
         QJsonParseError parseError;
@@ -185,14 +195,16 @@ namespace pva
         if (parseError.error != QJsonParseError::NoError || !doc.isObject() ||
             doc.object().value("schema_version").toInt() != SchemaVersion)
         {
-            if (error) *error = "Invalid PLC runtime state file";
+            if (error)
+                *error = "Invalid PLC runtime state file";
             return false;
         }
         const auto root = doc.object();
         const int stage = root.value("stage").toInt(-1);
         if (stage < 0 || stage > 6)
         {
-            if (error) *error = "Invalid saved PLC stage";
+            if (error)
+                *error = "Invalid saved PLC stage";
             return false;
         }
         PlcRuntimeState next;
@@ -204,7 +216,8 @@ namespace pva
         next.refreshRate = root.value("refresh_rate").toDouble(1.0);
         if (!std::isfinite(next.refreshRate) || next.refreshRate <= 0.0)
         {
-            if (error) *error = "Invalid saved PLC refresh rate";
+            if (error)
+                *error = "Invalid saved PLC refresh rate";
             return false;
         }
         const auto parameters = root.value("parameters").toObject();
@@ -215,7 +228,8 @@ namespace pva
             {
                 if (!item.isDouble() || !std::isfinite(item.toDouble()))
                 {
-                    if (error) *error = "Invalid saved PLC parameter: " + it.key();
+                    if (error)
+                        *error = "Invalid saved PLC parameter: " + it.key();
                     return false;
                 }
                 values.push_back(item.toDouble());
@@ -230,14 +244,16 @@ namespace pva
     {
         if (!QDir().mkpath(QFileInfo(path_).absolutePath()))
         {
-            if (error) *error = QFileInfo(path_).absoluteFilePath() + ": create directory failed";
+            if (error)
+                *error = QFileInfo(path_).absoluteFilePath() + ": create directory failed";
             return false;
         }
         QJsonObject parameters;
         for (auto it = state.parameters.cbegin(); it != state.parameters.cend(); ++it)
         {
             QJsonArray values;
-            for (double value : it.value()) values.append(value);
+            for (double value : it.value())
+                values.append(value);
             parameters.insert(it.key(), values);
         }
         const QJsonObject root{
@@ -247,17 +263,21 @@ namespace pva
             {"acquisition_enabled", state.acquisitionEnabled},
             {"relative_threshold", state.relativeThreshold},
             {"refresh_rate", state.refreshRate},
-            {"parameters", parameters}
-        };
+            {"parameters", parameters}};
         QSaveFile file(path_);
-        const auto fail = [&](const QString &step) {
-            if (error) *error = QFileInfo(path_).absoluteFilePath() + ": " + step + ": " + file.errorString();
+        const auto fail = [&](const QString &step)
+        {
+            if (error)
+                *error = QFileInfo(path_).absoluteFilePath() + ": " + step + ": " + file.errorString();
             return false;
         };
-        if (!file.open(QIODevice::WriteOnly)) return fail("open temporary file failed");
+        if (!file.open(QIODevice::WriteOnly))
+            return fail("open temporary file failed");
         const auto data = QJsonDocument(root).toJson(QJsonDocument::Indented);
-        if (file.write(data) != data.size()) return fail("write failed");
-        if (!file.commit()) return fail("commit/replace failed");
+        if (file.write(data) != data.size())
+            return fail("write failed");
+        if (!file.commit())
+            return fail("commit/replace failed");
         return true;
     }
 }

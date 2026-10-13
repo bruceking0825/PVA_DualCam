@@ -17,7 +17,8 @@ namespace pva
     {
         // SDK 边界已持有图像内存；任务按只读方式引用，锁内仅交换句柄。
         QMutexLocker lock(&mutex_);
-        if (stopping_) return;
+        if (stopping_)
+            return;
         generation_ = generation;
         pending_ = Pending{std::move(a), std::move(b), stage, generation, {}, task};
         condition_.wakeOne();
@@ -25,7 +26,8 @@ namespace pva
     void MeasurementWorker::submitOffline(const QString &path, MeasurementStage stage, quint64 generation, MeasurementTaskInfo task)
     {
         QMutexLocker lock(&mutex_);
-        if (stopping_) return;
+        if (stopping_)
+            return;
         generation_ = generation;
         pending_ = Pending{{}, {}, stage, generation, path, task};
         condition_.wakeOne();
@@ -57,8 +59,10 @@ namespace pva
         OfflineImageSource offline;
         std::optional<MeasurementState> pendingState;
         QElapsedTimer saveClock;
-        const auto flushState = [&] {
-            if (!pendingState) return;
+        const auto flushState = [&]
+        {
+            if (!pendingState)
+                return;
             QString error;
             if (StateStore(statePath_).save(*pendingState, &error))
                 pendingState.reset();
@@ -75,12 +79,16 @@ namespace pva
             std::optional<MeasurementRois> updatedRois;
             {
                 QMutexLocker lock(&mutex_);
-                while (!stopping_ && !pending_) {
-                    if (pendingState) {
+                while (!stopping_ && !pending_)
+                {
+                    if (pendingState)
+                    {
                         const auto remaining = 3000 - saveClock.elapsed();
-                        if (remaining <= 0) break;
+                        if (remaining <= 0)
+                            break;
                         condition_.wait(&mutex_, static_cast<unsigned long>(remaining));
-                    } else
+                    }
+                    else
                         condition_.wait(&mutex_);
                 }
                 if (stopping_)
@@ -89,7 +97,8 @@ namespace pva
                     flushState();
                     return;
                 }
-                if (!pending_) continue;
+                if (!pending_)
+                    continue;
                 job = std::move(pending_);
                 pending_.reset();
                 updatedConfig = std::move(pendingConfig_);
@@ -103,7 +112,8 @@ namespace pva
                     engine_.setConfig(std::move(*updatedConfig));
                 if (updatedRois)
                     engine_.setMeasurementRois(std::move(*updatedRois));
-                if (!job->path.isEmpty()) {
+                if (!job->path.isEmpty())
+                {
                     const auto images = offline.load(job->path);
                     job->camera1 = images.first;
                     job->camera2 = images.second;
@@ -118,14 +128,16 @@ namespace pva
                 result.task = job->task;
                 {
                     QMutexLocker lock(&mutex_);
-                    if (stopping_ || job->generation != generation_) continue;
+                    if (stopping_ || job->generation != generation_)
+                        continue;
                     engine_ = std::move(candidate);
                 }
                 // PLC 结果先交付，磁盘状态写入不延迟协议回复。
                 emit resultReady(result);
                 if (result.valid && !statePath_.isEmpty())
                 {
-                    if (!pendingState) saveClock.start();
+                    if (!pendingState)
+                        saveClock.start();
                     pendingState = engine_.state();
                 }
             }

@@ -1,7 +1,8 @@
 #include "measurement_geometry.hpp"
 #include <algorithm>
 #include <cmath>
-namespace {
+namespace
+{
     std::optional<pva::GrayStats> imageStats(const cv::Mat &image, cv::Rect roi)
     {
         if (image.empty())
@@ -15,12 +16,15 @@ namespace {
         return pva::GrayStats{cv::mean(pixels)[0], maximum, minimum};
     }
 }
-namespace pva {
+namespace pva
+{
     cv::Rect diameterRoiRect(const std::array<double, 8> &v, double height, int camera, cv::Size size)
     {
         if (size.empty() || !std::isfinite(height) || height <= 0 ||
-            !std::all_of(v.begin(), v.end(), [](double value) { return std::isfinite(value); }) ||
-            v[4] < 0 || v[5] <= v[4]) return {};
+            !std::all_of(v.begin(), v.end(), [](double value)
+                         { return std::isfinite(value); }) ||
+            v[4] < 0 || v[5] <= v[4])
+            return {};
         const double cx = v[0] + (camera == 2 ? v[6] : 0.0);
         const double cy = v[1] + (camera == 2 ? v[7] : 0.0);
         // Clamp before conversion to avoid overflow for off-image PLC coordinates.
@@ -28,7 +32,8 @@ namespace pva {
         const int right = cvRound(std::clamp(cx - v[4], 0.0, double(size.width)));
         const int top = cvRound(std::clamp(cy - height / 2.0, 0.0, double(size.height)));
         const int bottom = cvRound(std::clamp(cy + height / 2.0, 0.0, double(size.height)));
-        if (right <= left || bottom <= top) return {};
+        if (right <= left || bottom <= top)
+            return {};
         return {left, top, right - left, bottom - top};
     }
     cv::Rect meltRoiRect(const std::array<double, 6> &v, int camera, cv::Size size)
@@ -40,20 +45,24 @@ namespace pva {
         return cv::Rect(left, top, right - left, bottom - top) & cv::Rect(0, 0, size.width, size.height);
     }
     cv::Rect effectiveAutoExposureRoi(const MeasurementRois &rois, int camera,
-                                     cv::Rect fallback, cv::Size size, bool *fromPlc)
+                                      cv::Rect fallback, cv::Size size, bool *fromPlc)
     {
-        if (fromPlc) *fromPlc = false;
-        if (rois.melt) {
+        if (fromPlc)
+            *fromPlc = false;
+        if (rois.melt)
+        {
             const auto roi = meltRoiRect(*rois.melt, camera, size);
-            if (!roi.empty()) {
-                if (fromPlc) *fromPlc = true;
+            if (!roi.empty())
+            {
+                if (fromPlc)
+                    *fromPlc = true;
                 return roi;
             }
         }
         return fallback & cv::Rect(0, 0, size.width, size.height);
     }
     std::optional<GrayStats> meltRoiStats(const cv::Mat &image,
-                                        const std::array<double, 6> &v, int camera)
+                                          const std::array<double, 6> &v, int camera)
     {
         return imageStats(image, meltRoiRect(v, camera, image.size()));
     }
@@ -70,6 +79,5 @@ namespace pva {
             return {};
         return cv::mean(image(cv::Rect(x, top, 1, bottom - top)))[0];
     }
-
 
 }

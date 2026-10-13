@@ -23,10 +23,13 @@ namespace pva
         queuedCount_ = result.merged ? queuedCount_ + 1 : 1;
         result.line = time.toString("HH:mm:ss ") + message +
                       (queuedCount_ > 1 ? QString(" x %1").arg(queuedCount_) : QString());
-        if (result.merged && !pending_.empty()) {
+        if (result.merged && !pending_.empty())
+        {
             pending_.back().time = time;
             ++pending_.back().count;
-        } else pending_.push_back({directory_, time, message, 1});
+        }
+        else
+            pending_.push_back({directory_, time, message, 1});
         queuedDirectory_ = directory_;
         queuedDate_ = time.date();
         queuedMessage_ = message;
@@ -36,12 +39,15 @@ namespace pva
     bool DailyLog::flush(QString *error)
     {
         const QString currentDirectory = directory_;
-        while (!pending_.empty()) {
+        while (!pending_.empty())
+        {
             const auto &record = pending_.front();
             setDirectory(record.directory);
             const auto result = append(record.time, record.message, record.count);
-            if (!result.written) {
-                if (error) *error = record.directory + ": " + result.error;
+            if (!result.written)
+            {
+                if (error)
+                    *error = record.directory + ": " + result.error;
                 setDirectory(currentDirectory);
                 return false;
             }
@@ -71,7 +77,8 @@ namespace pva
         }
         const qint64 offset = result.merged && lastOffset_ >= 0 &&
                                       lastOffset_ <= file.size()
-                                  ? lastOffset_ : file.size();
+                                  ? lastOffset_
+                                  : file.size();
         const QByteArray bytes = result.line.toUtf8() + '\n';
         if (!file.resize(offset) || !file.seek(offset) ||
             file.write(bytes) != bytes.size() || !file.flush())

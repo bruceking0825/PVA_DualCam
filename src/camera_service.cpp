@@ -19,7 +19,6 @@ namespace
     }
 }
 
-
 namespace pva
 {
     CameraService::CameraService(MeasurementConfig config, QObject *parent)
@@ -28,20 +27,21 @@ namespace pva
         captureTimeout_ = new QTimer(this);
         captureTimeout_->setSingleShot(true);
         captureTimeout_->setInterval(5000);
-        connect(captureTimeout_, &QTimer::timeout, this, [this] {
+        connect(captureTimeout_, &QTimer::timeout, this, [this]
+                {
             // 超时后关闭本轮采集，阻止迟到帧被归入下一个请求。
             if (activeCapture_) {
                 if (!gotCam1_) markCameraFault(CameraRole::Cam1, "Capture timed out");
                 if (!gotCam2_) markCameraFault(CameraRole::Cam2, "Capture timed out");
             }
             closeAll();
-            emit onlineCameraFailed("Camera capture timed out", session_);
-        });
+            emit onlineCameraFailed("Camera capture timed out", session_); });
     }
     CameraService::~CameraService()
     {
         closeAll();
-        if (sdkInitialized_) DalsaCamera::shutdown();
+        if (sdkInitialized_)
+            DalsaCamera::shutdown();
     }
 
     void CameraService::resetDevices(const QStringList &ids)
@@ -49,24 +49,24 @@ namespace pva
         closeAll();
         current_ = nullptr;
         cameras_.clear();
-        for (const auto &rawId : ids) {
+        for (const auto &rawId : ids)
+        {
             const auto id = rawId.trimmed();
-            if (id.isEmpty() || cameras_.contains(id)) continue;
+            if (id.isEmpty() || cameras_.contains(id))
+                continue;
             auto device = std::make_unique<DalsaCamera>(id);
-            connect(device.get(), &DalsaCamera::frameReady, this,
-                [this](const QString &id, const cv::Mat &frame, qint64 timestamp) {
+            connect(device.get(), &DalsaCamera::frameReady, this, [this](const QString &id, const cv::Mat &frame, qint64 timestamp)
+                    {
                     const auto epoch = deliveryEpoch_.load();
                     QMetaObject::invokeMethod(this, [this, epoch, id, frame, timestamp] {
                         if (epoch == deliveryEpoch_.load()) onFrame(id, frame, timestamp);
-                    }, Qt::QueuedConnection);
-                }, Qt::DirectConnection);
-            connect(device.get(), &DalsaCamera::captureFailed, this,
-                [this](const QString &id, const QString &error) {
+                    }, Qt::QueuedConnection); }, Qt::DirectConnection);
+            connect(device.get(), &DalsaCamera::captureFailed, this, [this](const QString &id, const QString &error)
+                    {
                     const auto epoch = deliveryEpoch_.load();
                     QMetaObject::invokeMethod(this, [this, epoch, id, error] {
                         if (epoch == deliveryEpoch_.load()) onCaptureFailed(id, error);
-                    }, Qt::QueuedConnection);
-                }, Qt::DirectConnection);
+                    }, Qt::QueuedConnection); }, Qt::DirectConnection);
             cameras_.emplace(id, std::move(device));
         }
     }
@@ -82,54 +82,83 @@ namespace pva
     {
         config_ = config;
         lastExposureAdjustNs_.clear();
-        for (const auto &[id, value] : cameras_) if (value->isOpen()) {
-            QString error;
-            if (streamOwner_.isEmpty()) applyConfiguredParameters(*value, config_.camera.offlineCropRoi, false, &error);
-            else value->setGain(value->userId() == CameraRole::Cam1 ? config_.camera.gainCamera1 : config_.camera.gainCamera2, &error);
-            if (!error.isEmpty()) markCameraFault(value->userId(), error);
-        }
+        for (const auto &[id, value] : cameras_)
+            if (value->isOpen())
+            {
+                QString error;
+                if (streamOwner_.isEmpty())
+                    applyConfiguredParameters(*value, config_.camera.offlineCropRoi, false, &error);
+                else
+                    value->setGain(value->userId() == CameraRole::Cam1 ? config_.camera.gainCamera1 : config_.camera.gainCamera2, &error);
+                if (!error.isEmpty())
+                    markCameraFault(value->userId(), error);
+            }
         publishState();
     }
     void CameraService::refreshCameras()
     {
-        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty())
+        {
+            emit statusChanged(false, "Cameras are in production use");
+            return;
+        }
         closeAll();
         current_ = nullptr;
         QString error;
-        if (!sdkInitialized_) sdkInitialized_ = DalsaCamera::initialize(&error);
-        if (!sdkInitialized_) {
-            resetDevices({}); publishState(); emit statusChanged(false, error); return;
+        if (!sdkInitialized_)
+            sdkInitialized_ = DalsaCamera::initialize(&error);
+        if (!sdkInitialized_)
+        {
+            resetDevices({});
+            publishState();
+            emit statusChanged(false, error);
+            return;
         }
         const auto ids = DalsaCamera::enumerate(&error);
         resetDevices(ids);
-        if (error.isEmpty()) faultedIds_.clear();
-        if (!ids.isEmpty()) current_ = camera(ids.first());
+        if (error.isEmpty())
+            faultedIds_.clear();
+        if (!ids.isEmpty())
+            current_ = camera(ids.first());
         publishState();
         emit statusChanged(error.isEmpty(), error.isEmpty() ? QString("%1 camera(s) found").arg(ids.size()) : error);
     }
     void CameraService::selectCamera(const QString &id)
     {
-        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty())
+        {
+            emit statusChanged(false, "Cameras are in production use");
+            return;
+        }
         current_ = camera(id);
         publishState();
     }
     void CameraService::publishState()
     {
         CameraSnapshot s;
-        for (const auto &[id, value] : cameras_) {
+        for (const auto &[id, value] : cameras_)
+        {
             s.ids << value->userId();
-            if (!faultedIds_.contains(value->userId())) s.healthyIds << value->userId();
+            if (!faultedIds_.contains(value->userId()))
+                s.healthyIds << value->userId();
         }
         s.production = !streamOwner_.isEmpty();
-        if (current_) {
+        if (current_)
+        {
             s.selected = current_->userId();
             s.open = current_->isOpen();
             s.streaming = current_->isStreaming();
-            if (s.open) {
-                s.exposure = current_->exposure(); s.gain = current_->gain();
-                s.width = current_->width(); s.height = current_->height();
-                s.offsetX = current_->offsetX(); s.offsetY = current_->offsetY();
-                s.triggerMode = current_->triggerMode(); s.triggerSource = current_->triggerSource(); s.triggerEdge = current_->triggerEdge();
+            if (s.open)
+            {
+                s.exposure = current_->exposure();
+                s.gain = current_->gain();
+                s.width = current_->width();
+                s.height = current_->height();
+                s.offsetX = current_->offsetX();
+                s.offsetY = current_->offsetY();
+                s.triggerMode = current_->triggerMode();
+                s.triggerSource = current_->triggerSource();
+                s.triggerEdge = current_->triggerEdge();
             }
         }
         emit stateChanged(s);
@@ -199,16 +228,28 @@ namespace pva
 
     void CameraService::softwareTrigger()
     {
-        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty())
+        {
+            emit statusChanged(false, "Cameras are in production use");
+            return;
+        }
         QString error;
-        if (!current_) { emit statusChanged(false, "No camera selected"); return; }
+        if (!current_)
+        {
+            emit statusChanged(false, "No camera selected");
+            return;
+        }
         if (current_ && !current_->softwareTrigger(&error))
             markCameraFault(current_->userId(), error);
     }
 
     void CameraService::applyExposure(double requested)
     {
-        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty())
+        {
+            emit statusChanged(false, "Cameras are in production use");
+            return;
+        }
         QString e;
         if (current_ && !current_->setExposure(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -217,7 +258,11 @@ namespace pva
 
     void CameraService::applyGain(double requested)
     {
-        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty())
+        {
+            emit statusChanged(false, "Cameras are in production use");
+            return;
+        }
         QString e;
         if (current_ && !current_->setGain(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -226,7 +271,11 @@ namespace pva
 
     void CameraService::applyWidth(double requested)
     {
-        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty())
+        {
+            emit statusChanged(false, "Cameras are in production use");
+            return;
+        }
         QString e;
         if (current_ && !current_->setWidth(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -235,7 +284,11 @@ namespace pva
 
     void CameraService::applyHeight(double requested)
     {
-        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty())
+        {
+            emit statusChanged(false, "Cameras are in production use");
+            return;
+        }
         QString e;
         if (current_ && !current_->setHeight(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -244,7 +297,11 @@ namespace pva
 
     void CameraService::applyOffsetX(double requested)
     {
-        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty())
+        {
+            emit statusChanged(false, "Cameras are in production use");
+            return;
+        }
         QString e;
         if (current_ && !current_->setOffsetX(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -253,7 +310,11 @@ namespace pva
 
     void CameraService::applyOffsetY(double requested)
     {
-        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty())
+        {
+            emit statusChanged(false, "Cameras are in production use");
+            return;
+        }
         QString e;
         if (current_ && !current_->setOffsetY(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -262,7 +323,11 @@ namespace pva
 
     void CameraService::applyTriggerMode(int requested)
     {
-        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty())
+        {
+            emit statusChanged(false, "Cameras are in production use");
+            return;
+        }
         QString e;
         if (current_ && !current_->setTriggerMode(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -271,7 +336,11 @@ namespace pva
 
     void CameraService::applyTriggerSource(int requested)
     {
-        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty())
+        {
+            emit statusChanged(false, "Cameras are in production use");
+            return;
+        }
         QString e;
         if (current_ && !current_->setTriggerSource(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -280,7 +349,11 @@ namespace pva
 
     void CameraService::applyTriggerEdge(int requested)
     {
-        if (!streamOwner_.isEmpty()) { emit statusChanged(false, "Cameras are in production use"); return; }
+        if (!streamOwner_.isEmpty())
+        {
+            emit statusChanged(false, "Cameras are in production use");
+            return;
+        }
         QString e;
         if (current_ && !current_->setTriggerEdge(requested, &e))
             markCameraFault(current_->userId(), e);
@@ -312,7 +385,8 @@ namespace pva
             if (!value->open(&error) || !applyConfiguredParameters(*value, config_.camera.onlineCropRoi, true, &error) ||
                 !value->setTriggerSource(0, &error) || !value->setTriggerMode(true, &error) || !value->startStream(&error))
             {
-                if (error.isEmpty()) error = "Cannot configure production camera: " + userId;
+                if (error.isEmpty())
+                    error = "Cannot configure production camera: " + userId;
                 markCameraFault(userId, error);
                 break;
             }
@@ -330,18 +404,22 @@ namespace pva
         publishState();
         emit onlineCameraStarted(session_);
         emit statusChanged(true, QString("Online cameras started: %1, %2")
-                            .arg(CameraRole::Cam1, CameraRole::Cam2));
+                                     .arg(CameraRole::Cam1, CameraRole::Cam2));
     }
 
     void CameraService::stopOnlineCameras(quint64 requestId)
     {
-        try {
-            if (streamOwner_ == "online") saveRememberedExposures();
+        try
+        {
+            if (streamOwner_ == "online")
+                saveRememberedExposures();
             plcExposureOverrides_.clear();
             closeAll();
-            for (const auto &id : CameraRole::Stereo) {
+            for (const auto &id : CameraRole::Stereo)
+            {
                 auto *value = camera(id);
-                if (value && (value->isOpen() || value->isStreaming())) {
+                if (value && (value->isOpen() || value->isStreaming()))
+                {
                     const QString error = "Camera failed to close: " + id;
                     markCameraFault(id, error);
                     emit onlineCameraStopFailed(requestId, error);
@@ -350,38 +428,52 @@ namespace pva
             }
             // 无在线流也确认此次请求，编号不使用旧生产会话编号。
             emit onlineCameraStopped(requestId);
-        } catch (const std::exception &error) {
+        }
+        catch (const std::exception &error)
+        {
             emit onlineCameraStopFailed(requestId, QString::fromUtf8(error.what()));
         }
     }
 
     void CameraService::triggerOnlineCameras(quint64 generation)
     {
-        if (streamOwner_ != "online" || captureQueue_.size() >= 16) {
-            emit onlineCameraFailed("Stereo capture unavailable or queue full", session_); return;
+        if (streamOwner_ != "online" || captureQueue_.size() >= 16)
+        {
+            emit onlineCameraFailed("Stereo capture unavailable or queue full", session_);
+            return;
         }
-        captureQueue_.enqueue({0, generation}); pumpCapture();
+        captureQueue_.enqueue({0, generation});
+        pumpCapture();
     }
     void CameraService::triggerOnlineFacet(int requestId)
     {
-        if (streamOwner_ != "online" || captureQueue_.size() >= 16) {
-            emit onlineFacetTriggerFailed(requestId, "Camera 2 unavailable or queue full"); return;
+        if (streamOwner_ != "online" || captureQueue_.size() >= 16)
+        {
+            emit onlineFacetTriggerFailed(requestId, "Camera 2 unavailable or queue full");
+            return;
         }
-        captureQueue_.enqueue({requestId, 0}); pumpCapture();
+        captureQueue_.enqueue({requestId, 0});
+        pumpCapture();
     }
     void CameraService::pumpCapture()
     {
-        if (activeCapture_ || captureQueue_.isEmpty() || streamOwner_ != "online") return;
+        if (activeCapture_ || captureQueue_.isEmpty() || streamOwner_ != "online")
+            return;
         activeCapture_ = captureQueue_.dequeue();
-        gotCam1_ = activeCapture_->facetId != 0; gotCam2_ = false;
+        gotCam1_ = activeCapture_->facetId != 0;
+        gotCam2_ = false;
         captureTimeout_->start();
         const auto roles = activeCapture_->facetId ? QStringList{CameraRole::Cam2} : CameraRole::Stereo;
-        for (const auto &id : roles) {
+        for (const auto &id : roles)
+        {
             QString error;
             auto *value = camera(id);
-            if (!value || !value->softwareTrigger(&error)) {
+            if (!value || !value->softwareTrigger(&error))
+            {
                 markCameraFault(id, "Capture trigger failed: " + error);
-                closeAll(); emit onlineCameraFailed("Capture trigger failed: " + error, session_); return;
+                closeAll();
+                emit onlineCameraFailed("Capture trigger failed: " + error, session_);
+                return;
             }
         }
     }
@@ -428,21 +520,37 @@ namespace pva
             QMutexLocker lock(&previewMutex_);
             previewFrame_ = frame;
         }
-        if (onlineCamera && activeCapture_) {
-            if (activeCapture_->facetId) {
-                if (userId == CameraRole::Cam2) { gotCam2_ = true; emit facetFrameCaptured(activeCapture_->facetId, frame); }
-            } else {
-                if (userId == CameraRole::Cam1 && !gotCam1_) {
-                    gotCam1_ = true; emit cameraFrameCaptured(userId, frame, timestampNs, activeCapture_->generation);
-                } else if (userId == CameraRole::Cam2 && !gotCam2_) {
-                    gotCam2_ = true; emit cameraFrameCaptured(userId, frame, timestampNs, activeCapture_->generation);
+        if (onlineCamera && activeCapture_)
+        {
+            if (activeCapture_->facetId)
+            {
+                if (userId == CameraRole::Cam2)
+                {
+                    gotCam2_ = true;
+                    emit facetFrameCaptured(activeCapture_->facetId, frame);
+                }
+            }
+            else
+            {
+                if (userId == CameraRole::Cam1 && !gotCam1_)
+                {
+                    gotCam1_ = true;
+                    emit cameraFrameCaptured(userId, frame, timestampNs, activeCapture_->generation);
+                }
+                else if (userId == CameraRole::Cam2 && !gotCam2_)
+                {
+                    gotCam2_ = true;
+                    emit cameraFrameCaptured(userId, frame, timestampNs, activeCapture_->generation);
                 }
             }
         }
         if (value)
             value->frameConsumed();
-        if (activeCapture_ && gotCam1_ && gotCam2_) {
-            activeCapture_.reset(); captureTimeout_->stop(); pumpCapture();
+        if (activeCapture_ && gotCam1_ && gotCam2_)
+        {
+            activeCapture_.reset();
+            captureTimeout_->stop();
+            pumpCapture();
         }
     }
 
@@ -467,11 +575,12 @@ namespace pva
         else
             cv::cvtColor(frame, gray, frame.channels() == 4 ? cv::COLOR_BGRA2GRAY : cv::COLOR_BGR2GRAY);
         const cv::Rect roi = effectiveAutoExposureRoi(measurementRois_, userId == CameraRole::Cam1 ? 1 : 2,
-                                        userId == CameraRole::Cam1
-                                            ? config_.measurement.autoExposureRoiCamera1
-                                            : config_.measurement.autoExposureRoiCamera2,
-                                        gray.size());
-        if (roi.empty()) return {};
+                                                      userId == CameraRole::Cam1
+                                                          ? config_.measurement.autoExposureRoiCamera1
+                                                          : config_.measurement.autoExposureRoiCamera2,
+                                                      gray.size());
+        if (roi.empty())
+            return {};
         return cv::mean(gray(roi))[0];
     }
 
@@ -481,7 +590,8 @@ namespace pva
         if (timestampNs - lastExposureAdjustNs_.value(value.userId(), 0) < minimumDelta)
             return;
         const auto mean = autoExposureMean(value.userId(), frame);
-        if (!mean) return;
+        if (!mean)
+            return;
         const double target = std::max(config_.camera.autoExposureTarget, 1.0);
         const double error = target - *mean;
         lastExposureAdjustNs_[value.userId()] = timestampNs;
@@ -491,7 +601,8 @@ namespace pva
                                        std::min(config_.camera.autoExposureMinUs, config_.camera.autoExposureMaxUs),
                                        std::max(config_.camera.autoExposureMinUs, config_.camera.autoExposureMaxUs));
         QString exposureError;
-        if (!value.setExposure(next, &exposureError)) {
+        if (!value.setExposure(next, &exposureError))
+        {
             markCameraFault(value.userId(), "Auto exposure failed: " + exposureError);
             return;
         }
@@ -524,8 +635,10 @@ namespace pva
     void CameraService::closeAll()
     {
         captureTimeout_->stop();
-        captureQueue_.clear(); activeCapture_.reset();
-        for (const auto &[id, device] : cameras_) device->close();
+        captureQueue_.clear();
+        activeCapture_.reset();
+        for (const auto &[id, device] : cameras_)
+            device->close();
         // SDK 已停止回调；关闭前已排队的帧和错误不能进入下一次采集。
         ++deliveryEpoch_;
         streamOwner_.clear();

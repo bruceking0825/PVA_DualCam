@@ -149,9 +149,11 @@ namespace
         const double right = roi.x + roi.width - 1;
         const double bottom = roi.y + roi.height - 1;
         out.push_back({pva::OverlayType::Polyline,
-                       {{double(roi.x), double(roi.y)}, {right, double(roi.y)},
-                        {right, bottom}, {double(roi.x), bottom}},
-                       {0, 255, 0}, 1, true, true});
+                       {{double(roi.x), double(roi.y)}, {right, double(roi.y)}, {right, bottom}, {double(roi.x), bottom}},
+                       {0, 255, 0},
+                       1,
+                       true,
+                       true});
     }
 
     void initializeCrownDiagnostics(pva::MeasurementResult &result)
@@ -256,8 +258,8 @@ namespace pva
             result.message = "Brightness is outside configured limits";
             result.values = state_.values;
             result.diagnostics["processing_time_ms"] = std::chrono::duration<double, std::milli>(
-                                                 std::chrono::steady_clock::now() - started)
-                                                 .count();
+                                                           std::chrono::steady_clock::now() - started)
+                                                           .count();
             return result;
         }
         if (stage == MeasurementStage::Neck || stage == MeasurementStage::Crown ||
@@ -265,19 +267,20 @@ namespace pva
         {
             const double previousDiameter = state_.values.diameterMm.value_or(0.0);
             result.data.hasDiameter = true;
-            result.data.cameras[0] = {previousDiameter, 0.0, 0.0, 0.0, 0.0,
-                                      {result.preview1.cols * 0.5, result.preview1.rows * 0.5}};
-            result.data.cameras[1] = {previousDiameter, 0.0, 0.0, 0.0, 0.0,
-                                      {result.preview2.cols * 0.5, result.preview2.rows * 0.5}};
-            for (int camera = 0; camera < 2; ++camera) {
+            result.data.cameras[0] = {previousDiameter, 0.0, 0.0, 0.0, 0.0, {result.preview1.cols * 0.5, result.preview1.rows * 0.5}};
+            result.data.cameras[1] = {previousDiameter, 0.0, 0.0, 0.0, 0.0, {result.preview2.cols * 0.5, result.preview2.rows * 0.5}};
+            for (int camera = 0; camera < 2; ++camera)
+            {
                 const auto &image = camera == 0 ? result.preview1 : result.preview2;
                 auto &data = result.data.cameras[camera];
                 int pixelCount = 0;
-                if (rois_.diameter) {
+                if (rois_.diameter)
+                {
                     const auto roi = diameterRoiRect(*rois_.diameter, config_.measurement.diaRectHeightPx,
                                                      camera + 1, image.size());
                     pixelCount = roi.area();
-                    if (pixelCount > 0) {
+                    if (pixelCount > 0)
+                    {
                         const auto pixels = image(roi);
                         data.average = cv::mean(pixels)[0];
                         cv::minMaxLoc(pixels, &data.minimum, &data.maximum);
@@ -309,8 +312,8 @@ namespace pva
             result.data = {};
         result.values = state_.values;
         result.diagnostics["processing_time_ms"] = std::chrono::duration<double, std::milli>(
-                                             std::chrono::steady_clock::now() - started)
-                                             .count();
+                                                       std::chrono::steady_clock::now() - started)
+                                                       .count();
         return result;
     }
 
@@ -480,6 +483,5 @@ namespace pva
         addCurveOverlay(*second, r.overlay2);
         return {true, "Body meniscus lower vertices updated"};
     }
-
 
 }

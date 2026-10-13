@@ -5,8 +5,7 @@
 #include <cmath>
 #include <limits>
 
-extern "C" __declspec(noinline)
-bool debugSaveImage(const char *path, const cv::Mat *image)
+extern "C" __declspec(noinline) bool debugSaveImage(const char *path, const cv::Mat *image)
 {
     if (!path || !image || image->empty())
         return false;

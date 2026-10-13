@@ -51,7 +51,7 @@ int main(int argc, char *argv[])
     QApplication::setApplicationName("PVA DualCam C++");
     qRegisterMetaType<pva::MeasurementResult>("pva::MeasurementResult");
     qRegisterMetaType<cv::Mat>("cv::Mat");
-    application.setWindowIcon(QIcon(":/images/images/images/zhonghuan.png"));
+    application.setWindowIcon(QIcon(":/app/zh1.ico"));
     pva::MainWindow window;
     window.show();
     return application.exec();

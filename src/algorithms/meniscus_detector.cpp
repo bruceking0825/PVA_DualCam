@@ -349,7 +349,7 @@ namespace pva::algorithms
         {
             double maximum = 0.0;
             cv::minMaxLoc(brightness(cv::Rect(searchStart - processingRoi.x, y - processingRoi.y,
-                                               searchStop - searchStart, 1)),
+                                              searchStop - searchStart, 1)),
                           nullptr, &maximum);
             if (maximum > std::numeric_limits<double>::epsilon())
                 usableMaxima.push_back(maximum);
