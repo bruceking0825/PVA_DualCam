@@ -1,6 +1,6 @@
 #include "image_storage.hpp"
 #include "overlay_render.hpp"
-#include <QCoreApplication>
+#include <QGuiApplication>
 #include <QTemporaryDir>
 #include <QDir>
 #include <QFile>
@@ -20,11 +20,46 @@ QImage expected(const pva::MeasurementResult &result, const pva::MeasurementConf
     auto overlay1 = result.overlay1, overlay2 = result.overlay2;
     pva::appendDisplayRois(config, rois, result.stage, result.preview1.size(), result.preview2.size(), overlay1, overlay2);
     return pva::renderOverlayImage(camera == 1 ? result.preview1 : result.preview2,
-                                  camera == 1 ? overlay1 : overlay2).convertToFormat(QImage::Format_RGB32);
+                                  camera == 1 ? overlay1 : overlay2, &result.regionStatistics[camera - 1]).convertToFormat(QImage::Format_RGB32);
 }
 }
 int main(int argc, char **argv) {
-    QCoreApplication app(argc, argv);
+#ifdef Q_OS_WIN
+    qputenv("QT_QPA_FONTDIR", qgetenv("WINDIR") + "/Fonts");
+#endif
+    QGuiApplication app(argc, argv);
+    {
+        const std::optional<pva::GrayStats> statistics = pva::GrayStats{123.4, 220, 10};
+        const cv::Mat source(300, 800, CV_8U, cv::Scalar(83));
+        const auto plain = pva::renderOverlayImage(source, {});
+        const auto exported = pva::renderOverlayImage(source, {}, &statistics);
+        auto expectedLarge = plain.copy();
+        QPainter largePainter(&expectedLarge);
+        largePainter.setRenderHint(QPainter::Antialiasing);
+        pva::drawRegionStatistics(largePainter, statistics, 36);
+        largePainter.end();
+        auto viewSized = plain.copy();
+        QPainter smallPainter(&viewSized);
+        pva::drawRegionStatistics(smallPainter, statistics, 12);
+        smallPainter.end();
+        QRect largeBounds, smallBounds;
+        bool greenOnly = true;
+        int pureGreen = 0;
+        for (int y = 0; y < plain.height(); ++y)
+            for (int x = 0; x < plain.width(); ++x) {
+                const auto color = exported.pixelColor(x, y);
+                if (color != plain.pixelColor(x, y)) {
+                    largeBounds |= QRect(x, y, 1, 1);
+                    greenOnly = greenOnly && color.green() > color.red() && color.green() > color.blue();
+                    if (color == QColor(Qt::green)) ++pureGreen;
+                }
+                if (viewSized.pixelColor(x, y) != plain.pixelColor(x, y)) smallBounds |= QRect(x, y, 1, 1);
+            }
+        check(exported == expectedLarge && largeBounds.height() > 2 * smallBounds.height(),
+              "Saved statistics use 36pt while view rendering uses 12pt");
+        check(greenOnly && pureGreen > 0 && exported.pixelColor(8, 8) == QColor(83, 83, 83),
+              "Statistics are pure green with antialiased edges and no background or outline");
+    }
     QTemporaryDir directory;
     if (!directory.isValid()) return 1;
     pva::MeasurementConfig config;
@@ -36,6 +71,8 @@ int main(int argc, char **argv) {
     rois.diameter = std::array<double, 8>{70, 40, 0, 90, 10, 20, -10, 0};
     rois.dip = std::array<double, 3>{60, 30, 20};
     pva::MeasurementResult result;
+    result.regionStatistics[0] = pva::GrayStats{17, 30, 10};
+    result.regionStatistics[1] = pva::GrayStats{37, 60, 20};
     result.preview1 = cv::Mat(80, 100, CV_8U, cv::Scalar(17));
     result.preview2 = cv::Mat(80, 100, CV_8U, cv::Scalar(37));
     result.overlay1.push_back({pva::OverlayType::Line, {{10, 20}, {80, 20}}, {0, 0, 255}, 2});
@@ -62,17 +99,21 @@ int main(int argc, char **argv) {
     const auto color2 = expected(result, config, rois, 2).pixelColor(6, 10);
     check(color1.green() > color1.red() && color1.green() > color1.blue(), "PLC exposure ROI exports green");
     check(color2.blue() > color2.red() && color2.blue() > color2.green(), "Local exposure ROI exports blue");
+    const auto queuedExport = expected(result, config, rois, 1);
     storage.saveMeasurement(result, config, rois);
+    result.regionStatistics[0]->average = 99;
     config.measurement.autoExposureRoiCamera1 = {1, 1, 2, 2};
     rois.melt.reset();
     storage.flush();
-    check(QImage(path1).pixelColor(40, 35).green() > 100, "Queued export retains original ROI snapshot");
+    check(QImage(path1).convertToFormat(QImage::Format_RGB32) == queuedExport,
+          "Queued export retains original ROI and statistics snapshot");
     const auto previous1 = QImage(path1);
     result.preview1.release();
     result.preview2 = cv::Mat(80, 100, CV_8U, cv::Scalar(87));
     storage.saveMeasurement(result, config, rois);
     storage.flush();
-    check(QImage(path1) == previous1 && QImage(path2).pixelColor(90, 70).red() == 87,
+    check(QImage(path1) == previous1 &&
+          QImage(path2).convertToFormat(QImage::Format_RGB32) == expected(result, config, rois, 2),
           "Empty camera1 preserves old BMP while camera2 updates");
     check(errors.size() == 1 && errors.back().contains(path1), "Empty image error includes full path");
     result.preview1 = cv::Mat(80, 100, CV_8U, cv::Scalar(67));
@@ -110,11 +151,12 @@ int main(int argc, char **argv) {
           "Full queue reports failure without blocking or replacing accepted work");
     storage.flush();
     const auto finalImage = QImage(path1);
-    check(finalImage.size() == QSize(100, 80) && finalImage.pixelColor(90, 70).red() == 67,
+    check(finalImage.size() == QSize(100, 80) &&
+          finalImage.convertToFormat(QImage::Format_RGB32) == expected(result, config, rois, 1),
           "Flush completes accepted exports at original dimensions");
     storage.save(directory.filePath("facettes"), 1, result.preview1);
     storage.flush();
-    check(QImage(directory.filePath("facettes/Facette1.bmp")).pixelColor(90, 70).red() == 67,
+    check(QImage(directory.filePath("facettes/Facette1.bmp")).pixelColor(99, 79).red() == 67,
           "Facette grayscale saving remains unchanged");
     pva::ImageStorage continuous;
     QStringList continuousErrors;
@@ -140,8 +182,9 @@ int main(int argc, char **argv) {
     continuous.saveContinuous(result, config, rois, time.addSecs(1));
     continuous.flush();
     const auto overlayPng = QImage(QDir(config.runtime.continuousSaveDir).filePath("20261012_153046.png"));
-    check(overlayPng.pixelColor(40, 20).red() > overlayPng.pixelColor(40, 20).green(),
-          "Overlay enabled includes colored measurement lines");
+    check(overlayPng.copy(0, 0, 100, 40).convertToFormat(QImage::Format_RGB32) == expected(result, config, rois, 1) &&
+          overlayPng.copy(0, 40, 80, 30).convertToFormat(QImage::Format_RGB32) == expected(result, config, rois, 2),
+          "Overlay PNG includes matching statistics and geometry at each camera's own top-left");
     result.preview2.release();
     continuous.saveContinuous(result, config, rois, time.addSecs(2));
     continuous.flush();

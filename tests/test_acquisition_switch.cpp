@@ -1,6 +1,6 @@
 #include "runtime_controller.hpp"
 #include "camera_service.hpp"
-#include <QCoreApplication>
+#include <QGuiApplication>
 #include <QTemporaryDir>
 #include <QElapsedTimer>
 #include <QThread>
@@ -52,7 +52,7 @@ struct Fixture {
 };
 }
 int main(int argc, char **argv) {
-    QCoreApplication app(argc, argv);
+    QGuiApplication app(argc, argv);
     qRegisterMetaType<pva::MeasurementResult>("pva::MeasurementResult");
     {
         Fixture f;

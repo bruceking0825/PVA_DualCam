@@ -67,7 +67,7 @@ namespace pva
         return imageStats(image, meltRoiRect(v, camera, image.size()));
     }
 
-    std::optional<double> dipLineMean(const cv::Mat &image,
+    std::optional<GrayStats> dipLineStats(const cv::Mat &image,
                                       const std::array<double, 3> &v)
     {
         if (image.empty())
@@ -77,7 +77,7 @@ namespace pva
         const int bottom = std::min(image.rows, cvRound(v[1] + v[2] / 2.0) + 1);
         if (x < 0 || x >= image.cols || top >= bottom)
             return {};
-        return cv::mean(image(cv::Rect(x, top, 1, bottom - top)))[0];
+        return imageStats(image, cv::Rect(x, top, 1, bottom - top));
     }
 
 }

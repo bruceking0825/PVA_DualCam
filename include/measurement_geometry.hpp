@@ -10,7 +10,6 @@ namespace pva
         std::optional<std::array<double, 3>> dip;
     };
 
-    struct GrayStats { double average{}, maximum{}, minimum{}; };
     cv::Rect diameterRoiRect(const std::array<double, 8> &values, double height, int camera, cv::Size size);
     cv::Rect meltRoiRect(const std::array<double, 6> &values, int camera, cv::Size size);
     cv::Rect effectiveAutoExposureRoi(const MeasurementRois &rois, int camera,
@@ -18,6 +17,6 @@ namespace pva
     std::optional<GrayStats> meltRoiStats(const cv::Mat &image,
                                             const std::array<double, 6> &values,
                                             int camera);
-    std::optional<double> dipLineMean(const cv::Mat &image,
+    std::optional<GrayStats> dipLineStats(const cv::Mat &image,
                                       const std::array<double, 3> &values);
 }

@@ -142,9 +142,9 @@ int main(int argc, char **argv)
         sample1.at<uchar>(5, 5) = 30;
         const auto melt1 = pva::meltRoiStats(sample1, *plcRois.melt, 1);
         const auto melt2 = pva::meltRoiStats(sample2, *plcRois.melt, 2);
-        const auto dip = pva::dipLineMean(sample1, *plcRois.dip);
+        const auto dip = pva::dipLineStats(sample1, *plcRois.dip);
         check(melt1 && melt2 && melt1->maximum == 30 && melt2->average == 20 &&
-                  dip && *dip > 10 && *dip < 30,
+                  dip && dip->average > 10 && dip->average < 30,
               "Melt rectangles and Dip vertical line measure image pixels");
         pva::MeasurementConfig statsConfig = parsed;
         statsConfig.measurement.brightnessMin = 0;
@@ -156,6 +156,23 @@ int main(int argc, char **argv)
         check(meltResult.valid && meltResult.diagnostics.contains("melt_average_camera1") &&
                   dipResult.valid && dipResult.diagnostics.contains("dip_line_average_camera1"),
               "Melt and Dip stages produce measurement diagnostics");
+        check(meltResult.regionStatistics[0] && meltResult.regionStatistics[1] &&
+                  meltResult.regionStatistics[0]->maximum == melt1->maximum &&
+                  meltResult.regionStatistics[1]->minimum == melt2->minimum &&
+                  dipResult.regionStatistics[0] && !dipResult.regionStatistics[1] &&
+                  dipResult.regionStatistics[0]->average == dip->average &&
+                  dipResult.regionStatistics[0]->maximum == dip->maximum &&
+                  dipResult.regionStatistics[0]->minimum == dip->minimum,
+              "Melt keeps both region statistics and Dip keeps only Camera 1 line statistics");
+        const auto blackDip = pva::dipLineStats(cv::Mat::zeros(sample1.size(), CV_8U), *plcRois.dip);
+        check(blackDip && blackDip->average == 0 && blackDip->maximum == 0 && blackDip->minimum == 0,
+              "Black valid line has zero statistics rather than missing statistics");
+        pva::MeasurementRois failedFitRois;
+        failedFitRois.diameter = std::array<double, 8>{8, 6, 0, 90, 1, 4, 0, 0};
+        statsEngine.setMeasurementRois(failedFitRois);
+        const auto failedFit = statsEngine.process(sample1, sample2, pva::MeasurementStage::Crown);
+        check(!failedFit.valid && failedFit.regionStatistics[0] && failedFit.regionStatistics[1],
+              "Completed rectangle statistics survive a failed curve measurement");
         check(pva::measurementPayloadValues(meltResult).size() == 7 &&
                   pva::measurementPayloadValues(meltResult)[0] == 0.0 &&
                   std::abs(pva::measurementPayloadValues(meltResult)[1] - melt1->average) < 0.001 &&
@@ -165,7 +182,7 @@ int main(int argc, char **argv)
                   pva::measurementPayloadValues(meltResult)[5] == melt2->maximum &&
                   pva::measurementPayloadValues(meltResult)[6] == melt2->minimum &&
                   pva::measurementPayloadValues(dipResult).size() == 1 &&
-                  std::abs(pva::measurementPayloadValues(dipResult)[0] - *dip) < 0.001,
+                  std::abs(pva::measurementPayloadValues(dipResult)[0] - dip->average) < 0.001,
               "Melt and Dip PLC fields are calculated by the measurement engine");
 
         QTemporaryDir plcStateDir;
@@ -487,6 +504,11 @@ int main(int argc, char **argv)
                   "PLC gray fields use only the selected rectangle");
             check(result.diagnostics.at("diameter_roi_pixel_count_camera" + std::to_string(camera + 1)).toInt() == count,
                   "Process rectangle pixel count matches the statistical area");
+            check(result.regionStatistics[camera].has_value() == (count > 0) &&
+                  (!count || (result.regionStatistics[camera]->average == average &&
+                              result.regionStatistics[camera]->maximum == maximum &&
+                              result.regionStatistics[camera]->minimum == minimum)),
+                  "Result keeps optional rectangle statistics independently for each camera");
         }
         return result;
     };

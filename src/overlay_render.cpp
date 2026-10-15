@@ -1,6 +1,7 @@
 #include "overlay_render.hpp"
 #include "plc_runtime.hpp"
 #include <QPainter>
+#include <QFontMetrics>
 #include <opencv2/imgproc.hpp>
 
 namespace pva
@@ -60,7 +61,26 @@ namespace pva
         if (stage != MeasurementStage::Melt)
             appendPlcRoiOverlays(rois, stage, config.measurement.diaRectHeightPx, overlay1, overlay2);
     }
-    QImage renderOverlayImage(const cv::Mat &image, const std::vector<OverlayElement> &overlay)
+    QString regionStatisticsText(const std::optional<GrayStats> &statistics)
+    {
+        if (!statistics) return "average: --\nmax: --\nmin: --";
+        return QString("average: %1\nmax: %2\nmin: %3")
+            .arg(statistics->average, 0, 'f', 1).arg(statistics->maximum, 0, 'f', 1).arg(statistics->minimum, 0, 'f', 1);
+    }
+    void drawRegionStatistics(QPainter &painter, const std::optional<GrayStats> &statistics, int pointSize)
+    {
+        painter.save();
+        const QFont font("Segoe UI", pointSize);
+        painter.setFont(font);
+        const auto text = regionStatisticsText(statistics);
+        QRect bounds = QFontMetrics(font, painter.device()).boundingRect(QRect(0, 0, 1000, 1000), Qt::AlignLeft | Qt::AlignTop, text);
+        bounds.moveTopLeft(QPoint(12, 12));
+        painter.setPen(Qt::green);
+        painter.drawText(bounds, Qt::AlignLeft | Qt::AlignTop, text);
+        painter.restore();
+    }
+    QImage renderOverlayImage(const cv::Mat &image, const std::vector<OverlayElement> &overlay,
+                              const std::optional<GrayStats> *statistics)
     {
         if (image.empty())
             return {};
@@ -83,6 +103,7 @@ namespace pva
             painter.drawPath(overlayPath(e));
             painter.restore();
         }
+        if (statistics) drawRegionStatistics(painter, *statistics, 36);
         painter.end();
         return output;
     }

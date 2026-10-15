@@ -5,12 +5,14 @@
 #include <QTabWidget>
 #include <QWheelEvent>
 #include <QMouseEvent>
+#include <QFontMetrics>
 #include <QTreeWidget>
 #include <QPushButton>
 #include <QFileInfo>
 #include <QPixmap>
 #include "sherlock_protocol.hpp"
 #include "custom_graphics_view.hpp"
+#include "overlay_render.hpp"
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -58,6 +60,9 @@ int main(int argc, char **argv)
 {
     using pva::SherlockCommand;
     using pva::MeasurementResult;
+#ifdef Q_OS_WIN
+    qputenv("QT_QPA_FONTDIR", qgetenv("WINDIR") + "/Fonts");
+#endif
     QApplication app(argc, argv);
     QTemporaryDir temporary;
     check(temporary.isValid(), "Temporary test directory");
@@ -159,6 +164,9 @@ int main(int argc, char **argv)
     display.rois.melt = std::array<double, 6>{20, 15, 4, 4, 12, 7};
     runtime.stateChanged(display);
     pva::MeasurementResult picture;
+    picture.stage = pva::MeasurementStage::Melt;
+    picture.regionStatistics[0] = pva::GrayStats{100, 200, 10};
+    picture.regionStatistics[1] = pva::GrayStats{50, 90, 0};
     picture.diagnostics["processing_time_ms"] = 12.345;
     for (int camera = 1; camera <= 2; ++camera) {
         const auto suffix = "_camera" + std::to_string(camera);
@@ -177,6 +185,13 @@ int main(int argc, char **argv)
           "Display result reaches page");
     check(until([&] { return info1->text().endsWith("Mean 100.0"); }), "Offline exposure-disabled Mean uses PLC ROI");
     auto *processingLabel = page.findChild<QLabel *>("lblCycle");
+    check(main1->regionStatistics() && main1->regionStatistics()->average == 100 &&
+          main2->regionStatistics() && main2->regionStatistics()->minimum == 0,
+          "Two views receive their own result region statistics");
+    check(pva::regionStatisticsText(main1->regionStatistics()) == "average: 100.0\nmax: 200.0\nmin: 10.0" &&
+          pva::regionStatisticsText({}) == "average: --\nmax: --\nmin: --" &&
+          pva::regionStatisticsText(pva::GrayStats{}) == "average: 0.0\nmax: 0.0\nmin: 0.0",
+          "Statistics use three lowercase labels and distinguish missing from zero");
     auto *timingLabel = page.findChild<QLabel *>("lblTriggerToResultTime");
     check(processingLabel && timingLabel && processingLabel->text() == "Processing time: 12.3 ms" &&
           timingLabel->text() == "Trigger to result time: --",
@@ -256,7 +271,49 @@ int main(int argc, char **argv)
         QMetaObject::invokeMethod(&page, "renderLatest", Qt::DirectConnection);
     };
     const QPoint wheelPosition = main1->mapFromScene(QPointF(20, 15));
+    page.setDisplayPaused(true);
+    picture.diagnostics["diameter_roi_mean_camera1"] = 88.0;
+    submitDisplay(60.0);
+    submitDisplay(70.0);
+    const auto pausedRoi = paths(main1, Qt::green).front()->path().boundingRect();
+    display.rois.melt = std::array<double, 6>{25, 15, 4, 4, 12, 7};
+    runtime.stateChanged(display);
+    detailsTabs->setCurrentWidget(processTab);
+    check(processingLabel->text() == "Processing time: 12.3 ms" && diagnosticValue() == "75.000" &&
+          paths(main1, Qt::green).front()->path().boundingRect() == pausedRoi,
+          "Window drag pause defers frames, Process and parameter-triggered overlay redraws");
+    display.rois.melt = std::array<double, 6>{20, 15, 4, 4, 12, 7};
+    runtime.stateChanged(display);
+    page.setDisplayPaused(false);
+    check(processingLabel->text() == "Processing time: 70.0 ms" && diagnosticValue() == "88.000",
+          "Window drag resume immediately renders only the newest cached result and diagnostics");
+    detailsTabs->setCurrentWidget(resultsTab);
+    picture.diagnostics["diameter_roi_mean_camera1"] = 75.0;
+    submitDisplay(12.345);
     const auto beforeZoom = main1->transform();
+    const auto beforeZoomExport = main1->renderedImage();
+    const auto textPixels = [&] {
+        const auto image = main1->viewport()->grab().toImage();
+        QImage glyphs(image.size(), QImage::Format_ARGB32);
+        glyphs.setDotsPerMeterX(qRound(main1->viewport()->logicalDpiX() / 0.0254));
+        glyphs.setDotsPerMeterY(qRound(main1->viewport()->logicalDpiY() / 0.0254));
+        glyphs.fill(Qt::transparent);
+        QPainter textPainter(&glyphs);
+        pva::drawRegionStatistics(textPainter, main1->regionStatistics(), 12);
+        textPainter.end();
+        auto area = QFontMetrics(QFont("Segoe UI", 12), main1->viewport()).boundingRect(
+            QRect(0, 0, 1000, 1000), Qt::AlignLeft | Qt::AlignTop,
+            pva::regionStatisticsText(main1->regionStatistics()));
+        area.moveTopLeft(QPoint(12, 12));
+        area &= image.rect();
+        std::vector<QPoint> green;
+        for (int y = area.top(); y <= area.bottom(); ++y)
+            for (int x = area.left(); x <= area.right(); ++x)
+                if (glyphs.pixelColor(x, y) == QColor(Qt::green) && image.pixelColor(x, y) == QColor(Qt::green))
+                    green.emplace_back(x, y);
+        return green;
+    };
+    const auto beforeZoomText = textPixels();
     QWheelEvent wheel(QPointF(wheelPosition), QPointF(main1->viewport()->mapToGlobal(wheelPosition)),
                       QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
     QApplication::sendEvent(main1->viewport(), &wheel);
@@ -278,6 +335,12 @@ int main(int argc, char **argv)
     check(until([&] { return processingLabel->text() == "Processing time: 40.0 ms"; }),
           "Drag release resumes pending display updates");
     check(main1->transform() == zoomTransform, "Resumed image refresh preserves the zoom transform");
+    const auto afterZoomText = textPixels();
+    check(!beforeZoomText.empty() && afterZoomText == beforeZoomText,
+          "Statistics stay in the same viewport pixels and font size after zoom and drag");
+    check(main1->renderedImage().size() == QSize(80, 50) &&
+          main1->renderedImage() == beforeZoomExport,
+          "View export preserves native size and statistics regardless of zoom");
     submitDisplay(12.345);
     check(info2->text().endsWith("Mean 200.0"), "Camera2 displayed Mean uses PLC offsets");
     check(paths(main1, Qt::green).size() == 1 && paths(main2, Qt::green).size() == 1 &&
@@ -291,6 +354,8 @@ int main(int argc, char **argv)
         display.stage = stage;
         display.rois.dip = std::array<double, 3>{50, 20, 10};
         runtime.stateChanged(display);
+        check(!main1->regionStatistics() && !main2->regionStatistics(),
+              "Changing stage clears statistics until a matching new result arrives");
         check(info1->text().endsWith("Mean 100.0") && paths(main1, Qt::green).size() == 1,
               "Dip and Neck show ROI using cached image");
         if (stage == pva::MeasurementStage::Dip)

@@ -332,6 +332,22 @@ if(BUILD_TESTING)
         target_link_options(page_command_tests PRIVATE /MANIFEST:NO /INCREMENTAL:NO)
     endif()
     add_test(NAME page_command_tests COMMAND page_command_tests)
+    add_executable(main_window_tests tests/test_main_window.cpp ${PVA_HOME_TEST_SOURCES}
+        src/main_window.cpp include/main_window.hpp ui/main.ui
+        src/page_camera.cpp include/page_camera.hpp ui/PageCamera.ui
+        src/page_parameters.cpp include/page_parameters.hpp ui/PageParameters.ui
+        src/app_services.cpp include/app_services.hpp)
+    set_property(TARGET main_window_tests PROPERTY AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/ui")
+    target_link_libraries(main_window_tests PRIVATE pva_runtime pva_camera ${PVA_QT_PACKAGE}::Widgets)
+    if(MSVC)
+        target_link_options(main_window_tests PRIVATE /MANIFEST:NO /INCREMENTAL:NO)
+    endif()
+    add_test(NAME main_window_tests COMMAND main_window_tests)
+    set_tests_properties(main_window_tests PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    if(WIN32)
+        set_tests_properties(main_window_tests PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:${PVA_QT_PACKAGE}::Core>;PATH=path_list_prepend:${OpenCV_DIR}/../bin")
+    endif()
     set_tests_properties(page_command_tests PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_executable(runtime_ui_benchmark tests/runtime_ui_benchmark.cpp ${PVA_HOME_TEST_SOURCES})
     set_property(TARGET runtime_ui_benchmark PROPERTY AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/ui")

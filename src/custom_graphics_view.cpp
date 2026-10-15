@@ -21,6 +21,23 @@
 
 namespace
 {
+    class RegionStatisticsWidget final : public QWidget
+    {
+    public:
+        explicit RegionStatisticsWidget(CustomGraphicsView *view) : QWidget(view->viewport()), view_(view)
+        {
+            setAttribute(Qt::WA_TransparentForMouseEvents);
+            setObjectName("regionStatisticsOverlay");
+        }
+    protected:
+        void paintEvent(QPaintEvent *) override
+        {
+            QPainter painter(this);
+            pva::drawRegionStatistics(painter, view_->regionStatistics(), 12);
+        }
+    private:
+        CustomGraphicsView *view_;
+    };
     QPixmap toPixmap(const cv::Mat &source)
     {
         if (source.channels() == 1 && source.depth() == CV_8U)
@@ -59,6 +76,8 @@ void CustomGraphicsView::setText(const QString &text)
     overlayGroup_ = nullptr;
     cursorItem_ = nullptr;
     image_.release();
+    regionStatistics_.reset();
+    if (statisticsWidget_) statisticsWidget_->update();
     fitted_ = false;
 }
 void CustomGraphicsView::showImage(const cv::Mat &image, bool preserveView)
@@ -109,6 +128,20 @@ void CustomGraphicsView::updateOverlays(const std::vector<pva::OverlayElement> &
     for (size_t i = used; i < overlayItems_.size(); ++i) overlayItems_[i]->hide();
 }
 
+void CustomGraphicsView::setRegionStatistics(std::optional<pva::GrayStats> statistics)
+{
+    regionStatistics_ = std::move(statistics);
+    showRegionStatistics_ = true;
+    if (!statisticsWidget_) statisticsWidget_ = new RegionStatisticsWidget(this);
+    statisticsWidget_->setGeometry(viewport()->rect());
+    statisticsWidget_->show();
+    statisticsWidget_->raise();
+    statisticsWidget_->update();
+}
+QImage CustomGraphicsView::renderedImage() const
+{
+    return pva::renderOverlayImage(image_, overlays_, showRegionStatistics_ ? &regionStatistics_ : nullptr);
+}
 void CustomGraphicsView::contextMenuEvent(QContextMenuEvent *event)
 {
     QMenu menu(this);
@@ -130,11 +163,7 @@ void CustomGraphicsView::savePng()
     const QString path = QFileDialog::getSaveFileName(this, "Save PNG", {}, "PNG Files (*.png)");
     if (path.isEmpty())
         return;
-    QImage output(sceneRect().size().toSize(), QImage::Format_ARGB32);
-    output.fill(Qt::black);
-    QPainter painter(&output);
-    scene_.render(&painter);
-    output.save(path);
+    renderedImage().save(path);
 }
 void CustomGraphicsView::saveFigure()
 {
@@ -287,8 +316,14 @@ void CustomGraphicsView::keyPressEvent(QKeyEvent *e)
 void CustomGraphicsView::resizeEvent(QResizeEvent *e)
 {
     QGraphicsView::resizeEvent(e);
+    if (statisticsWidget_) statisticsWidget_->setGeometry(viewport()->rect());
     if (!image_.empty() && !suppressResizeFit_)
         fitImage();
+}
+void CustomGraphicsView::scrollContentsBy(int dx, int dy)
+{
+    QGraphicsView::scrollContentsBy(dx, dy);
+    if (statisticsWidget_) statisticsWidget_->setGeometry(viewport()->rect());
 }
 void CustomGraphicsView::drawCursor(int x, int y)
 {

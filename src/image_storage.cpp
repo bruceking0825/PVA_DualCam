@@ -88,7 +88,7 @@ namespace pva
             const auto path = QDir(directory).filePath(QString("image%1.bmp").arg(camera));
             try {
                 const auto image = renderOverlayImage(camera == 1 ? snapshot.preview1 : snapshot.preview2,
-                                                       camera == 1 ? overlay1 : overlay2);
+                                                       camera == 1 ? overlay1 : overlay2, &snapshot.regionStatistics[camera - 1]);
                 if (image.isNull()) throw std::runtime_error("Measurement image is empty");
                 if (!QDir().mkpath(directory)) throw std::runtime_error("Cannot create measurement image directory");
                 QSaveFile file(path);
@@ -132,8 +132,10 @@ namespace pva
                 overlay1 = snapshot.overlay1; overlay2 = snapshot.overlay2;
                 appendDisplayRois(config, rois, snapshot.stage, snapshot.preview1.size(), snapshot.preview2.size(), overlay1, overlay2);
             }
-            const auto first = renderOverlayImage(snapshot.preview1, overlay1);
-            const auto second = renderOverlayImage(snapshot.preview2, overlay2);
+            const auto first = renderOverlayImage(snapshot.preview1, overlay1,
+                config.runtime.continuousSaveOverlay ? &snapshot.regionStatistics[0] : nullptr);
+            const auto second = renderOverlayImage(snapshot.preview2, overlay2,
+                config.runtime.continuousSaveOverlay ? &snapshot.regionStatistics[1] : nullptr);
             QImage combined(std::max(first.width(), second.width()), first.height() + second.height(), QImage::Format_RGB888);
             if (combined.isNull()) throw std::runtime_error("Cannot allocate continuous image");
             combined.fill(Qt::black);

@@ -44,6 +44,7 @@ namespace
 int main(int argc, char *argv[])
 {
     QApplication application(argc, argv);
+    application.setQuitOnLastWindowClosed(false);
     // Qt 5 defaults to WindowsVista while Qt 6 defaults to ModernWindows.
     // Fusion plus an explicit palette gives both builds the same drawing base.
     application.setStyle(QStyleFactory::create("Fusion"));

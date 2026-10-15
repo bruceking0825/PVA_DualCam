@@ -16,6 +16,9 @@ public:
     void setText(const QString &text);
     void showImage(const cv::Mat &image, bool preserveView = false);
     void updateOverlays(const std::vector<pva::OverlayElement> &elements);
+    void setRegionStatistics(std::optional<pva::GrayStats> statistics);
+    const std::optional<pva::GrayStats> &regionStatistics() const { return regionStatistics_; }
+    QImage renderedImage() const;
     bool isInteracting() const { return panning_ || (zoomClock_.isValid() && zoomClock_.elapsed() < 200); }
 signals:
     void pixelInfoChanged(int viewId, int x, int y, int gray);
@@ -27,6 +30,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void scrollContentsBy(int dx, int dy) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
 
 private:
@@ -36,6 +40,9 @@ private:
     std::vector<QGraphicsPathItem *> overlayItems_;
     QGraphicsItemGroup *cursorItem_{};
     cv::Mat image_;
+    std::optional<pva::GrayStats> regionStatistics_;
+    bool showRegionStatistics_{false};
+    QWidget *statisticsWidget_{};
     std::vector<pva::OverlayElement> overlays_;
     int viewId_{1};
     bool fitted_{false};

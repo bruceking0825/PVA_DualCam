@@ -284,6 +284,7 @@ namespace pva
                         const auto pixels = image(roi);
                         data.average = cv::mean(pixels)[0];
                         cv::minMaxLoc(pixels, &data.minimum, &data.maximum);
+                        result.regionStatistics[camera] = GrayStats{data.average, data.maximum, data.minimum};
                     }
                 }
                 const std::string suffix = "_camera" + std::to_string(camera + 1);
@@ -324,6 +325,7 @@ namespace pva
             return {false, "Melt requires mlt_crd from PLC"};
         const auto first = meltRoiStats(a, *rois_.melt, 1);
         const auto second = meltRoiStats(b, *rois_.melt, 2);
+        r.regionStatistics = {first, second};
         if (!first || !second)
             return {false, "Melt ROI is outside camera image"};
         r.diagnostics["melt_average_camera1"] = first->average;
@@ -343,12 +345,15 @@ namespace pva
     {
         if (!rois_.dip)
             return {false, "Dip requires dip_crd from PLC"};
-        const auto average = dipLineMean(a, *rois_.dip);
-        if (!average)
+        const auto statistics = dipLineStats(a, *rois_.dip);
+        if (!statistics)
             return {false, "Dip line is outside Camera 1 image"};
-        r.diagnostics["dip_line_average_camera1"] = *average;
+        r.regionStatistics[0] = statistics;
+        r.diagnostics["dip_line_average_camera1"] = statistics->average;
+        r.diagnostics["dip_line_maximum_camera1"] = statistics->maximum;
+        r.diagnostics["dip_line_minimum_camera1"] = statistics->minimum;
         r.data.hasDip = true;
-        r.data.dipAverage = *average;
+        r.data.dipAverage = statistics->average;
         return {true, "Dip line statistics updated"};
     }
 

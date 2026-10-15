@@ -74,6 +74,11 @@ namespace pva
         connect(&runtime_, &RuntimeController::stateChanged, this, [this](const RuntimeSnapshot &s)
                 {
             const bool modeChanged = snapshot_.online != s.online;
+            if (snapshot_.stage != s.stage) {
+                regionStatisticsCurrent_ = false;
+                ui_->cam1GraphicsView->setRegionStatistics({});
+                ui_->cam2GraphicsView->setRegionStatistics({});
+            }
             const bool overlayChanged = modeChanged || snapshot_.stage != s.stage ||
                 snapshot_.rois.melt != s.rois.melt || snapshot_.rois.dip != s.rois.dip ||
                 snapshot_.rois.diameter != s.rois.diameter ||
@@ -83,13 +88,13 @@ namespace pva
             snapshot_ = s;
             if (s.state != RunState::Running || (latestResult_ && latestResult_->generation != s.generation)) { latestResult_.reset(); frameDirty_ = false; }
             if (overlayChanged && displayedResult_) {
-                if (ui_->cam1GraphicsView->isInteracting() || ui_->cam2GraphicsView->isInteracting())
+                if (displayPaused_ || ui_->cam1GraphicsView->isInteracting() || ui_->cam2GraphicsView->isInteracting())
                     overlayDirty_ = true;
                 else paintResult(*displayedResult_);
             }
             if (modeChanged && displayedResult_) {
                 diagnosticDirty_ = true;
-                if (isVisible() && ui_->detailsTabs->currentWidget() == ui_->tabProcess &&
+                if (!displayPaused_ && isVisible() && ui_->detailsTabs->currentWidget() == ui_->tabProcess &&
                     !ui_->cam1GraphicsView->isInteracting() && !ui_->cam2GraphicsView->isInteracting()) {
                     updateProcessDiagnostics(*displayedResult_);
                     diagnosticDirty_ = false;
@@ -177,6 +182,7 @@ namespace pva
         if (result.generation != snapshot_.generation || snapshot_.state != RunState::Running)
             return;
         latestResult_ = result;
+        regionStatisticsCurrent_ = result.stage == snapshot_.stage;
         frameDirty_ = true;
         diagnosticDirty_ = true;
     }
@@ -184,6 +190,9 @@ namespace pva
     {
         if (!isVisible())
             return;
+        if (auto result = runtime_.takeLatestResult())
+            showResult(*result);
+        if (displayPaused_) return;
         CustomGraphicsView *views[] = {ui_->facetView1, ui_->facetView2, ui_->facetView3, ui_->facetView4};
         for (int i = 0; i < 4; ++i)
             if (facetteDirty_[i] && !views[i]->isInteracting())
@@ -194,8 +203,6 @@ namespace pva
                     views[i]->showImage(facetteImages_[i]);
                 facetteDirty_[i] = false;
             }
-        if (auto result = runtime_.takeLatestResult())
-            showResult(*result);
         const bool interacting = ui_->cam1GraphicsView->isInteracting() || ui_->cam2GraphicsView->isInteracting();
         if (!interacting && frameDirty_ && latestResult_)
         {
@@ -218,12 +225,23 @@ namespace pva
             diagnosticDirty_ = false;
         }
     }
+    void PageHome::setDisplayPaused(bool paused)
+    {
+        if (displayPaused_ == paused) return;
+        displayPaused_ = paused;
+        if (!paused) {
+            diagnosticClock_.invalidate();
+            renderLatest();
+        }
+    }
     void PageHome::setupPageUi()
     {
         ui_->cam1GraphicsView->setViewId(1);
         ui_->cam2GraphicsView->setViewId(2);
         ui_->cam1GraphicsView->setText("Camera 1");
         ui_->cam2GraphicsView->setText("Camera 2");
+        ui_->cam1GraphicsView->setRegionStatistics({});
+        ui_->cam2GraphicsView->setRegionStatistics({});
         ui_->viewSplitter->setSizes({300, 300});
         ui_->mainSplitter->setSizes({680, 170, 300});
         auto *group = new QButtonGroup(this);
@@ -353,6 +371,8 @@ namespace pva
         ui_->cam2GraphicsView->showImage(r.preview2, true);
         ui_->cam1GraphicsView->updateOverlays(overlay1);
         ui_->cam2GraphicsView->updateOverlays(overlay2);
+        ui_->cam1GraphicsView->setRegionStatistics(regionStatisticsCurrent_ && r.stage == snapshot_.stage ? r.regionStatistics[0] : std::nullopt);
+        ui_->cam2GraphicsView->setRegionStatistics(regionStatisticsCurrent_ && r.stage == snapshot_.stage ? r.regionStatistics[1] : std::nullopt);
         ui_->lblDiameter->setText(r.values.diameterMm ? QString::number(*r.values.diameterMm, 'f', 3) : "--");
         const auto processing = r.diagnostics.find("processing_time_ms");
         const auto trigger = r.diagnostics.find("trigger_to_result_time_ms");

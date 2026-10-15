@@ -1,7 +1,7 @@
 #include "measurement_worker.hpp"
 #include "plc_session.hpp"
 #include "state_store.hpp"
-#include <QCoreApplication>
+#include <QGuiApplication>
 #include <QTemporaryDir>
 #include <QFileInfo>
 #include <QDateTime>
@@ -30,7 +30,7 @@ void pump(int ms) {
 }
 }
 int main(int argc, char **argv) {
-    QCoreApplication app(argc, argv);
+    QGuiApplication app(argc, argv);
     qRegisterMetaType<pva::MeasurementResult>("pva::MeasurementResult");
     QTemporaryDir dir;
     if (!dir.isValid()) return 1;

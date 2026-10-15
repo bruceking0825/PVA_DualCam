@@ -63,6 +63,7 @@ namespace pva
     };
 
     // 领域输出：字段具有明确含义，PLC 字段顺序由适配器维护。
+    struct GrayStats { double average{}, maximum{}, minimum{}; };
     struct CameraMeasurement
     {
         double diameter{}, boundaryX{};
@@ -92,6 +93,7 @@ namespace pva
         MeasurementStage stage{MeasurementStage::Melt};
         MeasurementValues values;
         MeasurementData data;
+        std::array<std::optional<GrayStats>, 2> regionStatistics;
         std::unordered_map<std::string, QVariant> diagnostics;
         cv::Mat preview1;
         cv::Mat preview2;

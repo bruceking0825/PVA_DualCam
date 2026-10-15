@@ -1,6 +1,6 @@
 #include "camera_service.hpp"
 #include "runtime_controller.hpp"
-#include <QCoreApplication>
+#include <QGuiApplication>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QElapsedTimer>
@@ -27,7 +27,7 @@ bool equals(std::optional<double> value, double expected) {
 }
 }
 int main(int argc, char **argv) {
-    QCoreApplication app(argc, argv);
+    QGuiApplication app(argc, argv);
     qRegisterMetaType<pva::RuntimeSnapshot>("pva::RuntimeSnapshot");
     QTemporaryDir directory;
     if (!directory.isValid()) return 1;

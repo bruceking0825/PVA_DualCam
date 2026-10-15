@@ -1,7 +1,7 @@
 #include "camera_service.hpp"
 #include "dalsa_camera.hpp"
 #include "sherlock_tcp_server.hpp"
-#include <QCoreApplication>
+#include <QGuiApplication>
 #include <QElapsedTimer>
 #include <QTcpSocket>
 #include <QTcpServer>
@@ -30,7 +30,7 @@ bool until(const std::function<bool()> &ready) {
 }
 }
 int main(int argc, char **argv) {
-    QCoreApplication app(argc, argv);
+    QGuiApplication app(argc, argv);
     // 不打开硬件，以 SDK 故障信号模拟单设备错误。
     pva::CameraService cameras(pva::MeasurementConfig{});
     using Access = pva::CameraServiceTestAccess;

@@ -20,6 +20,7 @@ namespace pva
     public:
         PageHome(MeasurementConfig config, RuntimeController &runtime, QWidget *parent = nullptr);
         ~PageHome() override;
+        bool isDisplayPaused() const { return displayPaused_; }
     signals:
         // 用户操作在 bindSignals 中排队交给运行线程。
         void startRequested(bool online);
@@ -29,6 +30,7 @@ namespace pva
         void imageSelected(int index);
         void imageStepRequested(int delta);
     public slots:
+        void setDisplayPaused(bool paused);
         void onCameraExposure(const QString &userId, double exposureUs);
         void onCameraState(const pva::CameraSnapshot &snapshot);
     private slots:
@@ -62,8 +64,10 @@ namespace pva
         std::optional<MeasurementResult> latestResult_;
         std::optional<MeasurementResult> displayedResult_;
         bool frameDirty_{false};
+        bool displayPaused_{false};
         bool diagnosticDirty_{false};
         bool overlayDirty_{false};
+        bool regionStatisticsCurrent_{false};
         std::array<cv::Mat, 4> facetteImages_;
         std::array<bool, 4> facetteDirty_{};
         QHash<QString, QTreeWidgetItem *> diagnosticItems_;

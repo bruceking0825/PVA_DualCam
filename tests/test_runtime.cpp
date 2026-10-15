@@ -3,7 +3,7 @@
 #include "image_storage.hpp"
 #include "dalsa_camera.hpp"
 #include "camera_service.hpp"
-#include <QCoreApplication>
+#include <QGuiApplication>
 #include <QTemporaryDir>
 #include <QElapsedTimer>
 #include <QThread>
@@ -28,7 +28,7 @@ bool until(const std::function<bool()> &ready, int timeout = 3000) {
 }
 }
 int main(int argc, char **argv) {
-    QCoreApplication app(argc, argv);
+    QGuiApplication app(argc, argv);
     qRegisterMetaType<pva::MeasurementResult>("pva::MeasurementResult");
     QTemporaryDir dir;
     if (!dir.isValid()) return 1;

@@ -1686,7 +1686,8 @@ li.checked::marker { content: &quot;\2612&quot;; }
                   </property>
                   <property name="icon">
                    <iconset resource="../resources.qrc">
-                    <normaloff>:/icons/images/icons/icon_maximize.png</normaloff>:/icons/images/icons/icon_maximize.png</iconset>
+                    <normaloff>:/icons/images/icons/icon_maximize.png</normaloff>
+                    <normalon>:/icons/images/icons/icon_restore.png</normalon>:/icons/images/icons/icon_maximize.png</iconset>
                   </property>
                   <property name="iconSize">
                    <size>

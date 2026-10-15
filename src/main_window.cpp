@@ -22,6 +22,14 @@
 #include <QPushButton>
 #include <QSizeGrip>
 #include <QTimer>
+#include <QEvent>
+#include <QIcon>
+#include <QSystemTrayIcon>
+#include <QMenu>
+#include <QAction>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 namespace pva
 {
@@ -47,11 +55,12 @@ namespace pva
         }
     }
 
-    MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui_(std::make_unique<Ui::MainWindow>())
+    MainWindow::MainWindow(QWidget *parent, bool startServices) : QMainWindow(parent), ui_(std::make_unique<Ui::MainWindow>())
     {
         ui_->setupUi(this);
         // 原 Python 版本使用自绘标题栏；透明无边框可消除系统窗口的白色外围框。
-        setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
+        setWindowFlags(Qt::FramelessWindowHint | Qt::Window | Qt::WindowSystemMenuHint |
+                       Qt::WindowMinMaxButtonsHint | Qt::WindowCloseButtonHint);
         setAttribute(Qt::WA_TranslucentBackground);
         setWindowTitle("Stereo Vision Measurement");
         ui_->titleRightInfo->setText("Stereo Vision Measurement");
@@ -83,7 +92,7 @@ namespace pva
         camera_ = new PageCamera(services_->cameras(), ui_->stackedWidget);
         connect(&services_->cameras(), &CameraService::cameraExposureChanged, home_, &PageHome::onCameraExposure);
         connect(&services_->cameras(), &CameraService::stateChanged, home_, &PageHome::onCameraState);
-        services_->start();
+        if (startServices) services_->start();
         parameters_ = new PageParameters(configPath_, ui_->stackedWidget);
         ui_->stackedWidget->addWidget(home_);
         ui_->stackedWidget->addWidget(parameters_);
@@ -102,22 +111,100 @@ namespace pva
         connect(ui_->settingsTopBtn, &QPushButton::clicked, this, &MainWindow::toggleRightBox);
         loadTheme();
         updateSelectedMenu(ui_->btn_home);
+        updateWindowState();
+        trayIcon_ = new QSystemTrayIcon(QIcon(":/app/zh1.ico"), this);
+        trayIcon_->setObjectName("systemTrayIcon");
+        trayIcon_->setToolTip("Stereo Vision Measurement");
+        auto *trayMenu = new QMenu(this);
+        auto *showAction = trayMenu->addAction("Show", this, &MainWindow::restoreFromTray);
+        showAction->setObjectName("trayShowAction");
+        trayMenu->addSeparator();
+        auto *exitAction = trayMenu->addAction("Exit", this, &MainWindow::exitApplication);
+        exitAction->setObjectName("trayExitAction");
+        trayIcon_->setContextMenu(trayMenu);
+        connect(trayIcon_, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
+            if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick) restoreFromTray();
+        });
+        if (QSystemTrayIcon::isSystemTrayAvailable()) trayIcon_->show();
+        connect(qApp, &QCoreApplication::aboutToQuit, this, [this] {
+            trayIcon_->hide();
+            services_->stop();
+        });
     }
-    MainWindow::~MainWindow() = default;
+    MainWindow::~MainWindow()
+    {
+        if (trayIcon_) trayIcon_->hide();
+    }
+    void MainWindow::setTitleDragActive(bool active)
+    {
+        if (titleDragActive_ == active) return;
+        titleDragActive_ = active;
+        if (home_) home_->setDisplayPaused(active);
+    }
+    bool MainWindow::event(QEvent *event)
+    {
+        if (event->type() == QEvent::UngrabMouse || event->type() == QEvent::WindowDeactivate ||
+            event->type() == QEvent::Hide || event->type() == QEvent::WindowStateChange)
+            setTitleDragActive(false);
+        return QMainWindow::event(event);
+    }
     void MainWindow::toggleMaximizeRestore()
     {
         if (isMaximized())
-        {
             showNormal();
-            ui_->appMargins->setContentsMargins(10, 10, 10, 10);
-            ui_->frame_size_grip->show();
-        }
         else
-        {
             showMaximized();
-            ui_->appMargins->setContentsMargins(0, 0, 0, 0);
-            ui_->frame_size_grip->hide();
+    }
+    void MainWindow::changeEvent(QEvent *event)
+    {
+        QMainWindow::changeEvent(event);
+        if (event->type() == QEvent::WindowStateChange) updateWindowState();
+    }
+#ifdef Q_OS_WIN
+    bool MainWindow::nativeEvent(const QByteArray &eventType, void *message,
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                                 qintptr *result)
+#else
+                                 long *result)
+#endif
+    {
+        const auto *native = static_cast<MSG *>(message);
+        if (native->message == WM_ENTERSIZEMOVE) setTitleDragActive(true);
+        else if (native->message == WM_EXITSIZEMOVE || native->message == WM_CANCELMODE ||
+                 native->message == WM_CAPTURECHANGED)
+            setTitleDragActive(false);
+        if (native->message == WM_SYSCOMMAND) {
+            switch (native->wParam & 0xfff0) {
+            case SC_MINIMIZE:
+                showMinimized();
+                break;
+            case SC_MAXIMIZE:
+                showMaximized();
+                break;
+            case SC_RESTORE:
+                if (isMinimized()) {
+                    setWindowState(windowState() & ~Qt::WindowMinimized);
+                    show();
+                } else showNormal();
+                break;
+            default:
+                return QMainWindow::nativeEvent(eventType, message, result);
+            }
+            *result = 0;
+            return true;
         }
+        return QMainWindow::nativeEvent(eventType, message, result);
+    }
+#endif
+    void MainWindow::updateWindowState()
+    {
+        const bool maximized = windowState().testFlag(Qt::WindowMaximized);
+        ui_->maximizeRestoreAppBtn->setIcon(QIcon(maximized ? ":/icons/images/icons/icon_restore.png"
+                                                         : ":/icons/images/icons/icon_maximize.png"));
+        ui_->maximizeRestoreAppBtn->setToolTip(maximized ? "Restore" : "Maximize");
+        const int margin = maximized ? 0 : 10;
+        ui_->appMargins->setContentsMargins(margin, margin, margin, margin);
+        ui_->frame_size_grip->setVisible(!maximized);
     }
     void MainWindow::switchPage()
     {
@@ -261,17 +348,54 @@ namespace pva
     }
     void MainWindow::closeEvent(QCloseEvent *event)
     {
-        if (QMessageBox::question(this, "Confirm Exit", "Close the program?", QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
-        {
-            event->ignore();
+        if (exitRequested_) {
+            event->accept();
             return;
         }
+        event->ignore();
+        if (QSystemTrayIcon::isSystemTrayAvailable()) {
+            trayWasMaximized_ = windowState().testFlag(Qt::WindowMaximized);
+            hiddenToTray_ = true;
+            trayIcon_->show();
+            hide();
+        } else {
+            hiddenToTray_ = false;
+            showMinimized();
+            showGlobalStatus("System", "INFO", "info", "System tray unavailable; minimized to taskbar");
+        }
+    }
+    void MainWindow::restoreFromTray()
+    {
+        if (exitRequested_) return;
+        if (!isVisible() || isMinimized()) {
+            const bool maximized = hiddenToTray_ ? trayWasMaximized_ : windowState().testFlag(Qt::WindowMaximized);
+            hiddenToTray_ = false;
+            if (maximized) showMaximized();
+            else showNormal();
+        }
+        raise();
+        activateWindow();
+    }
+    void MainWindow::exitApplication()
+    {
+        if (exitRequested_ || exitConfirmationOpen_) return;
+        exitConfirmationOpen_ = true;
+        const auto answer = QMessageBox::question(this, "Confirm Exit", "Close the program?",
+                                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        exitConfirmationOpen_ = false;
+        if (answer != QMessageBox::Yes) return;
+        exitRequested_ = true;
         emit AppSignals::instance().appClose();
         services_->stop();
-        event->accept();
+        trayIcon_->hide();
+        hide();
+        qApp->quit();
     }
     void MainWindow::mousePressEvent(QMouseEvent *event)
     {
+        if (event->button() == Qt::LeftButton && !isMaximized() &&
+            ui_->contentTopBg->rect().contains(ui_->contentTopBg->mapFrom(this, event->pos())))
+            setTitleDragActive(true);
         if (event->button() == Qt::LeftButton)
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
             dragPosition_ = event->globalPosition().toPoint() - frameGeometry().topLeft();
@@ -293,6 +417,11 @@ namespace pva
             return;
         }
         QMainWindow::mouseMoveEvent(event);
+    }
+    void MainWindow::mouseReleaseEvent(QMouseEvent *event)
+    {
+        if (event->button() == Qt::LeftButton) setTitleDragActive(false);
+        QMainWindow::mouseReleaseEvent(event);
     }
     void MainWindow::mouseDoubleClickEvent(QMouseEvent *event)
     {

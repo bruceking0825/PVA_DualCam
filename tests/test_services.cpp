@@ -1,6 +1,6 @@
 #include "app_services.hpp"
 #include "config_manager.hpp"
-#include <QCoreApplication>
+#include <QGuiApplication>
 #include <QTemporaryDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -12,7 +12,7 @@
 // 服务装配/退出回归：不创建页面，不启动相机采集，不连接 PLC。
 int main(int argc, char **argv)
 {
-    QCoreApplication app(argc, argv);
+    QGuiApplication app(argc, argv);
     QTemporaryDir directory;
     if (!directory.isValid()) return 1;
     cv::Mat image(400, 400, CV_8U, cv::Scalar(20));
