@@ -2,12 +2,14 @@
 #include <QObject>
 #include <QDateTime>
 #include <QThreadPool>
+#include <QMutex>
+#include <optional>
 #include <opencv2/core.hpp>
 #include "config.hpp"
 #include "measurement_geometry.hpp"
 
 namespace pva {
-// 有界、串行图像存储。已接收的保存任务在退出时完成，不替换旧请求。
+// Facette/归档保留已接收请求；测量覆盖图独立串行写入，只保留最新待保存结果。
 class ImageStorage final : public QObject {
     Q_OBJECT
 public:
@@ -30,5 +32,15 @@ private:
     void submit(Operation operation, QString directory, int index, cv::Mat image = {}, QString source = {});
     QThreadPool pool_;
     int pending_{};
+    struct MeasurementSave {
+        MeasurementResult result;
+        MeasurementConfig config;
+        MeasurementRois rois;
+    };
+    void writeMeasurements(MeasurementSave task);
+    QThreadPool measurementPool_;
+    QMutex measurementMutex_;
+    bool measurementRunning_{};
+    std::optional<MeasurementSave> latestMeasurement_;
 };
 }

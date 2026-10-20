@@ -146,18 +146,44 @@ int main(int argc, char **argv) {
     }
 #endif
     const int beforeQueueErrors = errors.size();
-    for (int i = 0; i < 17; ++i) storage.saveMeasurement(result, config, rois);
-    check(errors.size() == beforeQueueErrors + 1 && errors.back().contains("queue full"),
-          "Full queue reports failure without blocking or replacing accepted work");
+    // 不处理所属线程的完成通知，连续提交不同结果；最终必须保留最新双相机快照。
+    for (int i = 0; i < 100; ++i) {
+        result.preview1 = cv::Mat(80, 100, CV_8U, cv::Scalar(i + 1));
+        result.preview2 = cv::Mat(80, 100, CV_8U, cv::Scalar(i + 101));
+        storage.saveMeasurement(result, config, rois);
+    }
+    int savedFacettes = 0;
+    QObject::connect(&storage, &pva::ImageStorage::saved, &app, [&](const QString &) { ++savedFacettes; });
+    for (int i = 0; i < 16; ++i)
+        storage.save(directory.filePath("facettes_burst"), i + 1, result.preview1);
     storage.flush();
+    check(errors.size() == beforeQueueErrors, "Measurement burst coalesces without queue-full failures");
+    check(savedFacettes == 16, "Measurement burst does not consume Facette queue capacity");
     const auto finalImage = QImage(path1);
     check(finalImage.size() == QSize(100, 80) &&
           finalImage.convertToFormat(QImage::Format_RGB32) == expected(result, config, rois, 1),
-          "Flush completes accepted exports at original dimensions");
+          "Flush completes latest camera1 export at original dimensions");
+    check(QImage(path2).convertToFormat(QImage::Format_RGB32) == expected(result, config, rois, 2),
+          "Latest camera2 belongs to the same measurement snapshot");
     storage.save(directory.filePath("facettes"), 1, result.preview1);
     storage.flush();
-    check(QImage(directory.filePath("facettes/Facette1.bmp")).pixelColor(99, 79).red() == 67,
+    check(QImage(directory.filePath("facettes/Facette1.bmp")).pixelColor(99, 79).red() == 100,
           "Facette grayscale saving remains unchanged");
+    {
+        pva::ImageStorage closing;
+        auto closingConfig = config;
+        closingConfig.runtime.measurementImageDir = directory.filePath("on_exit");
+        for (int i = 0; i < 30; ++i) {
+            auto frame = result;
+            frame.preview1 = cv::Mat(80, 100, CV_8U, cv::Scalar(i));
+            closing.saveMeasurement(frame, closingConfig, rois);
+        }
+    }
+    auto finalClosingResult = result;
+    finalClosingResult.preview1 = cv::Mat(80, 100, CV_8U, cv::Scalar(29));
+    check(QImage(directory.filePath("on_exit/image1.bmp")).convertToFormat(QImage::Format_RGB32) ==
+              expected(finalClosingResult, config, rois, 1),
+          "Destructor drains latest measurement without event processing or explicit flush");
     pva::ImageStorage continuous;
     QStringList continuousErrors;
     QObject::connect(&continuous, &pva::ImageStorage::failed, &app,

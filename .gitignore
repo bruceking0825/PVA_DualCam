@@ -12,6 +12,7 @@ build-fast-debug/
 Log/
 output/
 dist/
+pva_img/
 
 # Temporary files
 *.tmp

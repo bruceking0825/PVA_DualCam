@@ -8,6 +8,7 @@
 #include <QSaveFile>
 #include <QPainter>
 #include <QLockFile>
+#include <QMutexLocker>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <stdexcept>
@@ -55,10 +56,20 @@ namespace pva
             return gray;
         }
     }
-    ImageStorage::ImageStorage(QObject *parent) : QObject(parent) { pool_.setMaxThreadCount(1); }
-    ImageStorage::~ImageStorage() { pool_.waitForDone(); }
+    ImageStorage::ImageStorage(QObject *parent) : QObject(parent)
+    {
+        pool_.setMaxThreadCount(1);
+        measurementPool_.setMaxThreadCount(1);
+    }
+    ImageStorage::~ImageStorage()
+    {
+        measurementPool_.waitForDone();
+        pool_.waitForDone();
+    }
     void ImageStorage::flush()
     {
+        // 测量线程自行接续最新任务，收尾不依赖所属线程处理完成通知。
+        measurementPool_.waitForDone();
         pool_.waitForDone();
         QCoreApplication::sendPostedEvents(this, QEvent::MetaCall);
     }
@@ -67,42 +78,64 @@ namespace pva
     void ImageStorage::saveMeasurement(const MeasurementResult &result, const MeasurementConfig &config,
                                        const MeasurementRois &rois)
     {
-        const QString directory = config.runtime.measurementImageDir;
-        if (pending_ >= 16)
-        {
-            emit failed(directory + ": measurement image storage rejected: queue full");
-            return;
-        }
-        ++pending_;
         auto snapshot = result;
         if (!snapshot.preview1.empty() && !snapshot.preview1.u)
             snapshot.preview1 = snapshot.preview1.clone();
         if (!snapshot.preview2.empty() && !snapshot.preview2.u)
             snapshot.preview2 = snapshot.preview2.clone();
-        pool_.start(QRunnable::create([this, snapshot, config, rois, directory]
-                                      {
-        auto overlay1 = snapshot.overlay1, overlay2 = snapshot.overlay2;
-        appendDisplayRois(config, rois, snapshot.stage, snapshot.preview1.size(), snapshot.preview2.size(), overlay1, overlay2);
-        QStringList errors;
-        for (int camera = 1; camera <= 2; ++camera) {
-            const auto path = QDir(directory).filePath(QString("image%1.bmp").arg(camera));
-            try {
-                const auto image = renderOverlayImage(camera == 1 ? snapshot.preview1 : snapshot.preview2,
-                                                       camera == 1 ? overlay1 : overlay2, &snapshot.regionStatistics[camera - 1]);
-                if (image.isNull()) throw std::runtime_error("Measurement image is empty");
-                if (!QDir().mkpath(directory)) throw std::runtime_error("Cannot create measurement image directory");
-                QSaveFile file(path);
-                if (!file.open(QIODevice::WriteOnly)) throw std::runtime_error(file.errorString().toStdString());
-                if (!image.save(&file, "BMP")) throw std::runtime_error("BMP encoding/write failed");
-                if (!file.commit()) throw std::runtime_error(file.errorString().toStdString());
-            } catch (const std::exception &exception) {
-                errors.append(path + ": " + QString::fromUtf8(exception.what()));
-            }
+        MeasurementSave task{std::move(snapshot), config, rois};
+        QMutexLocker lock(&measurementMutex_);
+        if (measurementRunning_) {
+            // 同名 BMP 只需要最新结果；覆盖等待项，不挤占 Facette 的队列。
+            latestMeasurement_ = std::move(task);
+            return;
         }
-        QMetaObject::invokeMethod(this, [this, errors] {
-            --pending_;
-            for (const auto &error : errors) emit failed(error);
-        }, Qt::QueuedConnection); }));
+        measurementRunning_ = true;
+        measurementPool_.start(QRunnable::create([this, task = std::move(task)]() mutable {
+            writeMeasurements(std::move(task));
+        }));
+    }
+    void ImageStorage::writeMeasurements(MeasurementSave task)
+    {
+        for (;;) {
+            const auto &snapshot = task.result;
+            const auto &directory = task.config.runtime.measurementImageDir;
+            QStringList errors;
+            try {
+                auto overlay1 = snapshot.overlay1, overlay2 = snapshot.overlay2;
+                appendDisplayRois(task.config, task.rois, snapshot.stage,
+                                 snapshot.preview1.size(), snapshot.preview2.size(), overlay1, overlay2);
+                for (int camera = 1; camera <= 2; ++camera) {
+                    const auto path = QDir(directory).filePath(QString("image%1.bmp").arg(camera));
+                    try {
+                        const auto image = renderOverlayImage(camera == 1 ? snapshot.preview1 : snapshot.preview2,
+                            camera == 1 ? overlay1 : overlay2, &snapshot.regionStatistics[camera - 1]);
+                        if (image.isNull()) throw std::runtime_error("Measurement image is empty");
+                        if (!QDir().mkpath(directory)) throw std::runtime_error("Cannot create measurement image directory");
+                        QSaveFile file(path);
+                        if (!file.open(QIODevice::WriteOnly)) throw std::runtime_error(file.errorString().toStdString());
+                        if (!image.save(&file, "BMP")) throw std::runtime_error("BMP encoding/write failed");
+                        if (!file.commit()) throw std::runtime_error(file.errorString().toStdString());
+                    } catch (const std::exception &exception) {
+                        errors.append(path + ": " + QString::fromUtf8(exception.what()));
+                    }
+                }
+            } catch (const std::exception &exception) {
+                errors.append(directory + ": " + QString::fromUtf8(exception.what()));
+            }
+            if (!errors.isEmpty()) {
+                QMetaObject::invokeMethod(this, [this, errors] {
+                    for (const auto &error : errors) emit failed(error);
+                }, Qt::QueuedConnection);
+            }
+            QMutexLocker lock(&measurementMutex_);
+            if (!latestMeasurement_) {
+                measurementRunning_ = false;
+                return;
+            }
+            task = std::move(*latestMeasurement_);
+            latestMeasurement_.reset();
+        }
     }
     void ImageStorage::saveContinuous(const MeasurementResult &result, const MeasurementConfig &config,
                                       const MeasurementRois &rois, const QDateTime &time)
