@@ -1,5 +1,5 @@
 {
-    "acquisition_enabled": true,
+    "acquisition_enabled": false,
     "parameters": {
         "dia_crd": [
             800,
@@ -23,10 +23,10 @@
             300
         ],
         "mlt_crd": [
-            100,
+            116,
             700,
-            100,
-            150,
+            25,
+            25,
             -11,
             -4
         ],
