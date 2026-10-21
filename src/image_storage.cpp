@@ -9,6 +9,7 @@
 #include <QPainter>
 #include <QLockFile>
 #include <QMutexLocker>
+#include <QThread>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <stdexcept>
@@ -54,6 +55,29 @@ namespace pva
             if (!file.open(QIODevice::WriteOnly) || file.write(reinterpret_cast<const char *>(encoded.data()), qint64(encoded.size())) != qint64(encoded.size()) || !file.commit())
                 throw std::runtime_error(file.errorString().toStdString());
             return gray;
+        }
+
+        bool saveMeasurementImage(const QString &path, const QImage &image)
+        {
+            constexpr int attempts = 20;
+            constexpr unsigned long retryDelayMs = 50;
+            for (int attempt = 0; attempt < attempts; ++attempt)
+            {
+                QSaveFile file(path);
+                if (!file.open(QIODevice::WriteOnly))
+                    throw std::runtime_error(file.errorString().toStdString());
+                if (!image.save(&file, "BMP"))
+                    throw std::runtime_error("BMP encoding/write failed");
+                if (file.commit())
+                    return true;
+
+                // Windows 读取方未开放删除共享时，原子替换会暂时失败；短时重试后静默保留旧图。
+                if (file.error() != QFileDevice::RenameError)
+                    throw std::runtime_error(file.errorString().toStdString());
+                if (attempt + 1 < attempts)
+                    QThread::msleep(retryDelayMs);
+            }
+            return false;
         }
     }
     ImageStorage::ImageStorage(QObject *parent) : QObject(parent)
@@ -112,10 +136,7 @@ namespace pva
                             camera == 1 ? overlay1 : overlay2, &snapshot.regionStatistics[camera - 1]);
                         if (image.isNull()) throw std::runtime_error("Measurement image is empty");
                         if (!QDir().mkpath(directory)) throw std::runtime_error("Cannot create measurement image directory");
-                        QSaveFile file(path);
-                        if (!file.open(QIODevice::WriteOnly)) throw std::runtime_error(file.errorString().toStdString());
-                        if (!image.save(&file, "BMP")) throw std::runtime_error("BMP encoding/write failed");
-                        if (!file.commit()) throw std::runtime_error(file.errorString().toStdString());
+                        saveMeasurementImage(path, image);
                     } catch (const std::exception &exception) {
                         errors.append(path + ": " + QString::fromUtf8(exception.what()));
                     }

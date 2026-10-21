@@ -88,6 +88,13 @@ namespace pva
                 QString error;
                 if (streamOwner_.isEmpty())
                     applyConfiguredParameters(*value, config_.camera.offlineCropRoi, false, &error);
+                else if (onlineStage_ == MeasurementStage::Melt)
+                {
+                    const bool first = value->userId() != CameraRole::Cam2;
+                    const double exposure = first ? config_.camera.initialExposureCamera1 : config_.camera.initialExposureCamera2;
+                    const double gain = first ? config_.camera.gainCamera1 : config_.camera.gainCamera2;
+                    value->setExposure(exposure, &error) && value->setGain(gain, &error);
+                }
                 else
                     value->setGain(value->userId() == CameraRole::Cam1 ? config_.camera.gainCamera1 : config_.camera.gainCamera2, &error);
                 if (!error.isEmpty())
@@ -175,17 +182,56 @@ namespace pva
         return found == cameras_.end() ? nullptr : found->second.get();
     }
 
+    double CameraService::configuredExposure(const QString &userId, bool online) const
+    {
+        const bool first = userId != CameraRole::Cam2;
+        const double initial = first ? config_.camera.initialExposureCamera1 : config_.camera.initialExposureCamera2;
+        // Melt 必须从 cnf 初始参数开始；其余在线阶段允许延续上次自动曝光结果。
+        return online && onlineStage_ != MeasurementStage::Melt
+            ? loadRememberedExposure(userId, initial)
+            : initial;
+    }
+
     bool CameraService::applyConfiguredParameters(DalsaCamera &value, const cv::Rect &roi, bool online, QString *error)
     {
         const bool first = value.userId() != CameraRole::Cam2;
-        const double initial = first ? config_.camera.initialExposureCamera1 : config_.camera.initialExposureCamera2;
-        const double exposure = online ? loadRememberedExposure(value.userId(), initial) : initial;
+        const double exposure = configuredExposure(value.userId(), online);
         const double gain = first ? config_.camera.gainCamera1 : config_.camera.gainCamera2;
         // GenICam ROI 修改顺序必须先清零 Offset，再缩放尺寸，最后恢复 Offset。
         return value.setOffsetX(0, error) && value.setOffsetY(0, error) &&
                value.setWidth(roi.width, error) && value.setHeight(roi.height, error) &&
                value.setOffsetX(roi.x, error) && value.setOffsetY(roi.y, error) &&
                value.setExposure(exposure, error) && value.setGain(gain, error);
+    }
+
+    void CameraService::applyMeltParameters()
+    {
+        if (streamOwner_ != "online")
+            return;
+        for (const QString &userId : CameraRole::Stereo)
+        {
+            auto *value = camera(userId);
+            if (!value || !value->isOpen())
+                continue;
+            const bool first = userId == CameraRole::Cam1;
+            const double exposure = first ? config_.camera.initialExposureCamera1 : config_.camera.initialExposureCamera2;
+            const double gain = first ? config_.camera.gainCamera1 : config_.camera.gainCamera2;
+            QString error;
+            if (!value->setExposure(exposure, &error) || !value->setGain(gain, &error))
+                markCameraFault(userId, "Apply Melt camera parameters failed: " + error);
+        }
+        publishState();
+    }
+
+    void CameraService::setStage(int stage)
+    {
+        const auto next = MeasurementStage(stage);
+        const bool enteringMelt = onlineStage_ != MeasurementStage::Melt && next == MeasurementStage::Melt;
+        onlineStage_ = next;
+        if (next == MeasurementStage::Dip || next == MeasurementStage::Neck)
+            lastExposureAdjustNs_.clear();
+        if (enteringMelt)
+            applyMeltParameters();
     }
 
     void CameraService::toggleCamera(bool checked)
@@ -413,7 +459,6 @@ namespace pva
         {
             if (streamOwner_ == "online")
                 saveRememberedExposures();
-            plcExposureOverrides_.clear();
             closeAll();
             for (const auto &id : CameraRole::Stereo)
             {
@@ -478,29 +523,6 @@ namespace pva
         }
     }
 
-    void CameraService::applyPlcExposure(const QString &userId, double exposureUs)
-    {
-        auto *value = camera(userId);
-        if (!value || !value->isOpen())
-        {
-            markCameraFault(userId, "PLC exposure target is not open");
-            return;
-        }
-
-        QString error;
-        if (!value->setExposure(exposureUs, &error))
-        {
-            markCameraFault(userId, "Apply PLC exposure failed: " + error);
-            return;
-        }
-
-        // PLC的exptme命令具有最高优先级；收到后停止该相机本轮在线自动曝光覆盖。
-        plcExposureOverrides_.insert(userId, exposureUs);
-        emit cameraExposureChanged(userId, exposureUs);
-        saveRememberedExposures();
-        publishState();
-    }
-
     void CameraService::onFrame(const QString &userId, const cv::Mat &frame, qint64 timestampNs)
     {
         auto *value = camera(userId);
@@ -563,11 +585,9 @@ namespace pva
 
     std::optional<double> CameraService::autoExposureMean(const QString &userId, const cv::Mat &frame) const
     {
-        if (frame.empty() || plcExposureOverrides_.contains(userId) ||
-            streamOwner_ != "online" || !config_.camera.autoExposureEnabled ||
+        if (frame.empty() || streamOwner_ != "online" || !config_.camera.autoExposureEnabled ||
             !CameraRole::Stereo.contains(userId) ||
-            (onlineStage_ != MeasurementStage::Melt && onlineStage_ != MeasurementStage::Dip &&
-             onlineStage_ != MeasurementStage::Neck))
+            (onlineStage_ != MeasurementStage::Dip && onlineStage_ != MeasurementStage::Neck))
             return {};
         cv::Mat gray;
         if (frame.channels() == 1)

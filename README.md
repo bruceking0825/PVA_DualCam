@@ -14,7 +14,7 @@ cmake --build out/build/tasks-debug
 ctest --test-dir out/build/tasks-debug --output-on-failure --timeout 30
 ```
 
-启动 `out/build/tasks-debug/pva_dualcam_cpp.exe`，并将 Qt 和 OpenCV 的 `bin` 目录加入 PATH。配置文件为根目录的 `cnf.ini`，其中相对路径以配置目录为基准。
+启动 `out/build/tasks-debug/SherlockSrvr.exe`，并将 Qt 和 OpenCV 的 `bin` 目录加入 PATH。配置文件为根目录的 `cnf.ini`，其中相对路径以配置目录为基准。
 
 VS Code 打开工程根目录后，可运行 `CMake: Build Debug` 或 `CMake: Build Release` 任务；F5 使用 `.vscode/launch.json`。不要求使用 CMakeUserPresets。MSVC 启动器统一依赖输出编码，避免中文系统上的 Ninja 漏编译头文件变更。
 

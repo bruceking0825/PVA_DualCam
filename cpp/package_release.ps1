@@ -39,7 +39,7 @@ try {
         throw 'This script requires a Release build directory (not Debug).'
     }
 
-    $exePath = Join-Path $BuildDirectory 'pva_dualcam_cpp.exe'
+    $exePath = Join-Path $BuildDirectory 'SherlockSrvr.exe'
     $configPath = Join-Path $projectDirectory 'cnf.ini'
     $themeDirectory = Join-Path $projectDirectory 'themes'
     Require-File $exePath
@@ -100,7 +100,7 @@ try {
         $originalPath = $env:PATH
         try {
             $env:PATH = $qtBin + ';' + $opencvBin + ';' + $originalPath
-            & $deployTool --release --no-compiler-runtime (Join-Path $packageDirectory 'pva_dualcam_cpp.exe')
+            & $deployTool --release --no-compiler-runtime (Join-Path $packageDirectory 'SherlockSrvr.exe')
             if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with exit code $LASTEXITCODE" }
         }
         finally { $env:PATH = $originalPath }

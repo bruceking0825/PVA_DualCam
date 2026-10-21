@@ -196,7 +196,6 @@ int main(int argc, char **argv)
         stateToSave.parameters.insert("mlt_crd", {5, 5, 4, 4, 2, 1});
         stateToSave.parameters.insert("dip_crd", {5, 5, 5});
         stateToSave.parameters.insert("dia_thr", {70});
-        stateToSave.parameters.insert("exptme1", {120});
         pva::PlcRuntimeStore plcStore(plcStateDir.filePath("plc_runtime_state.json"));
         pva::PlcRuntimeState loadedState;
         check(plcStore.save(stateToSave, &plcError) &&
@@ -205,8 +204,8 @@ int main(int argc, char **argv)
                   loadedState.pointFitSelected && !loadedState.acquisitionEnabled &&
                   loadedState.relativeThreshold && loadedState.refreshRate == 2.5 &&
                   loadedState.parameters.value("dia_crd").size() == 8 &&
-                  loadedState.parameters.value("exptme1").size() == 1 &&
-                  loadedState.parameters.value("exptme1").front() == 120,
+                  loadedState.parameters.value("dia_thr").size() == 1 &&
+                  loadedState.parameters.value("dia_thr").front() == 70,
               "PLC mode, ROI and settings survive save and reload");
         check(pva::PlcRuntimeState{}.stage == pva::MeasurementStage::Melt &&
                   pva::MeasurementResult{}.stage == pva::MeasurementStage::Melt,

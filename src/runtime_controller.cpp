@@ -32,7 +32,7 @@ namespace pva
     // ---------- 创建与配置 ----------
 
     RuntimeController::RuntimeController(MeasurementConfig config, QObject *parent, bool enableTcp)
-        : QObject(parent), baseConfig_(config), config_(std::move(config)), networkEnabled_(enableTcp)
+        : QObject(parent), config_(std::move(config)), networkEnabled_(enableTcp)
     {
         images_ = new ImageStorage(this);
         continuousImages_ = new ImageStorage(this);
@@ -82,7 +82,6 @@ namespace pva
             invalidateTasks();
             ++configVersion_;
             stage_ = stage;
-            applyPlcConfigOverrides();
             if (worker_) {
                 worker_->updateConfig(config_);
                 worker_->updateMeasurementRois(plc_->rois());
@@ -139,7 +138,6 @@ namespace pva
             continuousSaveClock_.invalidate();
         if (restart)
             stopRuntime();
-        baseConfig_ = config;
         config_ = config;
         plc_->setStatePath(plcStatePath());
         ++configVersion_;
@@ -147,7 +145,6 @@ namespace pva
         if (facetDirectoryChanged)
             for (int index = 1; index <= 4; ++index)
                 images_->load(config_.runtime.facetteImageDir, index);
-        applyPlcConfigOverrides();
         if (plc_->pointFitSelected() &&
             (stage_ == MeasurementStage::Crown || stage_ == MeasurementStage::Body))
         {
@@ -186,13 +183,6 @@ namespace pva
     void RuntimeController::restorePlcState()
     {
         stage_ = plc_->restoreSettings(plcStatePath());
-        applyPlcConfigOverrides();
-    }
-
-    void RuntimeController::applyPlcConfigOverrides()
-    {
-        config_ = baseConfig_;
-        plc_->applyConfigOverrides(config_);
     }
 
     QString RuntimeController::plcStatePath() const
@@ -459,7 +449,6 @@ namespace pva
             return;
         state_ = RunState::Running;
         publishState();
-        plc_->replayExposures();
         log("Online cameras started; waiting for Sherlock TCP command");
         if (acquisitionCommand_ == "acq_on_")
             completeAcquisition(true);

@@ -96,11 +96,9 @@ namespace pva
         void failAcquisition(const QString &message);
         QString plcStatePath() const;
         void restorePlcState();
-        void applyPlcConfigOverrides();
         void log(const QString &message);
 
         // 运行状态只在控制线程修改；显示邮箱使用互斥锁跨线程读取。
-        MeasurementConfig baseConfig_;
         MeasurementConfig config_;
         QMutex displayMutex_;
         std::optional<MeasurementResult> displayResult_;

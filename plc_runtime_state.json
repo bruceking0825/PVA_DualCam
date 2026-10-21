@@ -2,12 +2,12 @@
     "acquisition_enabled": false,
     "parameters": {
         "dia_crd": [
-            800,
+            1298,
             740,
             35,
-            135,
-            30,
-            200,
+            145,
+            0,
+            110,
             -11,
             -4
         ],
@@ -18,15 +18,15 @@
             55
         ],
         "dip_crd": [
-            1220,
-            720,
-            300
+            1216,
+            754,
+            200
         ],
         "mlt_crd": [
             116,
-            700,
-            25,
-            25,
+            710,
+            100,
+            100,
             -11,
             -4
         ],
@@ -38,5 +38,5 @@
     "refresh_rate": 1,
     "relative_threshold": true,
     "schema_version": 1,
-    "stage": 5
+    "stage": 3
 }

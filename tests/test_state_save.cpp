@@ -43,6 +43,51 @@ int main(int argc, char **argv) {
     config.measurement.brightnessMin = 1;
     config.measurement.reflectorRoiCamera1 = config.measurement.reflectorRoiCamera2 = cv::Rect(0, 0, 400, 400);
     config.neck.stopSearchRatio = 1;
+
+    // 旧状态中的曝光命令只做迁移清理；新命令只维持 PLC 协议应答。
+    const auto compatibilityPath = dir.filePath("compatibility.json");
+    pva::PlcRuntimeState legacy;
+    legacy.stage = pva::MeasurementStage::Dip;
+    legacy.parameters.insert("dia_thr", {70});
+    legacy.parameters.insert("exptme1", {120});
+    legacy.parameters.insert("exptme2", {130});
+    QString error;
+    check(pva::PlcRuntimeStore(compatibilityPath).save(legacy, &error), "Legacy PLC state fixture saved");
+    pva::PlcSession compatibility;
+    QList<QByteArray> compatibilityReplies;
+    int compatibilityConfigChanges{};
+    QObject::connect(&compatibility, &pva::PlcSession::payloadReady, &app,
+                     [&](const auto &payload) { compatibilityReplies.append(payload); });
+    QObject::connect(&compatibility, &pva::PlcSession::configurationChanged, &app,
+                     [&](auto) { ++compatibilityConfigChanges; });
+    check(compatibility.restoreSettings(compatibilityPath) == pva::MeasurementStage::Dip,
+          "Legacy PLC stage restored");
+    compatibility.flushState();
+    pva::PlcRuntimeState migrated;
+    check(pva::PlcRuntimeStore(compatibilityPath).load(&migrated, &error) &&
+              !migrated.parameters.contains("exptme1") &&
+              !migrated.parameters.contains("exptme2") &&
+              migrated.parameters.contains("dia_thr"),
+          "Legacy exposure settings removed without affecting other PLC settings");
+    compatibility.handleControlCommand({"exptme1", {"12000"}, "exptme1"},
+                                       pva::MeasurementStage::Dip, config);
+    check(!compatibilityReplies.isEmpty() && compatibilityReplies.back() == "exptme1=ok" &&
+              compatibilityConfigChanges == 0,
+          "Valid PLC exposure command is acknowledged without configuration change");
+    compatibility.handleControlCommand({"exptme2", {}, "exptme2"},
+                                       pva::MeasurementStage::Dip, config);
+    check(compatibilityReplies.back().startsWith("err_prm="),
+          "Missing PLC exposure parameter is rejected");
+    compatibility.handleControlCommand({"exptme2", {"-100"}, "exptme2"},
+                                       pva::MeasurementStage::Dip, config);
+    check(compatibilityReplies.back() == "err_prm=exposure must be positive",
+          "Non-positive PLC exposure parameter is rejected");
+    compatibility.flushState();
+    check(pva::PlcRuntimeStore(compatibilityPath).load(&migrated, &error) &&
+              !migrated.parameters.contains("exptme1") &&
+              !migrated.parameters.contains("exptme2"),
+          "Acknowledged PLC exposure command is not persisted");
+
     cv::Mat cam(400, 400, CV_8U, cv::Scalar(20));
     cv::ellipse(cam, {250, 200}, {40, 80}, 0, 0, 360, cv::Scalar(220), 5);
     pva::MeasurementWorker worker(pva::MeasurementEngine(config), measurementPath);
@@ -65,7 +110,6 @@ int main(int argc, char **argv) {
     check(until([&] { return QFileInfo::exists(plcPath) && QFileInfo::exists(measurementPath); }, 2000),
           "Original deadline retained; idle worker and PLC both save");
     pva::PlcRuntimeState saved;
-    QString error;
     check(pva::PlcRuntimeStore(plcPath).load(&saved, &error) && saved.stage == pva::MeasurementStage::Body,
           "PLC saves latest snapshot");
     const auto measured = pva::StateStore(measurementPath).load(&error);

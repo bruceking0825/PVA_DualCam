@@ -17,7 +17,7 @@
 
 SDK 回调由 CameraService::resetDevices 建立的连接直接排队到 CameraService::onFrame；不再经过中间相机管理类。关闭时递增回调批次，丢弃关闭前已排队的帧和错误。
 
-PLC 曝光是另一条直接路径：PlcSession::cameraExposureRequested → **排队到相机线程** → CameraService::applyPlcExposure。连接集中在 AppServices，不经过运行控制器转发。
+PLC 的 `exptme1/2` 只保留 Sherlock 7 协议校验与应答，不再进入相机控制。在线曝光由 CameraService 根据阶段管理：Dip/Neck 自动曝光，进入 Melt 时恢复 cnf 初始曝光与增益。
 
 ## 到哪里修改功能
 

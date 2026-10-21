@@ -135,14 +135,22 @@ int main(int argc, char **argv) {
     check(errors.size() == 3 && errors.back().contains(blockedPath), "Directory creation failures include path");
     config.runtime.measurementImageDir = oldDirectory;
 #ifdef Q_OS_WIN
+    result.preview1 = cv::Mat(80, 100, CV_8U, cv::Scalar(68));
+    const auto imageBeforeLock = QImage(path1);
+    const int errorsBeforeLock = errors.size();
     const auto locked = CreateFileW(reinterpret_cast<LPCWSTR>(path1.utf16()), GENERIC_READ,
                                     FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     check(locked != INVALID_HANDLE_VALUE, "Lock measurement BMP against replacement");
     if (locked != INVALID_HANDLE_VALUE) {
         storage.saveMeasurement(result, config, rois);
         storage.flush();
-        check(errors.size() == 4 && errors.back().contains(path1), "Locked output reports atomic replacement failure");
+        check(errors.size() == errorsBeforeLock && QImage(path1) == imageBeforeLock,
+              "Locked measurement BMP preserves old image without Home or log alarm");
         CloseHandle(locked);
+        storage.saveMeasurement(result, config, rois);
+        storage.flush();
+        check(QImage(path1).convertToFormat(QImage::Format_RGB32) == expected(result, config, rois, 1),
+              "Measurement BMP updates after external lock is released");
     }
 #endif
     const int beforeQueueErrors = errors.size();

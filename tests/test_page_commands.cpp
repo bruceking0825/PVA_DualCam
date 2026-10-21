@@ -50,17 +50,12 @@ int main(int argc, char **argv)
     pva::PageCamera camera(services.cameras());
     pva::RuntimeSnapshot state;
     int snapshots{}, cameraSnapshots{}, results{};
-    bool exposureRejected{};
     QObject::connect(&services.runtime(), &pva::RuntimeController::stateChanged, &app,
         [&](const auto &value) { state = value; ++snapshots; });
     QObject::connect(&services.runtime(), &pva::RuntimeController::resultReady, &app,
         [&](const auto &) { ++results; });
     QObject::connect(&services.cameras(), &pva::CameraService::stateChanged, &app,
         [&](const auto &) { ++cameraSnapshots; });
-    QObject::connect(&services.cameras(), &pva::CameraService::statusChanged, &app,
-        [&](bool ok, const QString &message) {
-            if (!ok && message.contains("PLC exposure target is not open")) exposureRejected = true;
-        });
     services.start();
     check(until([&] { return snapshots && cameraSnapshots; }), "Services initialize without pages owning devices");
 
@@ -95,12 +90,6 @@ int main(int argc, char **argv)
         combo->setCurrentIndex(0);
         check(until([&] { return cameraSnapshots > before; }), "Camera selection reaches service thread");
     }
-    // 从运行线程发出 PLC 曝光请求，验证装配层直连与相机线程的错误返回。
-    auto *plc = &services.runtime().plcSession();
-    QMetaObject::invokeMethod(plc, [plc] {
-        emit plc->cameraExposureRequested("missing-test-device", 1234.0);
-    }, Qt::QueuedConnection);
-    check(until([&] { return exposureRejected; }), "PLC exposure reaches camera without controller forwarding");
     services.stop();
     return failures ? 1 : 0;
 }

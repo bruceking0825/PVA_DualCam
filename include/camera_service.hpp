@@ -53,8 +53,7 @@ namespace pva
         void stopOnlineCameras(quint64 requestId);
         void triggerOnlineCameras(quint64 generation);
         void triggerOnlineFacet(int requestId);
-        void applyPlcExposure(const QString &userId, double exposureUs);
-        void setStage(int stage) { onlineStage_ = MeasurementStage(stage); }
+        void setStage(int stage);
         void closeAll();
     signals:
         void stateChanged(const pva::CameraSnapshot &snapshot);
@@ -74,7 +73,9 @@ namespace pva
         void onFrame(const QString &userId, const cv::Mat &frame, qint64 timestampNs);
         void onCaptureFailed(const QString &userId, const QString &message);
         DalsaCamera *camera(const QString &id) const;
+        double configuredExposure(const QString &userId, bool online) const;
         bool applyConfiguredParameters(DalsaCamera &camera, const cv::Rect &roi, bool online, QString *error);
+        void applyMeltParameters();
         void adjustAutoExposure(DalsaCamera &camera, const cv::Mat &frame, qint64 timestampNs);
         double loadRememberedExposure(const QString &id, double fallback) const;
         void saveRememberedExposures() const;
@@ -100,7 +101,6 @@ namespace pva
         QString streamOwner_;
         MeasurementStage onlineStage_{MeasurementStage::Melt};
         QHash<QString, qint64> lastExposureAdjustNs_, lastExposurePublishNs_;
-        QHash<QString, double> plcExposureOverrides_;
         QSet<QString> faultedIds_;
         qint64 lastManualPreviewNs_{};
     };

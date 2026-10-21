@@ -165,6 +165,13 @@ namespace pva
             send("err_prm=exposure must be positive");
             return true;
         }
+        if (name == "exptme1" || name == "exptme2")
+        {
+            // 保持 Sherlock 7 PLC 协议兼容，但曝光控制只由当前阶段和 cnf 参数决定。
+            emit logMessage(QString("PLC setting %1 acknowledged without camera control").arg(name));
+            send(name.toLatin1() + "=ok");
+            return true;
+        }
         if (name == "dia_crd" || name == "mlt_crd" || name == "dip_crd")
         {
             if (!setPlcRoi(rois_, name, *values, &error))
@@ -179,37 +186,10 @@ namespace pva
                                         config_.measurement.crownBodyInnerRadiusPx);
         requestStateSave(stage_);
 
-        if (name == "exptme1" || name == "exptme2")
-        {
-            // 与Sherlock 4.14一致：PLC值为3000 us基准曝光的百分比。
-            const double exposureUs = 3000.0 * values->front() / 100.0;
-            const bool first = name == "exptme1";
-            emit cameraExposureRequested(
-                first ? CameraRole::Cam1 : CameraRole::Cam2, exposureUs);
-        }
         emit configurationChanged(stage_);
         emit logMessage(QString("PLC setting %1 accepted (%2 parameter(s))").arg(name).arg(expectedCount));
         send(name.toLatin1() + "=ok");
         return true;
-    }
-
-    void PlcSession::applyConfigOverrides(MeasurementConfig &config_) const
-    {
-        const auto threshold = [this](const QString &name) -> std::optional<double>
-        {
-            const auto it = settings_.parameters.constFind(name);
-            if (it == settings_.parameters.cend() || it.value().size() != 1)
-                return {};
-            return it.value().front();
-        };
-        // if (const auto value = threshold("dia_thr"))
-        //     config_.neck.gradientThresholdPercentCamera1 = std::clamp(*value, 0.0, 100.0);
-        // if (const auto value = threshold("diathr2"))
-        //     config_.neck.gradientThresholdPercentCamera2 = std::clamp(*value, 0.0, 100.0);
-        if (const auto value = threshold("exptme1"); value && *value > 0.0)
-            config_.camera.initialExposureCamera1 = 3000.0 * *value / 100.0;
-        if (const auto value = threshold("exptme2"); value && *value > 0.0)
-            config_.camera.initialExposureCamera2 = 3000.0 * *value / 100.0;
     }
 
     MeasurementStage PlcSession::restoreSettings(const QString &path)
@@ -228,6 +208,9 @@ namespace pva
         settings_.relativeThreshold = saved.relativeThreshold;
         settings_.refreshRate = saved.refreshRate;
         settings_.parameters = std::move(saved.parameters);
+        const bool removedExposure1 = settings_.parameters.remove("exptme1");
+        const bool removedExposure2 = settings_.parameters.remove("exptme2");
+        const bool removedLegacyExposure = removedExposure1 || removedExposure2;
         for (const QString name : {"dia_crd", "mlt_crd", "dip_crd"})
         {
             const auto it = settings_.parameters.constFind(name);
@@ -238,6 +221,11 @@ namespace pva
                 settings_.parameters.remove(name);
                 emit logMessage("Saved PLC ROI ignored: " + error);
             }
+        }
+        if (removedLegacyExposure)
+        {
+            emit logMessage("Saved PLC exposure settings removed; cnf camera parameters are authoritative");
+            requestStateSave(settings_.stage);
         }
         return settings_.stage;
     }
@@ -278,15 +266,5 @@ namespace pva
         saveTimer_.stop();
         pendingState_.reset();
         statePath_ = std::move(path);
-    }
-    void PlcSession::replayExposures()
-    {
-        for (const auto &name : {"exptme1", "exptme2"})
-        {
-            const auto it = settings_.parameters.constFind(name);
-            if (it != settings_.parameters.cend() && it.value().size() == 1)
-                emit cameraExposureRequested(QString::fromLatin1(name) == "exptme1" ? CameraRole::Cam1 : CameraRole::Cam2,
-                                             3000.0 * it.value().front() / 100.0);
-        }
     }
 }

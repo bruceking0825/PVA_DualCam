@@ -1,4 +1,5 @@
 #include "camera_service.hpp"
+#include "camera_state_store.hpp"
 #include "runtime_controller.hpp"
 #include <QGuiApplication>
 #include <QTemporaryDir>
@@ -14,7 +15,10 @@ struct CameraServiceTestAccess {
     static std::optional<double> mean(CameraService &service, const QString &id, const cv::Mat &frame) {
         return service.autoExposureMean(id, frame);
     }
-    static void overrideExposure(CameraService &service, const QString &id) { service.plcExposureOverrides_.insert(id, 3000); }
+    static MeasurementStage stage(const CameraService &service) { return service.onlineStage_; }
+    static double configuredExposure(const CameraService &service, const QString &id, bool online) {
+        return service.configuredExposure(id, online);
+    }
 };
 }
 namespace {
@@ -47,11 +51,27 @@ int main(int argc, char **argv) {
     frame(cv::Rect(30, 20, 4, 4)).setTo(200);
     check(!Access::mean(cameras, cam1, frame), "Offline never auto exposes");
     Access::online(cameras, true);
-    for (const auto stage : {pva::MeasurementStage::Melt, pva::MeasurementStage::Dip, pva::MeasurementStage::Neck}) {
+    cameras.setStage(int(pva::MeasurementStage::Melt));
+    check(!Access::mean(cameras, cam1, frame) && !Access::mean(cameras, cam2, frame),
+          "Melt does not auto expose");
+    for (const auto stage : {pva::MeasurementStage::Dip, pva::MeasurementStage::Neck}) {
         cameras.setStage(int(stage));
         check(equals(Access::mean(cameras, cam1, frame), 20), "Enabled stage falls back to camera1 config");
         check(equals(Access::mean(cameras, cam2, frame), 40), "Camera2 config independent");
     }
+    config.camera.initialExposureCamera1 = 11000;
+    config.camera.initialExposureCamera2 = 12000;
+    cameras.reloadConfig(config);
+    pva::CameraStateStore(directory.filePath("camera_state.json")).saveExposures(
+        {{"camera:" + cam1, 21000}, {"camera:" + cam2, 22000}});
+    cameras.setStage(int(pva::MeasurementStage::Melt));
+    check(Access::configuredExposure(cameras, cam1, true) == 11000 &&
+          Access::configuredExposure(cameras, cam2, true) == 12000,
+          "Melt startup ignores remembered exposure");
+    cameras.setStage(int(pva::MeasurementStage::Dip));
+    check(Access::configuredExposure(cameras, cam1, true) == 21000 &&
+          Access::configuredExposure(cameras, cam2, true) == 22000,
+          "Dip startup may resume remembered auto exposure");
     pva::MeasurementRois rois;
     rois.melt = std::array<double, 6>{20, 15, 4, 4, 12, 7};
     cameras.setMeasurementRois(rois);
@@ -118,8 +138,16 @@ int main(int argc, char **argv) {
     QMetaObject::invokeMethod(&cameras, [&] { mean = Access::mean(cameras, cam2, frame); }, Qt::BlockingQueuedConnection);
     check(equals(mean, 200), "Restored PLC ROI delivered across threads");
     runtime.onSherlockCommand({"mlt_crd", {"2000", "1500", "400", "400", "0", "0"}, "mlt_crd"});
-    QMetaObject::invokeMethod(&cameras, [&] { mean = Access::mean(cameras, cam2, frame); }, Qt::BlockingQueuedConnection);
-    check(equals(mean, 100), "PLC coordinate update delivered before next camera operation");
+    QMetaObject::invokeMethod(&cameras, [&] {
+        mean = Access::mean(cameras, cam2, frame);
+    }, Qt::BlockingQueuedConnection);
+    check(Access::stage(cameras) == pva::MeasurementStage::Melt && !mean,
+          "PLC Melt stage arrives and disables auto exposure");
+    QMetaObject::invokeMethod(&cameras, [&] {
+        cameras.setStage(int(pva::MeasurementStage::Dip));
+        mean = Access::mean(cameras, cam2, frame);
+    }, Qt::BlockingQueuedConnection);
+    check(equals(mean, 100), "PLC coordinate update is used when auto exposure resumes");
     runtime.onSherlockCommand({"mlt_crd", {"2000", "1500", "-400", "400", "0", "0"}, "mlt_crd"});
     QMetaObject::invokeMethod(&cameras, [&] {
         mean = Access::mean(cameras, cam2, frame);
@@ -127,13 +155,11 @@ int main(int argc, char **argv) {
     check(equals(mean, 100), "Rejected PLC coordinates preserve previous ROI");
     runtime.startRuntime(true);
     QMetaObject::invokeMethod(&cameras, [] {}, Qt::BlockingQueuedConnection);
-    check(equals(startupMean, 100), "ROI and stage arrive before production start request");
+    check(Access::stage(cameras) == pva::MeasurementStage::Melt && !startupMean,
+          "Restored Melt stage arrives before production start request");
     QMetaObject::invokeMethod(&cameras, [&] {
-        Access::overrideExposure(cameras, cam2);
-        mean = Access::mean(cameras, cam2, frame);
         cameras.moveToThread(app.thread());
     }, Qt::BlockingQueuedConnection);
-    check(!mean, "PLC exposure override retains priority");
     thread.quit(); thread.wait();
     runtime.shutdown();
     return failures ? 1 : 0;

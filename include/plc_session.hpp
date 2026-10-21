@@ -15,8 +15,6 @@ public:
     void requestStateSave(MeasurementStage stage);
     void flushState();
     bool handleControlCommand(const SherlockCommand &command, MeasurementStage stage, MeasurementConfig config);
-    void applyConfigOverrides(MeasurementConfig &config) const;
-    void replayExposures();
     bool acquisitionEnabled() const { return settings_.acquisitionEnabled; }
     void setAcquisitionEnabled(bool enabled, MeasurementStage stage);
     bool pointFitSelected() const { return settings_.pointFitSelected; }
@@ -31,7 +29,6 @@ public:
     void send(const QByteArray &payload);
 signals:
     void configurationChanged(pva::MeasurementStage stage);
-    void cameraExposureRequested(const QString &userId, double exposureUs);
     void commandReceived(const pva::SherlockCommand &command);
     void connectionChanged(bool connected);
     void payloadReady(const QByteArray &payload);

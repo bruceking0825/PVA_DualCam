@@ -21,8 +21,6 @@ namespace pva
         connect(runtime_, &RuntimeController::onlineStageChanged, cameras_, &CameraService::setStage);
         connect(runtime_, &RuntimeController::stateChanged, cameras_,
                 [this](const RuntimeSnapshot &state) { cameras_->setMeasurementRois(state.rois); });
-        connect(&runtime_->plcSession(), &PlcSession::cameraExposureRequested,
-                cameras_, &CameraService::applyPlcExposure, Qt::QueuedConnection);
         connect(cameras_, &CameraService::onlineCameraStarted, runtime_, &RuntimeController::onOnlineCameraStarted);
         connect(cameras_, &CameraService::onlineCameraStopped, runtime_, &RuntimeController::onOnlineCameraStopped);
         connect(cameras_, &CameraService::onlineCameraStopFailed, runtime_, &RuntimeController::onOnlineCameraStopFailed);

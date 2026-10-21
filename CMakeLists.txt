@@ -200,6 +200,7 @@ add_executable(pva_dualcam_cpp WIN32
     ui/PageParameters.ui
     resources.qrc
 )
+set_target_properties(pva_dualcam_cpp PROPERTIES OUTPUT_NAME SherlockSrvr)
 # 将图标嵌入 Windows PE 资源，资源管理器和快捷方式可直接读取。
 if(WIN32)
     enable_language(RC)
