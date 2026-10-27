@@ -428,8 +428,9 @@ namespace pva
                 markCameraFault(userId, error);
                 break;
             }
+            // Online 始终使用软件触发；软件触发不需要修改相机的触发边沿。
             if (!value->open(&error) || !applyConfiguredParameters(*value, config_.camera.onlineCropRoi, true, &error) ||
-                !value->setTriggerSource(0, &error) || !value->setTriggerMode(true, &error) || !value->startStream(&error))
+                !value->setTriggerMode(true, &error) || !value->setTriggerSource(0, &error) || !value->startStream(&error))
             {
                 if (error.isEmpty())
                     error = "Cannot configure production camera: " + userId;

@@ -1,9 +1,19 @@
 {
     "schema_version": 5,
     "state": {
+        "body_boundary_points_px": [
+            [
+                119.28076577421044,
+                744.736328125
+            ],
+            [
+                91.52192946571301,
+                742.685302734375
+            ]
+        ],
         "filtered_light": [
-            255,
-            109
+            136,
+            94
         ],
         "neck_centers_px": [
             [

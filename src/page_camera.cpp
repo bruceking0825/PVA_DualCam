@@ -284,12 +284,20 @@ namespace pva
 
     void PageCamera::setManualControlsEnabled(bool enabled)
     {
-        const std::array<QWidget *, 11> widgets{
+        const std::array<QWidget *, 10> widgets{
             ui_->btnStartSnap, ui_->combTrigMode, ui_->combTrigSource, ui_->btnSoftTrigger,
-            ui_->combTrigEdge, ui_->edtExposure, ui_->edtGain, ui_->edtWidth,
+            ui_->edtExposure, ui_->edtGain, ui_->edtWidth,
             ui_->edtHeight, ui_->edtOffsetX, ui_->edtOffsetY};
         for (auto *widget : widgets)
             widget->setEnabled(enabled);
+        updateTriggerEdgeEnabled();
+    }
+
+    void PageCamera::updateTriggerEdgeEnabled()
+    {
+        // 软件触发没有边沿概念；仅外部 Line1 触发允许调整边沿。
+        const bool manualCameraOpen = snapshot_.open && !snapshot_.production;
+        ui_->combTrigEdge->setEnabled(manualCameraOpen && ui_->combTrigSource->currentData().toInt() != 0);
     }
 
     void PageCamera::setStatus(bool ok, const QString &message)
@@ -426,6 +434,7 @@ namespace pva
         syncCombo(ui_->combTrigMode, triggerMode);
         syncCombo(ui_->combTrigSource, snapshot_.triggerSource);
         syncCombo(ui_->combTrigEdge, snapshot_.triggerEdge);
+        updateTriggerEdgeEnabled();
         ui_->btnSoftTrigger->setEnabled(manual && triggerMode != 0);
 
         ui_->edtExposure->setText(QString::number(snapshot_.exposure));
@@ -449,7 +458,11 @@ namespace pva
     void PageCamera::applyOffsetX() { emit offsetXRequested(ui_->edtOffsetX->text().toDouble()); }
     void PageCamera::applyOffsetY() { emit offsetYRequested(ui_->edtOffsetY->text().toDouble()); }
     void PageCamera::applyTriggerMode(int) { emit triggerModeRequested(ui_->combTrigMode->currentData().toInt()); }
-    void PageCamera::applyTriggerSource(int) { emit triggerSourceRequested(ui_->combTrigSource->currentData().toInt()); }
+    void PageCamera::applyTriggerSource(int)
+    {
+        updateTriggerEdgeEnabled();
+        emit triggerSourceRequested(ui_->combTrigSource->currentData().toInt());
+    }
     void PageCamera::applyTriggerEdge(int) { emit triggerEdgeRequested(ui_->combTrigEdge->currentData().toInt()); }
 
 }

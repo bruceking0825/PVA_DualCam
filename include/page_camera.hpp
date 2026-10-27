@@ -48,6 +48,7 @@ namespace pva
         void applyTriggerMode(int);
         void applyTriggerSource(int);
         void applyTriggerEdge(int);
+        void updateTriggerEdgeEnabled();
         void runPreviewPipeline();
         void loadPipeline();
         void savePipeline();

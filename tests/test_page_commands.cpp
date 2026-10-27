@@ -48,6 +48,24 @@ int main(int argc, char **argv)
     pva::AppServices services(config, nullptr, false);
     pva::PageHome home(config, services.runtime());
     pva::PageCamera camera(services.cameras());
+    auto *triggerSource = camera.findChild<QComboBox *>("combTrigSource");
+    auto *triggerEdge = camera.findChild<QComboBox *>("combTrigEdge");
+    check(triggerSource && triggerEdge, "Camera trigger controls exist");
+    if (triggerSource && triggerEdge) {
+        pva::CameraSnapshot manualCamera;
+        manualCamera.ids = {pva::CameraRole::Cam1};
+        manualCamera.selected = pva::CameraRole::Cam1;
+        manualCamera.open = true;
+        manualCamera.triggerSource = 0;
+        services.cameras().stateChanged(manualCamera);
+        check(!triggerEdge->isEnabled(), "Software trigger disables trigger edge");
+        manualCamera.triggerSource = 1;
+        services.cameras().stateChanged(manualCamera);
+        check(triggerEdge->isEnabled(), "Line trigger enables trigger edge");
+        manualCamera.production = true;
+        services.cameras().stateChanged(manualCamera);
+        check(!triggerEdge->isEnabled(), "Production use disables trigger edge");
+    }
     pva::RuntimeSnapshot state;
     int snapshots{}, cameraSnapshots{}, results{};
     QObject::connect(&services.runtime(), &pva::RuntimeController::stateChanged, &app,
