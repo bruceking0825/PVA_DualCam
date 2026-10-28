@@ -13,7 +13,7 @@ namespace pva {
 class ImageStorage final : public QObject {
     Q_OBJECT
 public:
-    explicit ImageStorage(QObject *parent = nullptr);
+    explicit ImageStorage(QObject *parent = nullptr, QString imageChannel = QStringLiteral("SherlockImage"));
     ~ImageStorage() override;
     void flush();
     void load(const QString &directory, int index);
@@ -28,6 +28,7 @@ signals:
     void saved(const QString &path);
     void failed(const QString &message);
 private:
+    QString imageChannel_;
     enum class Operation { Load, Save, Offline };
     void submit(Operation operation, QString directory, int index, cv::Mat image = {}, QString source = {});
     QThreadPool pool_;

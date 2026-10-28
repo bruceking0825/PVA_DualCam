@@ -1,4 +1,5 @@
 #include "image_storage.hpp"
+#include "ekz_image_sync.hpp"
 #include "overlay_render.hpp"
 #include <QDir>
 #include <QCoreApplication>
@@ -80,7 +81,8 @@ namespace pva
             return false;
         }
     }
-    ImageStorage::ImageStorage(QObject *parent) : QObject(parent)
+    ImageStorage::ImageStorage(QObject *parent, QString imageChannel)
+        : QObject(parent), imageChannel_(std::move(imageChannel))
     {
         pool_.setMaxThreadCount(1);
         measurementPool_.setMaxThreadCount(1);
@@ -129,16 +131,20 @@ namespace pva
                 auto overlay1 = snapshot.overlay1, overlay2 = snapshot.overlay2;
                 appendDisplayRois(task.config, task.rois, snapshot.stage,
                                  snapshot.preview1.size(), snapshot.preview2.size(), overlay1, overlay2);
-                for (int camera = 1; camera <= 2; ++camera) {
-                    const auto path = QDir(directory).filePath(QString("image%1.bmp").arg(camera));
-                    try {
-                        const auto image = renderOverlayImage(camera == 1 ? snapshot.preview1 : snapshot.preview2,
-                            camera == 1 ? overlay1 : overlay2, &snapshot.regionStatistics[camera - 1]);
-                        if (image.isNull()) throw std::runtime_error("Measurement image is empty");
-                        if (!QDir().mkpath(directory)) throw std::runtime_error("Cannot create measurement image directory");
-                        saveMeasurementImage(path, image);
-                    } catch (const std::exception &exception) {
-                        errors.append(path + ": " + QString::fromUtf8(exception.what()));
+                // 文件改动本身不会及时触发 EKZExplorer；复用原服务器的成对读写事件。
+                EkzImageWriteGuard imageWrite(imageChannel_.toStdWString());
+                if (imageWrite.canWrite()) {
+                    for (int camera = 1; camera <= 2; ++camera) {
+                        const auto path = QDir(directory).filePath(QString("image%1.bmp").arg(camera));
+                        try {
+                            const auto image = renderOverlayImage(camera == 1 ? snapshot.preview1 : snapshot.preview2,
+                                camera == 1 ? overlay1 : overlay2, &snapshot.regionStatistics[camera - 1]);
+                            if (image.isNull()) throw std::runtime_error("Measurement image is empty");
+                            if (!QDir().mkpath(directory)) throw std::runtime_error("Cannot create measurement image directory");
+                            saveMeasurementImage(path, image);
+                        } catch (const std::exception &exception) {
+                            errors.append(path + ": " + QString::fromUtf8(exception.what()));
+                        }
                     }
                 }
             } catch (const std::exception &exception) {

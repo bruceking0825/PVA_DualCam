@@ -1,11 +1,14 @@
 #include "image_storage.hpp"
+#include "ekz_image_sync.hpp"
 #include "overlay_render.hpp"
 #include <QGuiApplication>
 #include <QTemporaryDir>
 #include <QDir>
 #include <QFile>
 #include <QImage>
+#include <QUuid>
 #include <iostream>
+#include <stdexcept>
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
@@ -77,7 +80,8 @@ int main(int argc, char **argv) {
     result.preview2 = cv::Mat(80, 100, CV_8U, cv::Scalar(37));
     result.overlay1.push_back({pva::OverlayType::Line, {{10, 20}, {80, 20}}, {0, 0, 255}, 2});
     result.overlay2.push_back({pva::OverlayType::Cross, {{30, 30}}, {0, 255, 255}, 2});
-    pva::ImageStorage storage;
+    // 常规存储回归不接触现场 EKZ 的事件；握手使用后面的独立随机命名测试。
+    pva::ImageStorage storage(nullptr, {});
     QStringList errors;
     QObject::connect(&storage, &pva::ImageStorage::failed, &app, [&](const QString &error) { errors.append(error); });
     const auto path1 = QDir(config.runtime.measurementImageDir).filePath("image1.bmp");
@@ -178,7 +182,7 @@ int main(int argc, char **argv) {
     check(QImage(directory.filePath("facettes/Facette1.bmp")).pixelColor(99, 79).red() == 100,
           "Facette grayscale saving remains unchanged");
     {
-        pva::ImageStorage closing;
+        pva::ImageStorage closing(nullptr, {});
         auto closingConfig = config;
         closingConfig.runtime.measurementImageDir = directory.filePath("on_exit");
         for (int i = 0; i < 30; ++i) {
@@ -192,7 +196,7 @@ int main(int argc, char **argv) {
     check(QImage(directory.filePath("on_exit/image1.bmp")).convertToFormat(QImage::Format_RGB32) ==
               expected(finalClosingResult, config, rois, 1),
           "Destructor drains latest measurement without event processing or explicit flush");
-    pva::ImageStorage continuous;
+    pva::ImageStorage continuous(nullptr, {});
     QStringList continuousErrors;
     QObject::connect(&continuous, &pva::ImageStorage::failed, &app,
                      [&](const QString &error) { continuousErrors.append(error); });
@@ -250,5 +254,65 @@ int main(int argc, char **argv) {
     continuous.flush();
     check(QDir(config.runtime.continuousSaveDir).entryList({"*.png"}, QDir::Files).size() == 17,
           "Shutdown flush completes all accepted PNG jobs");
+#ifdef Q_OS_WIN
+    {
+        // 使用真实 Win32 命名事件模拟 Delphi 读图线程，不启动相机、PLC 或 Explorer。
+        const auto channel = QStringLiteral("PvaEkzTest_") + QUuid::createUuid().toString(QUuid::Id128);
+        const auto readerName = (channel + "Reader_Lock_Name").toStdWString();
+        const auto writerName = (channel + "Writer_Lock_Name").toStdWString();
+        {
+            pva::EkzImageWriteGuard absent(channel.toStdWString());
+            check(absent.canWrite() && !absent.synchronized(), "Export works before Explorer starts");
+        }
+        const HANDLE reader = CreateEventW(nullptr, TRUE, TRUE, readerName.c_str());
+        const HANDLE writer = CreateEventW(nullptr, FALSE, FALSE, writerName.c_str());
+        check(reader && writer, "Create isolated Explorer event pair");
+        if (reader && writer) {
+            {
+                SetEvent(writer);
+                pva::EkzImageWriteGuard guard(channel.toStdWString());
+                check(guard.canWrite() && guard.synchronized(), "Attach to late-started Explorer");
+                check(WaitForSingleObject(writer, 0) == WAIT_TIMEOUT,
+                      "Writer event stays reset while BMP files are being written");
+            }
+            check(WaitForSingleObject(writer, 0) == WAIT_OBJECT_0, "Writing scope signals Explorer");
+            try {
+                pva::EkzImageWriteGuard guard(channel.toStdWString());
+                throw std::runtime_error("simulated export failure");
+            } catch (const std::runtime_error &) {}
+            check(WaitForSingleObject(writer, 0) == WAIT_OBJECT_0, "Exceptions release Explorer handshake");
+
+            pva::ImageStorage synchronizedStorage(nullptr, channel);
+            config.runtime.measurementImageDir = directory.filePath("ekz_sync");
+            synchronizedStorage.saveMeasurement(result, config, rois);
+            synchronizedStorage.flush();
+            check(WaitForSingleObject(writer, 0) == WAIT_OBJECT_0,
+                  "Actual BMP export notifies Explorer");
+            const auto firstPath = QDir(config.runtime.measurementImageDir).filePath("image1.bmp");
+            const auto secondPath = QDir(config.runtime.measurementImageDir).filePath("image2.bmp");
+            check(!QImage(firstPath).isNull() && !QImage(secondPath).isNull(),
+                  "Both BMP files are complete at notification");
+            const auto previous = QImage(firstPath);
+            ResetEvent(reader);
+            result.preview1 = cv::Mat(80, 100, CV_8U, cv::Scalar(209));
+            synchronizedStorage.saveMeasurement(result, config, rois);
+            synchronizedStorage.flush();
+            check(QImage(firstPath) == previous, "Busy Explorer reader prevents BMP overwrite");
+            check(WaitForSingleObject(writer, 0) == WAIT_OBJECT_0,
+                  "Timeout wakes reader without publishing a partial write");
+            SetEvent(reader);
+            synchronizedStorage.saveMeasurement(result, config, rois);
+            synchronizedStorage.flush();
+            check(WaitForSingleObject(writer, 0) == WAIT_OBJECT_0 && QImage(firstPath) != previous,
+                  "Export recovers immediately when Explorer finishes reading");
+        }
+        if (reader) CloseHandle(reader);
+        if (writer) CloseHandle(writer);
+        {
+            pva::EkzImageWriteGuard disconnected(channel.toStdWString());
+            check(disconnected.canWrite() && !disconnected.synchronized(), "Export survives Explorer exit");
+        }
+    }
+#endif
     return failures ? 1 : 0;
 }

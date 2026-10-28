@@ -1,19 +1,34 @@
 #include "app_services.hpp"
 #include "app_signals.hpp"
 #include "config_manager.hpp"
+#include "ekz_server_status.hpp"
 namespace pva
 {
     AppServices::AppServices(const MeasurementConfig &config, QObject *parent, bool enableTcp)
         : QObject(parent), runtime_(new RuntimeController(config, this, enableTcp)), cameras_(new CameraService(config, this))
     {
+        // 禁用外部通信的测试实例不发布现场 EKZ 状态。
+        if (enableTcp) ekzStatus_ = std::make_unique<EkzServerStatus>();
         qRegisterMetaType<RuntimeSnapshot>("pva::RuntimeSnapshot");
         qRegisterMetaType<CameraSnapshot>("pva::CameraSnapshot");
         qRegisterMetaType<MeasurementResult>("pva::MeasurementResult");
         qRegisterMetaType<cv::Mat>("cv::Mat");
         connect(&runtimeThread_, &QThread::finished, runtime_, &QObject::deleteLater);
         connect(&cameraThread_, &QThread::finished, cameras_, &QObject::deleteLater);
-        connect(&runtimeThread_, &QThread::started, runtime_, &RuntimeController::initialize);
-        connect(&cameraThread_, &QThread::started, cameras_, &CameraService::initialize);
+        connect(&runtimeThread_, &QThread::started, runtime_, [this] {
+            runtime_->initialize();
+            QMetaObject::invokeMethod(this, [this] {
+                runtimeInitialized_ = true;
+                publishInitializedStatus();
+            }, Qt::QueuedConnection);
+        });
+        connect(&cameraThread_, &QThread::started, cameras_, [this] {
+            cameras_->initialize();
+            QMetaObject::invokeMethod(this, [this] {
+                cameraInitialized_ = true;
+                publishInitializedStatus();
+            }, Qt::QueuedConnection);
+        });
         connect(runtime_, &RuntimeController::onlineCameraStartRequested, cameras_, &CameraService::startOnlineCameras);
         connect(runtime_, &RuntimeController::onlineCameraStopRequested, cameras_, &CameraService::stopOnlineCameras);
         connect(runtime_, &RuntimeController::onlineCameraTriggerRequested, cameras_, &CameraService::triggerOnlineCameras);
@@ -44,6 +59,12 @@ namespace pva
     void AppServices::start()
     {
         if (started_ || !runtime_ || !cameras_) return;
+        if (ekzStatus_) {
+            QString error;
+            if (!ekzStatus_->start(&error))
+                emit AppSignals::instance().status("EKZExplorer", "NG", "error", error);
+        }
+        runtimeInitialized_ = cameraInitialized_ = false;
         started_ = true;
         runtime_->setParent(nullptr);
         cameras_->setParent(nullptr);
@@ -55,11 +76,19 @@ namespace pva
     void AppServices::stop()
     {
         if (!started_) return;
+        started_ = false;
+        if (ekzStatus_) ekzStatus_->setReady(false);
         QMetaObject::invokeMethod(runtime_, &RuntimeController::shutdown, Qt::BlockingQueuedConnection);
         QMetaObject::invokeMethod(cameras_, &CameraService::closeAll, Qt::BlockingQueuedConnection);
         runtimeThread_.quit(); cameraThread_.quit();
         runtimeThread_.wait(); cameraThread_.wait();
-        started_ = false;
+        if (ekzStatus_) ekzStatus_->stop();
+    }
+    void AppServices::publishInitializedStatus()
+    {
+        // Ready 表示视觉服务完成初始化；不等同于正在采集，离线/等待 PLC 时仍可就绪。
+        if (started_ && runtimeInitialized_ && cameraInitialized_ && ekzStatus_)
+            ekzStatus_->setReady(true);
     }
     AppServices::~AppServices() { stop(); }
 }

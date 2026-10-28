@@ -143,6 +143,8 @@ add_library(pva_runtime
     include/plc_session.hpp
     src/offline_image_source.cpp
     src/image_storage.cpp
+    src/ekz_image_sync.cpp
+    src/ekz_server_status.cpp
     src/overlay_render.cpp
     include/overlay_render.hpp
     include/image_storage.hpp
@@ -154,6 +156,9 @@ add_library(pva_runtime
 )
 target_include_directories(pva_runtime PUBLIC include)
 target_link_libraries(pva_runtime PUBLIC pva_measurement pva_sherlock_protocol ${PVA_QT_PACKAGE}::Network ${PVA_QT_PACKAGE}::Gui)
+if(WIN32)
+    target_link_libraries(pva_runtime PRIVATE user32)
+endif()
 
 add_library(pva_camera
     src/camera_service.cpp
@@ -244,6 +249,18 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    if(WIN32)
+        add_executable(ekz_server_status_tests tests/test_ekz_server_status.cpp src/ekz_server_status.cpp)
+        target_include_directories(ekz_server_status_tests PRIVATE include)
+        target_link_libraries(ekz_server_status_tests PRIVATE ${PVA_QT_PACKAGE}::Core user32)
+        target_compile_definitions(ekz_server_status_tests PRIVATE NOMINMAX)
+        if(MSVC)
+            target_link_options(ekz_server_status_tests PRIVATE /MANIFEST:NO /INCREMENTAL:NO)
+        endif()
+        add_test(NAME ekz_server_status_tests COMMAND ekz_server_status_tests)
+        set_tests_properties(ekz_server_status_tests PROPERTIES TIMEOUT 30
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:${PVA_QT_PACKAGE}::Core>")
+    endif()
     add_executable(acquisition_switch_tests tests/test_acquisition_switch.cpp)
     target_link_libraries(acquisition_switch_tests PRIVATE pva_runtime pva_camera)
     if(MSVC)
